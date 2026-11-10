@@ -119,11 +119,12 @@ ul.clean li { margin:6px 0; }
 
 <header class="hero">
   <p class="kicker">Product owner report · revised Phase 1</p>
-  <h1>DuckSuite is a working local video editor. The App Store gate is now the product gate.</h1>
-  <p class="subhead">A detailed progress summary from the original Phase 1 plan to the current build: what shipped, what changed, the UI/UX now in the app, the append-import loops, the verification evidence, and the exact release blockers.</p>
+  <h1>DuckSuite is a working local video editor. The next gate is a clean render, not the App Store.</h1>
+  <p class="subhead">A detailed progress summary from the original Phase 1 plan to the current build: what shipped, what changed, the UI/UX now in the app, the append-import loops, the clean-layer review that followed a bad render, and the release blockers still open.</p>
   <div class="meta">
     <span class="pill"><span class="dot"></span><strong>Editor core</strong> ready</span>
-    <span class="pill"><span class="dot amber"></span><strong>App Store</strong> blocked on signing</span>
+    <span class="pill"><span class="dot amber"></span><strong>App Store</strong> paused by decision</span>
+    <span class="pill"><span class="dot amber"></span><strong>AI fill</strong> measured limit</span>
     <span class="pill"><span class="dot"></span><strong>81</strong> tests passing</span>
     <span class="pill"><strong>1.0</strong> · build 1</span>
     <span class="pill">2026-11-10</span>
@@ -240,7 +241,7 @@ ul.clean li { margin:6px 0; }
 
   <div class="grid g3" style="margin-top:14px">
     <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
-    <div class="card"><h3>What improved for the build</h3><p>Nine commits, 74 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
+    <div class="card"><h3>What improved for the build</h3><p>Ten commits, 81 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
     <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
   </div>
 
@@ -284,9 +285,9 @@ ul.clean li { margin:6px 0; }
     </div>
     <div class="card">
       <h3>What changed the release conversation</h3>
-      <p>The editor is no longer the bottleneck. The release gate is now distribution: signing, store URLs, contact details, screenshot rights, nested-code signing, and a clean-Mac TestFlight pass.</p>
+      <p>Two things. A finished 160 s render was reviewed frame by frame: captions were gone, but a 66 ms title at <span class="mono">0 s</span> was never detected and AI fill can smear over moving food. And the store export still fails without a team.</p>
       <div class="rule"></div>
-      <p><strong>Decision:</strong> do not call this “ready to publish” while the export command fails.</p>
+      <p><strong>Decision:</strong> clean output first. The App Store gate is paused by decision, not passed: signing, store URLs, contact details, screenshot rights and nested-code signing are still open.</p>
     </div>
   </div>
 </section>
@@ -296,20 +297,20 @@ ul.clean li { margin:6px 0; }
   <table>
     <thead><tr><th style="width:20%">Area</th><th style="width:32%">Original Phase 1 plan</th><th style="width:36%">Current build</th><th style="width:12%">State</th></tr></thead>
     <tbody>
-      <tr><td><strong>Window and navigation</strong></td><td>Native titlebar; left sidebar; multi-project home.</td><td>Hidden native titlebar; one 48 px custom toolbar; duck Home, Import, four workflow tabs, engine, queue, Settings. No project tabs, no close tab, no overflow, no second stepper.</td><td><span class="chip done">Shipped</span></td></tr>
+      <tr><td><strong>Window and navigation</strong></td><td>Native titlebar; left sidebar; multi-project home.</td><td>Hidden native titlebar; one 48 px custom toolbar; duck Home, Import (hidden on Welcome), four workflow tabs, engine, queue, Settings. No project tabs, no close tab, no overflow, no second stepper.</td><td><span class="chip done">Shipped</span></td></tr>
       <tr><td><strong>Project model</strong></td><td>Project list; one source per project; replacement import.</td><td>One open project at a time. Import adds to the same project: “Add scenes” or “Use full video”. Existing scenes and edits stay.</td><td><span class="chip done">Shipped</span></td></tr>
       <tr><td><strong>Import</strong></td><td>Copy one source into the container.</td><td>Same-project append with scene detection or one full clip; exact offset; transcript and captions merge; background job API with progress.</td><td><span class="chip done">Shipped</span></td></tr>
       <tr><td><strong>Edit surface</strong></td><td>Trim, split, reorder, remove silence, aspect ratios, auto-frame, captions, text, music.</td><td>Trim plus a four-track timeline and per-track tools. Split, reorder, remove silence and aspect switching remain post-launch work.</td><td><span class="chip active">Partial</span></td></tr>
-      <tr><td><strong>Clean</strong></td><td>LaMa fill default; explicit Blur; manual box.</td><td>Auto clean layers, proof pair, Fill/Blur/Off, clean all, manual brush with size, undo, clear, apply. Quality proof remains fixture-based.</td><td><span class="chip done">Shipped</span></td></tr>
+      <tr><td><strong>Clean</strong></td><td>LaMa fill default; explicit Blur; manual box.</td><td>Auto clean layers, proof pair, Fill/Blur/Off, confirmed clean-all that keeps user choices, manual brush with size, undo, clear, apply. Each layer records the measured motion, so risky fills are named before the render. A flash of text under 0.5 s defaults to Blur.</td><td><span class="chip done">Shipped</span></td></tr>
       <tr><td><strong>Script, voice, dub</strong></td><td>Local voices, three-language dub, editable script, per-line preview.</td><td>Full-width script drawer; auto captions; translate/rewrite/reset; inline voice preview; native microphone recording; dub; optional background music; dub mutes original.</td><td><span class="chip done">Shipped</span></td></tr>
-      <tr><td><strong>Models</strong></td><td>Bundled core; optional packs verified by checksum/signature.</td><td>Four optional data packs listed with size, license, progress, download and remove. Alternate engines are not wired yet.</td><td><span class="chip active">Partial</span></td></tr>
+      <tr><td><strong>Models</strong></td><td>Bundled core; optional packs verified by checksum/signature.</td><td>LaMa, Whisper, Kokoro and NLLB are wired from app-data packs with size, license, progress, download and remove. Qwen and Demucs entries were removed.</td><td><span class="chip done">Done</span></td></tr>
       <tr><td><strong>Cloud render and StoreKit</strong></td><td>Free CPU broker, paid CPU/GPU subscriptions, quota, restore.</td><td>Deferred. v1 is fully local and has no IAP surface. The $29 price comes from App Store Connect.</td><td><span class="chip defer">Deferred</span></td></tr>
       <tr><td><strong>Distribution</strong></td><td>Archive, TestFlight, App Review.</td><td>Unsigned archive passes. Export fails before upload because no team/signing identity is present.</td><td><span class="chip blocked">Blocked</span></td></tr>
     </tbody>
   </table>
   <div class="callout" style="margin-top:14px">
     <strong>The revised product decision</strong>
-    <p>Ship a focused local editor first. Do not wait for cloud rendering, subscriptions, or every original aspect-ratio tool. The current editor loop is coherent enough to test with creators; the App Store shell must be fixed before any external build goes out.</p>
+    <p>Ship a focused local editor first, and judge it on the render it produces. The editor loop is coherent; the clean layer still invents texture on fast footage, so that limit is measured and shown instead of hidden. Cloud render, subscriptions and the rest of the aspect-ratio tools stay out of v1. The App Store shell must still be fixed before any external build goes out.</p>
   </div>
 </section>
 
@@ -317,7 +318,7 @@ ul.clean li { margin:6px 0; }
   <div class="section-head"><h2>UI/UX now in the build</h2><p>Latest UI captured from the running local core. The demo project is the “Fast 12” fixture; swap to licensed footage before submission.</p></div>
 
   <div class="grid g3" style="margin-bottom:16px">
-    <div class="card"><h3>Toolbar</h3><p>48 px, traffic-light inset, duck Home, Import, four tabs, Ready, Queue, Settings. Fixed default 1440×900; minimum 1280×800 so it never overflows.</p></div>
+    <div class="card"><h3>Toolbar</h3><p>48 px, traffic-light inset, duck Home, Import (hidden on Welcome), four tabs, Ready, Queue, Settings. Fixed default 1440×900; minimum 1280×800 so it never overflows.</p></div>
     <div class="card"><h3>Editor priority</h3><p>The frame is the hero. Scenes sit left, proofs and transcript centre, one inspector right. The timeline is below the frame, not a second navigation row.</p></div>
     <div class="card"><h3>Language of the UI</h3><p>Warm paper, dark video, amber action, green completion. No admin tables, no model-name pickers, no fake telemetry.</p></div>
   </div>
@@ -403,7 +404,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 <section class="section" id="evidence">
   <div class="section-head"><h2>Verification evidence</h2><p>What was actually run. No “looks fine” claims.</p></div>
   <div class="grid g4">
-    <div class="card"><div class="big">52</div><p>Python tests pass.</p></div>
+    <div class="card"><div class="big">81</div><p>Python tests pass on the current build; 52 on the 9 Nov snapshot below.</p></div>
     <div class="card"><div class="big">10</div><p>Latest UI screens captured from the running build.</p></div>
     <div class="card"><div class="big">3</div><p>Append integrity loops: UI, data, job API.</p></div>
     <div class="card"><div class="big">1</div><p>Signed distribution attempt: blocked at team selection.</p></div>
@@ -421,6 +422,10 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
       <tr><td>Browser job</td><td><span class="chip done">Pass</span></td><td>timeline 15 → 16, stages Joining → Reading → Done, import button re-enabled.</td></tr>
       <tr><td>Drag behavior</td><td><span class="chip done">Pass</span></td><td>empty toolbar moves window; timeline does not move window.</td></tr>
       <tr><td>Build and archive</td><td><span class="chip done">Pass</span></td><td>Xcode build and unsigned arm64 archive succeed.</td></tr>
+      <tr><td>First frame read</td><td><span class="chip done">Pass</span></td><td>Sample at <span class="mono">0 s</span> now comes from the source frame itself. The 66 ms title in the 160 s project is read and classifies as <span class="mono">title</span>.</td></tr>
+      <tr><td>Clean plan routing</td><td><span class="chip done">Pass</span></td><td>Steady line keeps Fill; a flash under 0.5 s defaults to Blur; a user choice survives clean all.</td></tr>
+      <tr><td>Clean all confirmation</td><td><span class="chip done">Pass</span></td><td>Modal names the layer count and the rules; 41 layers on the review project, cancel leaves them untouched.</td></tr>
+      <tr><td>Render queue scope</td><td><span class="chip done">Pass</span></td><td><span class="mono">1 job</span> for the open project; other projects sit behind the All projects toggle.</td></tr>
       <tr><td>App Store export</td><td><span class="chip blocked">Blocked</span></td><td>“No Team Found in Archive”; 0 valid signing identities.</td></tr>
     </tbody>
   </table>
@@ -480,7 +485,8 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
       <ul class="clean">
         <li>Timeline split and reorder.</li>
         <li>Manual microphone test on a clean Mac.</li>
-        <li>Wire optional Qwen/Whisper/Kokoro/Demucs engines.</li>
+        <li>Replace the fill model for moving footage, or ship Blur as the default there.</li>
+        <li>Keep the bundled Whisper and Kokoro packs tested on a clean Mac.</li>
         <li>Clean quality pass on licensed 16:9 footage.</li>
         <li>History cleanup policy for replaced masters.</li>
         <li>Import failure copy polish.</li>
@@ -500,7 +506,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
   </div>
   <div class="callout" style="margin-top:14px">
     <strong>Recommended next move</strong>
-    <p>Do not add features before the first TestFlight build. Signing and store metadata are the only work that changes the product from “archive on this Mac” to “testable by a creator”.</p>
+    <p>Fix the output before packaging it. Re-run Check on the review project so the <span class="mono">0 s</span> title is picked up, confirm the clean plan on a 9:16 project at 1440 and 1280, then re-render and compare against the source again. When a render passes that review, the App Store gate can be reopened.</p>
   </div>
 </section>
 
@@ -508,9 +514,10 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
   <div class="section-head"><h2>Honest limits</h2><p>What a product owner must not hide in a launch note.</p></div>
   <div class="grid g2">
     <div class="card"><h3>Editor limits</h3><p>Trim works. Split, reorder and remove-silence do not. The timeline exposes four tracks but is not a full NLE. Aspect switching is not in v1.</p></div>
-    <div class="card"><h3>Intelligence limits</h3><p>Rewrite uses Apple Intelligence first; this Mac falls back to basic filler cleanup. Apple Translation needs language packs installed in macOS. Optional model packs download data but their engines are not wired.</p></div>
+    <div class="card"><h3>Intelligence limits</h3><p>Rewrite uses Apple Intelligence first; this Mac falls back to basic filler cleanup. Apple Translation needs language packs installed in macOS. NLLB, Whisper, Kokoro and LaMa are wired; the NLLB pack is CC-BY-NC-4.0 and cannot ship as a paid default.</p></div>
     <div class="card"><h3>Audio limits</h3><p>Generated voice uses Apple <span class="mono">say</span>. Recording compiles and has entitlement text, but has not been manually microphone-tested. Dub mutes original audio; music is optional.</p></div>
     <div class="card"><h3>Distribution limits</h3><p>No DMG. Mac App Store only. Archive is unsigned. TestFlight has not run. The screenshots use an internal fixture.</p></div>
+    <div class="card"><h3>Clean limits</h3><p>AI fill is a per-frame model. It rebuilds a still plate well and cannot rebuild food that moves under the words. Check measures that motion per line, the app names the risky lines before a render, and Blur is one tap away. Replacing the model is the only real fix; tuning LaMa is not. A 66 ms title card at <span class="mono">0 s</span> is now detected, but any text shorter than one OCR sample can still be missed.</p></div>
   </div>
 </section>
 
@@ -525,8 +532,8 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 </section>
 
 <footer class="footer">
-  <span>DuckSuite · Product progress and revised Phase 1 plan · 2026-11-09</span>
-  <span>52 tests · unsigned archive pass · App Store upload blocked</span>
+  <span>DuckSuite · Product progress and revised Phase 1 plan · 2026-11-10</span>
+  <span>81 tests · unsigned archive pass · App Store upload blocked · fill quality measured, not solved</span>
 </footer>
 
 </div>
