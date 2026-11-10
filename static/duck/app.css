@@ -615,6 +615,7 @@ svg { display: block; flex: 0 0 auto; }
   height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 620;
 }
 .segmented button.is-active { background: var(--amber-2); color: #fff; }
+.segmented button:disabled { opacity: .45; cursor: not-allowed; }
 .layer-list { display: grid; gap: 3px; }
 .layer-row {
   display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 7px;
@@ -625,6 +626,15 @@ svg { display: block; flex: 0 0 auto; }
 .layer-row .layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .layer-row .layer-kind { color: var(--muted); font-size: 10px; }
 .layer-row .eye { color: var(--muted); }
+.layer-row.is-off .layer-name { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.layer-row.is-off .layer-kind { color: var(--faint, var(--muted)); }
+.layer-flag {
+  padding: 0 5px; height: 16px; line-height: 16px; border-radius: 8px;
+  background: var(--amber-soft); color: var(--amber-ink, #8a5a12); font-size: 9px; font-weight: 650;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+.layer-note { margin: 2px 2px 8px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.layer-note.is-warn { color: var(--amber-ink, #8a5a12); background: var(--amber-soft); border-radius: 6px; padding: 6px 8px; }
 .model-line { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .model-line strong { color: var(--green); font-weight: 650; }
 .field { display: grid; gap: 5px; }
@@ -791,6 +801,10 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
 .modal-head h2 { margin: 0; font-size: 16px; letter-spacing: -0.02em; }
 .modal-body { padding: 16px; overflow: auto; max-height: calc(100vh - 140px); }
 .modal-body video { width: 100%; max-height: 70vh; background: var(--video); border-radius: 8px; }
+.clean-all-body { display: grid; gap: 10px; }
+.clean-all-body p { margin: 0; font-size: 13px; }
+.clean-all-list { margin: 0; padding-left: 18px; display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .settings-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; }
 .settings-grid section { display: grid; gap: 8px; align-content: start; }
 .settings-grid h3 { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }

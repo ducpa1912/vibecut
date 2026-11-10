@@ -903,6 +903,10 @@ def extract_text_frames(
     files = sorted(directory.glob("*.jpg"))
     if not files:
         return []
+    # The fps filter can start a frame or two late, so a card that is on screen
+    # for under 100 ms, like a title at 0 s, is never read. Replace the first
+    # still with the source's own first frame so that spot is always checked.
+    _first_still(path, files[0], window_start)
     if progress is not None:
         progress(1.0, f"Reading the source · {len(files)} frames · checking the reader")
     window = 1.0 / cadence
@@ -917,6 +921,29 @@ def extract_text_frames(
         }
         for index, frame in enumerate(files)
     ]
+
+
+def _first_still(path: str, target: Path, at: float, timeout: int = 120) -> None:
+    """Overwrite ``target`` with the frame at exactly ``at`` seconds.
+
+    A plain seek plus one frame is the only way to land on the very first
+    picture; the ``fps`` filter can skip it. A failure leaves the sampled
+    still in place rather than stopping Check.
+    """
+    try:
+        _run(
+            [
+                _ffmpeg(), "-y", "-v", "error",
+                "-ss", f"{max(0.0, float(at)):.3f}", "-i", path,
+                "-frames:v", "1",
+                "-vf", f"scale='min({CHECK_FRAME_WIDTH},iw)':-2",
+                "-q:v", "4", str(target),
+            ],
+            timeout=timeout,
+        )
+    except (PipelineError, OSError, subprocess.SubprocessError):
+        # The sampled still stays; the read goes on.
+        pass
 
 
 def motion_between_frames(directory: Path, files: list[Path]) -> dict | None:

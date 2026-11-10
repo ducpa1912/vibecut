@@ -129,3 +129,96 @@ def test_text_in_region_finds_bright_text_on_bright_background() -> None:
     found = masks.text_in_region(image, 4)
     assert found is not None
     assert float(found.mean()) > 0.3
+
+
+def _report(motion: float, kind: str = "subtitle") -> dict:
+    return {
+        "tracklets": [
+            {
+                "id": "trk_motion",
+                "kind": kind,
+                "box": {"x": 0.3, "y": 0.48, "w": 0.4, "h": 0.04},
+                "ranges": [{"start": 1.0, "end": 3.0}],
+                "text_sample": "words",
+                "confidence": 0.9,
+                "fill_plan": {"keys": 6.0, "motion": motion, "noise": 1.0},
+            }
+        ]
+    }
+
+
+def test_still_line_keeps_ai_fill() -> None:
+    layer = clean.layers_from_report(_report(2.0))[0]
+    assert layer["kind"] == "fill"
+    assert layer["method"] == "lama"
+    assert layer["quality"] == "steady"
+    assert layer["auto"] is True
+
+
+def test_moving_line_keeps_fill_and_is_flagged() -> None:
+    layer = clean.layers_from_report(_report(31.0))[0]
+    assert layer["kind"] == "fill"
+    assert layer["method"] == "lama"
+    assert layer["quality"] == "moving"
+    assert layer["motion"] == 31.0
+
+
+def _short_report() -> dict:
+    report = _report(4.0)
+    report["tracklets"][0]["ranges"] = [{"start": 0.0, "end": 0.25}]
+    return report
+
+
+def test_flash_of_text_defaults_to_blur() -> None:
+    layer = clean.layers_from_report(_short_report())[0]
+    assert layer["kind"] == "blur"
+    assert layer["method"] == ""
+
+
+def test_clean_all_keeps_a_user_choice_and_replans_its_own() -> None:
+    fresh = clean.layers_from_report(_short_report())
+    planned = clean.layers_from_report(_report(4.0))[0]
+    merged = clean.merge_layers(
+        [
+            {**planned, "id": "cl_picked", "auto": False, "kind": "fill", "method": "lama"},
+            {**planned, "id": "cl_planned", "auto": True},
+        ],
+        [{**fresh[0], "id": "cl_picked"}, {**fresh[0], "id": "cl_planned"}],
+    )
+    by_id = {layer["id"]: layer for layer in merged}
+    assert by_id["cl_picked"]["kind"] == "fill"
+    assert by_id["cl_picked"]["auto"] is False
+    assert by_id["cl_planned"]["kind"] == "blur"
+
+
+def test_patch_layer_marks_the_choice_as_the_users() -> None:
+    edit = {"clean": [{"id": "cl_one", "kind": "blur", "method": "", "enabled": True, "auto": True}]}
+    clean.patch_layer(edit, "cl_one", "fill")
+    assert edit["clean"][0]["kind"] == "fill"
+    assert edit["clean"][0]["auto"] is False
+
+
+def test_plan_summary_counts_fill_blur_and_off() -> None:
+    edit = {"clean": [
+        {"kind": "fill", "enabled": True, "quality": "steady"},
+        {"kind": "blur", "enabled": True, "quality": "moving"},
+        {"kind": "fill", "enabled": False, "quality": "moving"},
+    ]}
+    assert clean.plan_summary(edit) == {"fill": 1, "blur": 1, "off": 1, "moving": 2}
+
+
+def test_top_display_type_reads_as_a_title() -> None:
+    """A card near the top of the frame is a title, not a word-pop caption."""
+    from duckcore.engine import detect
+
+    tracklet = {
+        "box": {"x": 0.227, "y": 0.321, "w": 0.535, "h": 0.063},
+        "text_sample": "人吃啥咪吃啥",
+        "confidence": 1.0,
+        "samples": 1,
+        "duration": 0.25,
+        "track": [{"t": 0.0, "box": {"x": 0.227, "y": 0.321, "w": 0.535, "h": 0.063}}],
+    }
+    kind, rule = detect.classify(tracklet, 160.0)
+    assert kind == "title"
+    assert rule >= 0.7

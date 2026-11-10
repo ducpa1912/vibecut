@@ -676,6 +676,15 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     if _large_box(box) and any(char.isalpha() for char in text) and not corner:
         return "title", 0.8
 
+    # A line of display type across the top of the frame is a title card, even
+    # when the OCR box is smaller than the usual title. Captions sit lower.
+    if (
+        bottom <= 0.42 and height >= 0.05 and width >= 0.30
+        and area <= 0.12 and any(char.isalpha() for char in text)
+        and not corner
+    ):
+        return "title", 0.7
+
     if _word_pop(text, box, corner):
         return "subtitle", 0.75
 

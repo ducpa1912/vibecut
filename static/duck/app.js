@@ -47,6 +47,7 @@ const state = {
   voiceMode: 'voice_over',
   welcomeQuery: '',
   queuePaused: false,
+  queueScope: 'project',
   previewView: 'after',
   inlinePlaying: false,
   scriptOpen: false,
@@ -552,6 +553,12 @@ function layerState(layer) {
   return layer.kind === 'blur' ? 'Blur' : 'Fill';
 }
 
+// AI fill only looks clean while the picture under the line holds still. Check
+// measures that per line, so a layer can say when Fill is a gamble.
+function layerRisk(layer) {
+  return Boolean(layer && layer.enabled !== false && layer.kind === 'fill' && layer.quality === 'moving');
+}
+
 const LAYER_KIND = {
   screen_text: 'Screen text',
   subtitle: 'Subtitle',
@@ -775,7 +782,7 @@ function topbar() {
   return `<header class="toolbar" data-toolbar>
     <div class="toolbar-left">
       <button class="duck-home" type="button" data-action="welcome" title="Home" aria-label="Home">${duckMark(28)}</button>
-      <button class="btn toolbar-import" type="button" data-action="import"${state.importing ? ' disabled' : ''}>${icon(state.importing ? 'loader' : 'plus', 14)} Import</button>
+      ${screen === 'welcome' ? '' : `<button class="btn toolbar-import" type="button" data-action="import"${state.importing ? ' disabled' : ''}>${icon(state.importing ? 'loader' : 'plus', 14)} Import</button>`}
       <button class="icon-btn toolbar-search" type="button" data-action="search" title="Search" aria-label="Search">${icon('search', 16)}</button>
     </div>
     <nav class="toolbar-tabs" aria-label="Workflow">
@@ -817,7 +824,6 @@ function screenWelcome() {
               ${state.project?.id === project.id ? '<span class="chip amber">Editing</span>' : ''}
             </button>`).join('') : '<p class="muted small" style="padding:8px 9px">No projects yet.</p>'}
         </div>
-        <button class="btn wide" type="button" data-action="import" style="margin-top:12px">${icon('plus', 15)} Import video</button>
       </aside>
 
       <section class="welcome-center">
@@ -1454,7 +1460,7 @@ function screenEditor() {
           <button class="btn wide focus-open" type="button" data-action="open-focus" data-focus="${tab}">${icon('expand', 14)} Open ${focusLabel} Focus</button>
           <div class="render-strip">
             <div class="panel-head" style="padding:0 0 4px"><h3 style="font-size:11px">Render queue</h3><span class="meta">${queueActiveCount()} active</span></div>
-            ${state.queue.slice(0, 3).map((item) => `<div class="render-row"><span class="state-dot ${item.state === 'done' ? 'green' : ['running', 'rendering', 'queued', 'paused'].includes(item.state) ? 'amber' : ''}"></span><span>${esc(item.title || 'Render')}</span><span class="render-time">${item.state === 'done' ? 'Done' : queueLabel(item.state)}</span></div>`).join('') || '<p class="small muted">No renders yet.</p>'}
+            ${(state.project ? state.queue.filter((item) => !item.project_id || item.project_id === state.project.id) : state.queue).slice(0, 3).map((item) => `<div class="render-row"><span class="state-dot ${item.state === 'done' ? 'green' : ['running', 'rendering', 'queued', 'paused'].includes(item.state) ? 'amber' : ''}"></span><span>${esc(item.title || 'Render')}</span><span class="render-time">${item.state === 'done' ? 'Done' : queueLabel(item.state)}</span></div>`).join('') || '<p class="small muted">No renders yet.</p>'}
           </div>
         </div>
       </aside>`}
@@ -1558,9 +1564,10 @@ function transcriptRow(segment, index) {
 function layerListMarkup(active, layers, emptyText = 'No text detected in this scene.') {
   const visible = state.showAllLayers ? layers : layers.slice(0, 6);
   return `<div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
-    ${layers.length ? visible.map((item, index) => `<button class="layer-row${item.id === active?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
+    ${layers.length ? visible.map((item, index) => `<button class="layer-row${item.id === active?.id ? ' is-active' : ''}${item.enabled === false ? ' is-off' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
       <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
       <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
+      ${item.quality === 'moving' && item.enabled !== false ? `<span class="layer-flag" title="Background moves behind this line">moves</span>` : ''}
       <span class="layer-kind">${esc(layerState(item))}</span>
     </button>`).join('') : `<p class="small muted">${esc(emptyText)}</p>`}
   </div>
@@ -1581,11 +1588,31 @@ function inspectorClean(scene, layer, layers) {
       return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
     }).join('')}
   </div>
+  ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
   ${layerListMarkup(layer, layers)}
   <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
-  <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${state.engine?.fill?.ready ? 'Local fill' : 'Missing model'}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
+  <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
+}
+
+function layerNote(layer) {
+  if (!layer) return '';
+  if (layer.enabled === false) return 'Off. The words stay exactly as they are in the source.';
+  if (layer.kind === 'fill') {
+    if (layer.quality === 'moving') return 'Background moves here, so AI fill can smear. Switch to Blur if it shows.';
+    if (layer.quality === 'steady') return 'Still background. AI fill rebuilds the plate behind the words.';
+    return 'AI fill rebuilds the plate behind the words.';
+  }
+  return layer.quality === 'moving'
+    ? 'Blur hides the words and keeps the motion.'
+    : 'Blur hides the words without rebuilding the background.';
+}
+
+function fillStatusText() {
+  if (state.engine?.fill?.ready) return 'Local fill';
+  const problem = String(state.engine?.fill?.problem || '').trim();
+  return problem ? problem.slice(0, 90) : 'Model not found. Reinstall DuckSuite to restore it.';
 }
 
 
@@ -2396,9 +2423,10 @@ function screenClean() {
               return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
             }).join('')}
           </div>
+          ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
           <button class="btn wide" type="button" data-action="brush-toggle">${icon('sparkle', 14)} ${state.brushMode ? 'Close brush' : 'Paint a mask'}</button>
-          <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${state.engine?.fill?.ready ? 'Local fill' : 'Missing model'}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
+          <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`
             : `<button class="btn primary wide" type="button" data-action="clean-all">${icon('sparkle', 15)} Clean all scenes</button><button class="btn wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview</button>`}
@@ -2923,7 +2951,16 @@ function screenRender() {
   const activeJobs = state.queue.filter((item) => ['queued', 'running', 'rendering', 'paused'].includes(item.state)).length;
   const activeJob = activeRenderJob();
   const proofTotal = proofTargets(scenes).length;
-  const queue = state.queue;
+  const mine = state.project
+    ? state.queue.filter((item) => !item.project_id || item.project_id === state.project.id)
+    : state.queue;
+  const queue = state.queueScope === 'all' ? state.queue : mine;
+  const elsewhere = state.queue.length - mine.length;
+  const cleanOn = (state.edit?.clean || []).filter((layer) => layer.enabled !== false);
+  const cleanFill = cleanOn.filter((layer) => layer.kind !== 'blur').length;
+  const cleanBlur = cleanOn.length - cleanFill;
+  const movingBlur = cleanOn.filter((layer) => layer.kind === 'blur' && layer.quality === 'moving').length;
+  const movingFill = cleanOn.filter((layer) => layer.kind !== 'blur' && layer.quality === 'moving').length;
   return `<main class="screen">${storyContextBar()}
     <div class="workspace render">
       <aside class="panel">
@@ -2941,9 +2978,9 @@ function screenRender() {
       </aside>
 
       <section class="panel render-queue">
-        <div class="render-queue-head"><h2>Render queue · ${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}</h2><div style="display:flex;gap:6px">${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
+        <div class="render-queue-head"><h2>Render queue · ${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}</h2><div style="display:flex;gap:6px">${elsewhere ? `<button class="btn small" type="button" data-action="queue-scope">${state.queueScope === 'all' ? 'This project' : `All projects · ${state.queue.length}`}</button>` : ''}${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
         <div class="queue-head-row"><span>Project / Story</span><span>Edit</span><span>Duration</span><span>Resolution</span><span>State</span><span>Progress</span><span>Output</span></div>
-        ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : '<div class="queue-empty">No jobs yet. Start a render from Preview.</div>'}
+        ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : `<div class="queue-empty">${elsewhere ? `No renders for this project. ${elsewhere} job${elsewhere === 1 ? '' : 's'} in other projects.` : 'No jobs yet. Start a render from Preview.'}</div>`}
       </section>
 
       <aside class="render-ready">
@@ -2952,6 +2989,9 @@ function screenRender() {
           <div class="ready-card">
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${proofTotal} text-scene proofs cached</strong><span>Optional review frames; render is available</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
+            <div class="ready-row"><span class="ready-icon" style="${cleanOn.length ? '' : 'background:var(--paper-2);color:var(--muted)'}">${icon('sparkle', 12)}</span><span class="ready-main"><strong>Clean</strong><span>${cleanOn.length ? `${cleanFill} fill · ${cleanBlur} blur` : 'No text layers'}</span></span></div>
+            ${movingBlur ? `<p class="small muted" style="margin:2px 0 0 24px">${movingBlur} line${movingBlur === 1 ? '' : 's'} use Blur instead of AI fill.</p>` : ''}
+            ${movingFill ? `<p class="small" style="margin:2px 0 0 24px;color:var(--amber-ink)">${movingFill} line${movingFill === 1 ? '' : 's'} use AI fill over a moving background and may smear.</p>` : ''}
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
@@ -3127,7 +3167,8 @@ async function openSettings() {
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
           <p class="small muted">NLLB-200 600M int8 is about 630 MB and is CC-BY-NC-4.0, non-commercial. Apple Translation is preferred. A custom folder must be a CTranslate2 model with model.bin, config.json and sentencepiece.bpe.model.</p>
           <h3 style="margin-top:10px">Models</h3>
-          ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
+          ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button>${model.file ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(model.file)}">Show</button>` : ''}</strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
+          ${state.engine?.fill?.ready ? '' : `<p class="small muted">AI fill ships inside the app. If the file is missing, reinstall DuckSuite (or run the dev build) to restore it.</p>`}
         </section>
         <section>
           <h3>Storage</h3>
@@ -3444,11 +3485,37 @@ async function applyTrim() {
   }
 }
 
+function confirmCleanAll() {
+  if (!state.project || !state.edit) {
+    toast('Finish Check first.', 'bad');
+    return;
+  }
+  const layers = state.edit.clean?.length || 0;
+  const userSet = (state.edit.clean || []).filter((layer) => layer.auto === false).length;
+  openModal(`<dialog class="modal clean-all-modal" aria-label="Clean all scenes">
+    <div class="modal-head"><h2>Clean all scenes</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
+    <div class="modal-body clean-all-body">
+      <p>This re-reads the Check result and rebuilds the clean layers.</p>
+      <ul class="clean-all-list">
+        <li>${layers ? `${layers} layer${layers === 1 ? '' : 's'} on this edit` : 'One layer per text block Check found'}</li>
+        <li>${userSet ? `${userSet} you set yourself keep their Fill, Blur or Off` : 'Layers DuckSuite planned are re-decided'}</li>
+        <li>A line that only flashes on screen gets Blur, because a fill has nothing to rebuild from</li>
+      </ul>
+      <p class="small muted">Your clips, captions, story, and audio stay as they are.</p>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-action="close-modal">Cancel</button>
+        <button class="btn primary" type="button" data-action="clean-all-confirm">${icon('sparkle', 14)} Clean all</button>
+      </div>
+    </div>
+  </dialog>`);
+}
+
 async function cleanAll() {
   if (!state.project || !state.edit) {
     toast('Finish Check first.', 'bad');
     return;
   }
+  closeModal();
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/from-check`, { method: 'POST' });
     state.edit = data.edit;
@@ -3456,7 +3523,13 @@ async function cleanAll() {
     state.previewCache.clear();
     state.previewStatus.clear();
     render();
-    toast(`${data.layers || state.edit.clean.length} clean layers ready.`);
+    const plan = data.plan || {};
+    const count = data.layers || (state.edit.clean || []).length;
+    const parts = [`${count} clean layer${count === 1 ? '' : 's'}`];
+    if (plan.fill) parts.push(`${plan.fill} fill`);
+    if (plan.blur) parts.push(`${plan.blur} blur`);
+    if (plan.off) parts.push(`${plan.off} off`);
+    toast(`${parts.join(' · ')}.${plan.moving ? ` ${plan.moving} sit over a moving background.` : ''}`);
     if (state.screen === 'preview') startPreviewClean();
   } catch (error) {
     toast(`Clean failed: ${error.message}`, 'bad');
@@ -3929,7 +4002,9 @@ document.addEventListener('click', async (event) => {
     else if (action === 'slip-clip') await slipClip(Number(target.dataset.delta || 0));
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
-    else if (action === 'clean-all') await cleanAll();
+    else if (action === 'clean-all') confirmCleanAll();
+    else if (action === 'clean-all-confirm') await cleanAll();
+    else if (action === 'queue-scope') { state.queueScope = state.queueScope === 'all' ? 'project' : 'all'; render(); }
     else if (action === 'proof-all') await startPreviewClean();
     else if (action === 'caption-generate') await generateCaptions();
     else if (action === 'download-captions') await downloadCaptions();

@@ -11,6 +11,13 @@ from typing import Any
 
 TEXT_KINDS = {"subtitle", "title", "lower_third", "credit", "screen_text"}
 RISKY_KINDS = {"handle_or_logo", "watermark"}
+# Mean change around a line, 0..255, measured by Check. Above this the picture
+# under the text moves enough that a per-frame fill has to invent texture, so
+# the layer is flagged for the user and reported before the render.
+FILL_MOTION_LIMIT = 10.0
+# A line this short has no calm neighbours to learn from, so a fill has nothing
+# to rebuild the plate with. A flash of text is better hidden under Blur.
+FILL_SHORT_SECONDS = 0.5
 
 
 def _layer_id(tracklet: dict) -> str:
@@ -44,10 +51,26 @@ def layers_from_report(report: dict, *, enabled: bool = True) -> list[dict]:
         fill = kind in TEXT_KINDS
         risky = kind in RISKY_KINDS
         fill_plan = tracklet.get("fill_plan") if isinstance(tracklet.get("fill_plan"), dict) else {}
+        motion = fill_plan.get("motion")
+        quality = "steady"
+        if fill and motion is not None and float(motion or 0.0) > FILL_MOTION_LIMIT:
+            quality = "moving"
+        shown = sum(
+            float(item.get("end") or 0.0) - float(item.get("start") or 0.0)
+            for item in ranges
+        )
+        # A fill over a moving plate still beats Blur on real footage, so Fill
+        # stays the default and the layer is flagged instead. A line that only
+        # flashes on screen is the one case Blur wins: there is no calm frame
+        # to rebuild from.
+        use_fill = fill and shown >= FILL_SHORT_SECONDS
         layers.append({
             "id": layer_id,
-            "kind": "fill" if fill else "blur",
-            "method": "lama" if fill else "",
+            "kind": "fill" if use_fill else "blur",
+            "method": "lama" if use_fill else "",
+            "auto": True,
+            "quality": quality,
+            "motion": round(float(motion), 3) if motion is not None else None,
             "track": list(tracklet.get("track") or [])[:600],
             "large": bool(tracklet.get("large") or False),
             "fill_keys": fill_plan.get("keys"),
@@ -172,15 +195,33 @@ def merge_layers(existing: list[dict], fresh: list[dict]) -> list[dict]:
     merged = []
     for layer in fresh:
         previous = by_id.get(str(layer["id"]))
-        if previous:
+        if previous and previous.get("auto") is False:
+            # The user picked Fill, Blur or Off for this line, so keep it. A
+            # layer DuckSuite planned itself may be re-planned by a better rule.
             layer = {
                 **layer,
                 "kind": previous.get("kind", layer["kind"]),
                 "method": previous.get("method", layer["method"]),
                 "enabled": previous.get("enabled", layer["enabled"]),
+                "auto": False,
             }
         merged.append(layer)
     return merged
+
+
+def plan_summary(edit: dict) -> dict:
+    """Counts of what Clean will do, for an honest message after a re-plan."""
+    fill = blur = off = moving = 0
+    for layer in edit.get("clean") or []:
+        if layer.get("enabled") is False:
+            off += 1
+        elif layer.get("kind") == "blur":
+            blur += 1
+        else:
+            fill += 1
+        if layer.get("quality") == "moving":
+            moving += 1
+    return {"fill": fill, "blur": blur, "off": off, "moving": moving}
 
 
 def patch_layer(edit: dict, layer_id: str, action: str) -> dict:
@@ -200,6 +241,7 @@ def patch_layer(edit: dict, layer_id: str, action: str) -> dict:
             layer["enabled"] = True
             layer["kind"] = "fill"
             layer["method"] = "lama"
+        layer["auto"] = False
         return edit
     raise KeyError(layer_id)
 

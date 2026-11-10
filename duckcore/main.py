@@ -1040,7 +1040,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         report = check.get("report") or {}
         edit = clean.apply_report(edit, report)
         edits.save_edit(edit, data_root)
-        return {"edit": edit, "layers": len(edit.get("clean") or [])}
+        return {
+            "edit": edit,
+            "layers": len(edit.get("clean") or []),
+            "plan": clean.plan_summary(edit),
+        }
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/clips/{clip_index}")
     def patch_clip(
