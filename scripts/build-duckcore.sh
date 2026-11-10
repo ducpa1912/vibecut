@@ -28,9 +28,13 @@ mkdir -p "$ROOT/build/pyinstaller-spec"
   --collect-submodules uvicorn \
   --collect-submodules kokoro_onnx \
   --collect-data kokoro_onnx \
+  --collect-submodules ctranslate2 \
+  --collect-data sentencepiece \
   --hidden-import duckcore.store \
   --hidden-import soundfile \
   --hidden-import onnxruntime \
+  --hidden-import ctranslate2 \
+  --hidden-import sentencepiece \
   "$ROOT/duck_app.py"
 
 printf 'Built %s/duckcore\n' "$OUT"

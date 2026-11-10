@@ -46,6 +46,33 @@ PACKS = (
             "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/main/config.json",
         }],
     },
+    {
+        "id": "translation-nllb",
+        "name": "NLLB-200 distilled 600M int8",
+        "purpose": "translation",
+        "detail": "Local translation for English, Vietnamese, Chinese and Japanese. CC-BY-NC-4.0: non-commercial use only.",
+        "size_bytes": 622_595_991,
+        "license": "CC-BY-NC-4.0 (non-commercial)",
+        "filename": "model.bin",
+        "url": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8/resolve/main/model.bin",
+        "extra_files": [
+            {
+                "filename": "config.json",
+                "size_bytes": 159,
+                "url": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8/resolve/main/config.json",
+            },
+            {
+                "filename": "sentencepiece.bpe.model",
+                "size_bytes": 4_852_054,
+                "url": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8/resolve/main/sentencepiece.bpe.model",
+            },
+            {
+                "filename": "shared_vocabulary.txt",
+                "size_bytes": 2_568_098,
+                "url": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8/resolve/main/shared_vocabulary.txt",
+            },
+        ],
+    },
 )
 
 _LOCK = threading.Lock()

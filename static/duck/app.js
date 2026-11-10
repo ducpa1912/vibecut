@@ -2675,12 +2675,68 @@ async function applyBrush() {
   }
 }
 
+function layerBoxAt(layer, time) {
+  const track = Array.isArray(layer?.track) ? layer.track : [];
+  const fallback = layer?.box || { x: 0, y: 0, w: 0, h: 0 };
+  if (!track.length) return fallback;
+  const points = track.filter((item) => item?.box);
+  if (!points.length) return fallback;
+  let before = points[0];
+  let after = points[points.length - 1];
+  for (const point of points) {
+    if (Number(point.t || 0) <= time) before = point;
+    if (Number(point.t || 0) >= time) { after = point; break; }
+  }
+  if (before === after) return before.box;
+  const span = Math.max(0.001, Number(after.t || 0) - Number(before.t || 0));
+  const mix = Math.max(0, Math.min(1, (time - Number(before.t || 0)) / span));
+  const box = (key) => Number(before.box[key] || 0) + (Number(after.box[key] || 0) - Number(before.box[key] || 0)) * mix;
+  return { x: box('x'), y: box('y'), w: box('w'), h: box('h') };
+}
+
+function detectionLayers(scene, time) {
+  return sceneLayers(scene)
+    .filter((layer) => layer.enabled !== false)
+    .filter((layer) => !(layer.ranges || []).length || (layer.ranges || []).some((range) => (
+      Number(range.start || 0) <= time && Number(range.end || 0) > time
+    )))
+    .map((layer) => ({ layer, box: layerBoxAt(layer, time) }));
+}
+
+function updateDetectionOverlay(player, scene) {
+  const overlay = document.querySelector('[data-detect-overlay]');
+  if (!overlay || !scene) return;
+  const boxes = detectionLayers(scene, Number(player.currentTime || 0));
+  overlay.innerHTML = boxes.map(({ layer, box }, index) => `<span class="detect-box ${layer.kind === 'blur' ? 'is-blur' : 'is-fill'}" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"><span class="detect-tag">${esc(layer.kind === 'blur' ? 'Blur' : 'Text')} ${index + 1}</span></span>`).join('');
+}
+
+function setupInlineDetectionReview() {
+  const player = document.querySelector('[data-inline-player]');
+  if (!player) return;
+  const scene = currentScene();
+  if (!scene) return;
+  const start = Number(player.dataset.start || scene.start || 0);
+  const seek = () => {
+    try { player.currentTime = start; } catch (_) { /* metadata not ready */ }
+    updateDetectionOverlay(player, scene);
+  };
+  if (player.readyState >= 1) seek();
+  else player.addEventListener('loadedmetadata', seek, { once: true });
+  const update = () => updateDetectionOverlay(player, scene);
+  player.addEventListener('timeupdate', update);
+  player.addEventListener('seeked', update);
+  player.addEventListener('play', update);
+  update();
+}
+
 function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
   const view = state.previewView || 'compare';
   if (!scene) return '';
   if (state.inlinePlaying) {
     return `<div class="split-stage inline-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
       <video data-inline-player data-start="${Number(scene.start || 0).toFixed(3)}" controls autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>
+      <div class="detect-overlay" data-detect-overlay></div>
+      <span class="detect-legend">Detection review · blur preview</span>
       <button class="btn small inline-close" type="button" data-action="close-inline-player">${icon('arrowLeft', 12)} Back to proof</button>
     </div>`;
   }
@@ -2769,6 +2825,7 @@ function screenPreview() {
             <div class="segmented">
               ${['before', 'compare', 'after'].map((view) => `<button class="${state.previewView === view ? 'is-active' : ''}" type="button" data-action="preview-view" data-view="${view}">${view[0].toUpperCase() + view.slice(1)}</button>`).join('')}
             </div>
+            <button class="btn wide" type="button" data-action="play-source">${icon('play', 14)} Play detection review</button>
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
             <button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all</button>
             ${status === 'failed' ? `<p class="small" style="color:var(--red)">This scene failed. Retry before render.</p>` : ''}
@@ -2948,6 +3005,21 @@ function openSearch() {
   input.focus();
 }
 
+async function saveTranslationSettings() {
+  try {
+    const engine = document.querySelector('#translation-engine')?.value || 'auto';
+    const path = document.querySelector('#translation-path')?.value || '';
+    const data = await api('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ translation_engine: engine, translation_model_path: path }),
+    });
+    state.settings = data;
+    toast('Translation settings saved.');
+  } catch (error) {
+    toast(`Translation settings: ${error.message}`, 'bad');
+  }
+}
+
 async function openSettings() {
   try {
     if (!state.voices.length) await loadVoices();
@@ -2978,6 +3050,19 @@ async function openSettings() {
               ? 'Apple Intelligence is off. Turn it on in System Settings → Apple Intelligence & Siri to enable Rewrite.'
               : `Rewrite: ${state.engine?.rewrite?.reason || 'Apple Intelligence is unavailable.'}`
           )}</p>`}
+          <h3 style="margin-top:12px">Translation</h3>
+          <div class="field"><label>Engine</label>
+            <select id="translation-engine">
+              <option value="auto" ${(state.settings?.translation?.engine || 'auto') === 'auto' ? 'selected' : ''}>Auto · Apple first, then local</option>
+              <option value="nllb" ${state.settings?.translation?.engine === 'nllb' ? 'selected' : ''}>NLLB pack</option>
+              <option value="custom" ${state.settings?.translation?.engine === 'custom' ? 'selected' : ''}>Custom CTranslate2 model</option>
+            </select>
+          </div>
+          <div class="field"><label>Custom model folder</label>
+            <input id="translation-path" type="text" value="${esc(state.settings?.translation?.custom_path || '')}" placeholder="/path/to/nllb-ct2-int8">
+          </div>
+          <button class="btn small" type="button" data-action="save-translation">Save translation</button>
+          <p class="small muted">NLLB-200 600M int8 is about 630 MB and is CC-BY-NC-4.0, non-commercial. Apple Translation is preferred. A custom folder must be a CTranslate2 model with model.bin, config.json and sentencepiece.bpe.model.</p>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
           <h3 style="margin-top:12px">Optional downloads</h3>
@@ -3711,6 +3796,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'import-scenes') beginImport('scenes');
     else if (action === 'import-full') beginImport('full');
     else if (action === 'settings') await openSettings();
+    else if (action === 'save-translation') await saveTranslationSettings();
     else if (action === 'search') openSearch();
     else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; state.timelineTime = sourceToTimeline(state.previewTime); navigate(projectPath('edit')); }
     else if (action === 'search-project') { const id = target.dataset.project || ''; closeModal(); if (id) { await openProject(id); navigate(`project/${id}/${state.check?.state === 'done' ? 'edit' : 'check'}`); } }
@@ -3986,6 +4072,8 @@ function afterRender() {
       }
     })();
   });
+
+  setupInlineDetectionReview();
 
   const dropzone = document.querySelector('[data-dropzone]');
   if (dropzone) {

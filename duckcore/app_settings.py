@@ -63,6 +63,10 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
     return {
         "version": __version__,
         "language": "auto",
+        "translation": {
+            "engine": str(settings.get("translation_engine") or "auto"),
+            "custom_path": str(settings.get("translation_model_path") or ""),
+        },
         "online": {
             "enabled": bool(settings.get("online_enabled")),
             "endpoint": str(settings.get("online_endpoint") or ""),
@@ -86,6 +90,13 @@ def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
         if endpoint and not endpoint.startswith(("https://", "http://127.0.0.1", "http://localhost")):
             raise ValueError("Online endpoint must be HTTPS or localhost.")
         current["online_endpoint"] = endpoint[:500]
+    if "translation_engine" in payload:
+        engine = str(payload["translation_engine"] or "auto").strip().lower()
+        if engine not in {"auto", "nllb", "custom"}:
+            raise ValueError("Translation engine must be auto, nllb or custom.")
+        current["translation_engine"] = engine
+    if "translation_model_path" in payload:
+        current["translation_model_path"] = str(payload["translation_model_path"] or "").strip()[:2000]
     # DuckSuite always auto-detects language. Keep the field read-only.
     current["language"] = "auto"
     return save(data_root, current)

@@ -93,6 +93,8 @@ class LayerAction(BaseModel):
 class SettingsPatch(BaseModel):
     online_enabled: bool | None = None
     online_endpoint: str | None = None
+    translation_engine: str | None = None
+    translation_model_path: str | None = None
 
 
 class CuePatch(BaseModel):

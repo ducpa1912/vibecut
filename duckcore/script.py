@@ -131,18 +131,42 @@ def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -
         raise ValueError("Choose English, Vietnamese or Chinese.")
     cues = _cues(edit)
     lines = [str(cue.get("source_text") or cue.get("text") or "") for cue in cues]
-    values = _run("translate_apple", {
-        "source": str(source or "en"),
-        "target": target,
-        "lines": lines,
-    })
+    from duckcore import app_settings, nllb
+
+    settings = app_settings.load(data_root)
+    choice = str(settings.get("translation_engine") or "auto").lower()
+    values = None
+    engine = "apple-translation"
+    apple_error = ""
+    if choice == "auto":
+        try:
+            values = _run("translate_apple", {
+                "source": str(source or "en"),
+                "target": target,
+                "lines": lines,
+            })
+        except ValueError as exc:
+            apple_error = str(exc)
+    if values is None:
+        try:
+            values = nllb.translate_lines(
+                lines, source=str(source or "en"), target=target,
+                data_root=Path(data_root),
+                custom_path=str(settings.get("translation_model_path") or ""),
+            )
+            engine = "nllb-custom" if choice == "custom" or settings.get("translation_model_path") else "nllb"
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            detail = str(exc).strip()
+            if apple_error:
+                detail = f"Apple Translation: {apple_error} Local model: {detail}"
+            raise ValueError(detail) from exc
     for cue, value in zip(cues, values):
         cue["text"] = value
     edit["script"] = {
         "source_language": source,
         "target_language": target,
         "mode": "translated",
-        "engine": "apple-translation",
+        "engine": engine,
     }
     edits.save_edit(edit, data_root)
     return edit["captions"]
