@@ -729,7 +729,10 @@ async function route() {
     state.screen = routeInfo.screen;
     if (['edit', 'clean', 'preview', 'render'].includes(routeInfo.screen)) await ensureEdit();
     if (routeInfo.screen === 'check' && state.check?.state === 'idle') await startCheck();
-    if (routeInfo.screen === 'preview') startPreviewClean();
+    if (routeInfo.screen === 'preview') {
+      const scene = currentScene();
+      if (scene) startPreviewClean(scene.id);
+    }
     if (routeInfo.screen === 'clean' && state.edit) {
       const scene = currentScene();
       if (scene && !state.previewCache.has(scene.id)) startPreviewClean(scene.id);
@@ -2732,7 +2735,6 @@ function screenPreview() {
   const scene = currentScene();
   if (!scene) return emptyEditor();
   const ready = scenes.filter((item) => state.previewStatus.get(item.id) === 'ready').length;
-  const blocking = scenes.filter((item) => !sceneRenderReady(item));
   const status = state.previewStatus.get(scene.id) || 'pending';
   return `<main class="screen">${storyContextBar()}
     <div class="workspace preview">
@@ -2776,17 +2778,18 @@ function screenPreview() {
         <section class="panel readiness">
           <div class="readiness-head"><strong>Readiness</strong><span>${ready} / ${scenes.length} proofs</span></div>
           <div class="progress"><span style="width:${scenes.length ? (ready / scenes.length) * 100 : 0}%"></span></div>
-          <p class="readiness-note">${ready === scenes.length ? 'All scenes have a proof. Review before render.' : `Rendering stays blocked until each scene is ready. Still blocked: ${blocking.slice(0, 8).map((item) => `S${pad(scenes.indexOf(item) + 1)}`).join(', ')}${blocking.length > 8 ? ` +${blocking.length - 8}` : ''}.`}</p>
+          <p class="readiness-note">Proofs are optional review frames. You can render any time. ${ready}/${scenes.length} proofs cached.</p>
+          <button class="btn wide" type="button" data-action="proof-all" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 13)} Generate remaining proofs</button>
         </section>
 
-        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px" ${sceneReadyCount(scenes) === scenes.length ? '' : 'disabled'}>${icon('play', 15)} Render</button>
+        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon('play', 15)} Render</button>
       </aside>
     </div>
   </main>`;
 }
 
 function previewStatusLabel(value) {
-  return ({ ready: 'Proof', cleaning: 'Cleaning…', failed: 'Failed', pending: 'Queued', queued: 'Queued' }[value] || 'Queued');
+  return ({ ready: 'Proof', cleaning: 'Cleaning…', failed: 'Failed', pending: 'No proof', queued: 'Queued' }[value] || 'No proof');
 }
 
 /* ------------------------------------------------------------------ render */
@@ -2794,7 +2797,6 @@ function previewStatusLabel(value) {
 function screenRender() {
   const scenes = getScenes();
   const checked = sceneReadyCount(scenes);
-  const blocking = scenes.filter((scene) => !sceneRenderReady(scene));
   const captions = state.edit?.captions?.cues?.length ? 1 : 0;
   const voice = state.edit?.voice ? 1 : 0;
   const dub = state.edit?.dub ? 1 : 0;
@@ -2838,14 +2840,14 @@ function screenRender() {
         <section class="panel render-ready" style="border:0;box-shadow:none;padding:0;background:transparent">
           <div class="panel-head" style="padding:0 0 2px"><h2>Ready</h2><span class="meta">${checked}/${scenes.length}</span></div>
           <div class="ready-card">
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} scenes ready</strong><span>${checked === scenes.length ? 'Review proofs before render' : 'Some scenes still need a decision'}</span></span></div>
+            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} proofs cached</strong><span>Optional review frames; render is available</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
           </div>
-          <button class="btn primary wide start" type="button" data-action="start-render" ${checked === scenes.length ? '' : 'disabled'}>${icon('play', 16)} Start render</button>
-          ${blocking.length ? `<p class="readiness-blockers">Still blocked: ${blocking.slice(0, 8).map((item) => `S${pad(scenes.indexOf(item) + 1)}`).join(', ')}${blocking.length > 8 ? ` +${blocking.length - 8}` : ''}</p>` : ''}
+          <button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>
+          <p class="readiness-note">Proofs are optional. Start render now, or review frames later.</p>
           <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputLabel)}</span></span></div></div>
         </section>
       </aside>
@@ -3165,13 +3167,14 @@ async function startPreviewClean(forceSceneId = '') {
       return;
     }
   }
+  const forced = forceSceneId !== '' && forceSceneId !== null && forceSceneId !== undefined;
   state.previewRunning = true;
   state.previewRun += 1;
   const run = state.previewRun;
-  const order = forceSceneId ? scenes.filter((scene) => scene.id === forceSceneId) : prioritizeScenes(scenes);
+  const order = forced ? scenes.filter((scene) => String(scene.id) === String(forceSceneId)) : prioritizeScenes(scenes);
   for (const scene of order) {
     if (run !== state.previewRun) break;
-    if (!forceSceneId && state.previewCache.has(scene.id)) {
+    if (!forced && state.previewCache.has(scene.id)) {
       state.previewStatus.set(scene.id, 'ready');
       continue;
     }
@@ -3752,8 +3755,12 @@ document.addEventListener('click', async (event) => {
       state.inlinePlaying = false;
       state.showAllLayers = false;
       state.showAllCues = false;
-      state.previewStatus.set(scenes[state.selectedScene]?.id, state.previewCache.has(scenes[state.selectedScene]?.id) ? 'ready' : (state.previewStatus.get(scenes[state.selectedScene]?.id) || 'pending'));
+      const selected = scenes[state.selectedScene];
+      state.previewStatus.set(selected?.id, state.previewCache.has(selected?.id) ? 'ready' : (state.previewStatus.get(selected?.id) || 'pending'));
       render();
+      if (selected && ['preview', 'clean'].includes(state.screen) && !state.previewCache.has(selected.id)) {
+        startPreviewClean(selected.id);
+      }
     } else if (action === 'select-story') {
       const index = Number(target.dataset.scene || 0);
       state.proofTab = 'stories';
@@ -3774,6 +3781,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
     else if (action === 'clean-all') await cleanAll();
+    else if (action === 'proof-all') await startPreviewClean();
     else if (action === 'caption-generate') await generateCaptions();
     else if (action === 'download-captions') await downloadCaptions();
     else if (action === 'voice-generate') await generateVoice();
