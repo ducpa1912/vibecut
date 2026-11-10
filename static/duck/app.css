@@ -1631,3 +1631,13 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .proof-row.compact .proof-title { font-size: 11px; }
 .proof-row.compact .proof-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .proof-row.compact .proof-state .chip { padding: 1px 4px; font-size: 8px; }
+.render-live { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--amber-2); border-radius: 8px; background: var(--amber-soft); }
+.render-live strong { display: block; color: var(--amber-ink); font-size: 13px; }
+.render-live span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.render-live-actions { display: flex; gap: 5px; }
+.render-live-actions .btn { flex: 1; }
+.preview-stage.portrait-stage .split-stage { width: min(100%, calc(min(62vh, 620px) * var(--stage-ratio))); height: min(62vh, 620px); margin: 0 auto; }
+.scene-filter { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; }
+.scene-filter input { flex: 1; min-width: 0; height: 27px; font-size: 10px; }
+.proof-row.is-hidden { display: none; }
+.preview-stage.portrait-stage { display: flex; justify-content: center; align-items: center; }

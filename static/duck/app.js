@@ -86,6 +86,7 @@ const state = {
   editorReady: false,
   showAllLayers: false,
   showAllCues: false,
+  sceneQuery: '',
 };
 
 /* ------------------------------------------------------------------ utils */
@@ -315,6 +316,7 @@ async function openProject(id, { startCheck = false } = {}) {
   state.storyScenes = [];
   state.showAllLayers = false;
   state.showAllCues = false;
+  state.sceneQuery = '';
 
   const [editsData, transcriptData] = await Promise.all([
     api(`/api/projects/${encodeURIComponent(id)}/edits`).catch(() => ({ edits: [] })),
@@ -577,15 +579,24 @@ function sceneCleanCount(scenes = getScenes()) {
   return scenes.filter((scene) => sceneLayers(scene).length > 0).length;
 }
 
-function sceneRenderReady(scene) {
-  const layers = sceneLayers(scene);
-  if (!layers.length) return true;
-  if (layers.every((layer) => layer.enabled === false)) return true;
-  return state.previewStatus.get(scene.id) === 'ready';
+function sceneNeedsProof(scene) {
+  return sceneLayers(scene).some((layer) => layer.enabled !== false);
+}
+
+function proofTargets(scenes = getScenes()) {
+  return scenes.filter(sceneNeedsProof);
 }
 
 function sceneReadyCount(scenes = getScenes()) {
-  return scenes.filter(sceneRenderReady).length;
+  return proofTargets(scenes).filter((scene) => state.previewStatus.get(scene.id) === 'ready').length;
+}
+
+function activeRenderJob() {
+  return (state.queue || []).find((item) => ['queued', 'running', 'rendering', 'paused', 'pausing'].includes(item.state)) || null;
+}
+
+function renderPercent(job) {
+  return job ? Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100))) : 0;
 }
 
 function sceneStripControls(target) {
@@ -1399,6 +1410,7 @@ function screenEditor() {
           <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${getStories().length}</button>
         </div>
         ${editSwitch()}
+        <label class="scene-filter"><span class="small muted">Filter</span><input id="scene-search" type="search" placeholder="Scene title or number" value="${esc(state.sceneQuery)}"></label>
         <div class="proof-list compact">
           ${state.proofTab === 'stories' ? storyProofRows(getStories()) : sceneProofRows(scenes)}
         </div>
@@ -1495,7 +1507,8 @@ function sceneProofRows(scenes) {
     const layers = sceneLayers(scene);
     const status = cleanState(scene);
     const order = state.storyScenes.indexOf(scene.id);
-    return `<button class="proof-row compact${index === state.selectedScene ? ' is-active' : ''}${order >= 0 ? ' is-story' : ''}" type="button" data-action="${state.storySelect ? 'story-toggle' : 'select-scene'}" data-index="${index}">
+    const search = `${sceneTitle(scene, index)} ${index + 1}`.toLowerCase();
+    return `<button class="proof-row compact${index === state.selectedScene ? ' is-active' : ''}${order >= 0 ? ' is-story' : ''}" type="button" data-action="${state.storySelect ? 'story-toggle' : 'select-scene'}" data-index="${index}" data-search="${esc(search)}">
       <span class="proof-index">${state.storySelect && order >= 0 ? order + 1 : pad(index + 1)}</span>
       <span class="proof-thumb"><img src="${frameUrl(scene.start + 0.1)}" alt=""></span>
       <span class="proof-main">
@@ -2055,10 +2068,10 @@ function sourceToTimeline(time) {
   return mapSourceToTimeline(state.edit?.clips || [], time);
 }
 
-function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '') {
+function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '', title = '') {
   const left = total > 0 ? Math.max(0, Math.min(100, (Number(start) / total) * 100)) : 0;
   const width = total > 0 ? Math.max(0.6, Math.min(100 - left, ((Number(end) - Number(start)) / total) * 100)) : 0;
-  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}">${esc(label)}</button>`;
+  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} ${title ? `title="${esc(title)}"` : ''} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}">${esc(label)}</button>`;
 }
 
 function timelinePanel() {
@@ -2092,14 +2105,20 @@ function timelinePanel() {
       </div>
       <div class="timeline-tracks" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
-        <div class="timeline-track scene">${timelineSceneRanges().map((row) => {
-          const story = isStoryEdit();
-          const label = story ? storyClipLabel(row.clip, row.index) : `S${pad(row.index + 1)}`;
-          const action = story ? 'timeline-seek' : 'select-scene';
-          const data = story ? `data-time="${row.start.toFixed(3)}"` : `data-index="${row.index}"`;
-          const extra = !story && row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '';
-          return timelineBlock(row.start, row.end, total, label, action, data, extra);
-        }).join('')}</div>
+        <div class="timeline-track scene">${(() => {
+          const rows = timelineSceneRanges();
+          const dense = rows.length > 18;
+          return rows.map((row) => {
+            const story = isStoryEdit();
+            const full = story ? storyClipLabel(row.clip, row.index) : `S${pad(row.index + 1)}`;
+            const label = dense && row.index !== state.selectedScene ? '' : full;
+            const action = story ? 'timeline-seek' : 'select-scene';
+            const data = story ? `data-time="${row.start.toFixed(3)}"` : `data-index="${row.index}"`;
+            const extra = !story && row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '';
+            const title = `${full} · ${fmtDuration((row.end || 0) - (row.start || 0))}`;
+            return timelineBlock(row.start, row.end, total, label, action, data, extra, title);
+          }).join('');
+        })()}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
         <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => {
           const start = Number(row.start || 0);
@@ -2816,19 +2835,25 @@ function screenPreview() {
   const scenes = getScenes();
   const scene = currentScene();
   if (!scene) return emptyEditor();
-  const ready = scenes.filter((item) => state.previewStatus.get(item.id) === 'ready').length;
-  const status = state.previewStatus.get(scene.id) || 'pending';
+  const proofScenes = proofTargets(scenes);
+  const ready = sceneReadyCount(scenes);
+  const needsProof = sceneNeedsProof(scene);
+  const status = needsProof ? (state.previewStatus.get(scene.id) || 'pending') : 'no-text';
+  const activeJob = activeRenderJob();
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const portrait = Number(meta.height || 0) > Number(meta.width || 0);
+  const ratio = Number(meta.width || 0) && Number(meta.height || 0) ? (Number(meta.width) / Number(meta.height)).toFixed(4) : '1.7778';
   return `<main class="screen">${storyContextBar()}
     <div class="workspace preview">
       <section class="preview-main">
-        <section class="panel preview-stage" style="overflow:hidden">
+        <section class="panel preview-stage${portrait ? ' portrait-stage' : ''}" style="overflow:hidden;--stage-ratio:${ratio}">
           ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
         </section>
         <section class="panel preview-scenes">
-          <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${scenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
+          <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${proofScenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
           <div class="scene-strip" id="preview-scenes">
             ${scenes.map((item, index) => {
-              const itemStatus = state.previewStatus.get(item.id) || 'pending';
+              const itemStatus = sceneNeedsProof(item) ? (state.previewStatus.get(item.id) || 'pending') : 'no-text';
               return `<button class="scene-tile${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
                 <span class="thumb"><img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt=""><span class="tc">${pad(index + 1)}</span></span>
                 <span class="scene-label">${previewStatusLabel(itemStatus)}</span>
@@ -2842,11 +2867,11 @@ function screenPreview() {
         <section class="panel preview-status-card">
           <div class="preview-thumb"><img src="${frameUrl(sceneMid(scene))}" alt=""><div><h3>Scene ${pad(state.selectedScene + 1)}</h3><p>${fmtTC(scene.start)} – ${fmtTC(scene.end)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p></div></div>
           <div class="panel-rule" style="margin:12px 0"></div>
-          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : 'Cleaning…'}</strong><span>${status === 'ready' ? 'Review the before / after' : 'Building a proof frame from this scene.'}</span></span></div>
+          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'no-text' ? 'No text' : status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : 'Cleaning…'}</strong><span>${status === 'no-text' ? 'Nothing to clean in this scene.' : status === 'ready' ? 'Review the before / after' : 'Building a proof frame from this scene.'}</span></span></div>
         </section>
 
         <section class="panel preview-actions">
-          <div class="panel-head" style="padding-bottom:8px"><h2>Preview</h2><span class="meta">${ready}/${scenes.length}</span></div>
+          <div class="panel-head" style="padding-bottom:8px"><h2>Preview</h2><span class="meta">${ready}/${proofScenes.length}</span></div>
           <div class="panel-pad" style="padding-top:0;display:grid;gap:9px">
             <div class="segmented">
               ${['before', 'compare', 'after'].map((view) => `<button class="${state.previewView === view ? 'is-active' : ''}" type="button" data-action="preview-view" data-view="${view}">${view[0].toUpperCase() + view.slice(1)}</button>`).join('')}
@@ -2859,20 +2884,20 @@ function screenPreview() {
         </section>
 
         <section class="panel readiness">
-          <div class="readiness-head"><strong>Readiness</strong><span>${ready} / ${scenes.length} proofs</span></div>
-          <div class="progress"><span style="width:${scenes.length ? (ready / scenes.length) * 100 : 0}%"></span></div>
-          <p class="readiness-note">Proofs are optional review frames. You can render any time. ${ready}/${scenes.length} proofs cached.</p>
+          <div class="readiness-head"><strong>Proofs</strong><span>${ready} / ${proofScenes.length} text scenes</span></div>
+          <div class="progress"><span style="width:${proofScenes.length ? (ready / proofScenes.length) * 100 : 0}%"></span></div>
+          <p class="readiness-note">Proofs are optional review frames. You can render any time. ${ready}/${proofScenes.length} text scenes have a proof.</p>
           <button class="btn wide" type="button" data-action="proof-all" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 13)} Generate remaining proofs</button>
         </section>
 
-        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon('arrowRight', 15)} Continue to Render</button>
+        <button class="btn ${activeJob ? '' : 'primary'} wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon(activeJob ? 'loader' : 'arrowRight', 15)} ${activeJob ? `View active render · ${renderPercent(activeJob)}%` : 'Continue to Render'}</button>
       </aside>
     </div>
   </main>`;
 }
 
 function previewStatusLabel(value) {
-  return ({ ready: 'Proof', cleaning: 'Cleaning…', failed: 'Failed', pending: 'No proof', queued: 'Queued' }[value] || 'No proof');
+  return ({ ready: 'Proof', cleaning: 'Cleaning…', failed: 'Failed', pending: 'Needs proof', queued: 'Queued', 'no-text': 'No text' }[value] || 'Needs proof');
 }
 
 /* ------------------------------------------------------------------ render */
@@ -2896,6 +2921,8 @@ function screenRender() {
   const sourceH = Number(sourceMeta.height || 0);
   const resolutionLabel = outputSizeLabel();
   const activeJobs = state.queue.filter((item) => ['queued', 'running', 'rendering', 'paused'].includes(item.state)).length;
+  const activeJob = activeRenderJob();
+  const proofTotal = proofTargets(scenes).length;
   const queue = state.queue;
   return `<main class="screen">${storyContextBar()}
     <div class="workspace render">
@@ -2921,16 +2948,16 @@ function screenRender() {
 
       <aside class="render-ready">
         <section class="panel render-ready" style="border:0;box-shadow:none;padding:0;background:transparent">
-          <div class="panel-head" style="padding:0 0 2px"><h2>Ready</h2><span class="meta">${checked}/${scenes.length}</span></div>
+          <div class="panel-head" style="padding:0 0 2px"><h2>Ready</h2><span class="meta">${checked}/${proofTotal}</span></div>
           <div class="ready-card">
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} proofs cached</strong><span>Optional review frames; render is available</span></span></div>
+            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${proofTotal} text-scene proofs cached</strong><span>Optional review frames; render is available</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
           </div>
-          <button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>
-          <p class="readiness-note">Proofs are optional. Start render now, or review frames later.</p>
+          ${activeJob ? `<div class="render-live"><div><strong>${state.queuePaused ? 'Render paused' : activeJob.state === 'queued' ? 'Render queued' : 'Rendering'} · ${renderPercent(activeJob)}%</strong><span>${esc(activeJob.title || 'Current render')}</span></div><div class="render-live-actions">${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">Resume</button>` : `<button class="btn small" type="button" data-action="pause-queue">Pause</button>`}<button class="btn small" type="button" data-action="cancel-render" data-project="${esc(activeJob.project_id || state.project?.id || '')}" data-edit="${esc(activeJob.edit_id || '')}">Cancel</button></div></div>` : `<button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>`}
+          <p class="readiness-note">${activeJob ? 'A render is already running. Pause, cancel, or wait for it to finish.' : 'Proofs are optional. Start render now, or review frames later.'}</p>
           <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputLabel)}</span></span></div></div>
         </section>
       </aside>
@@ -3683,6 +3710,12 @@ function stopRecording() {
 }
 
 async function startRender(projectId = '', editId = '') {
+  const active = activeRenderJob();
+  if (active) {
+    toast('Render already running.');
+    await refreshQueue();
+    return;
+  }
   const pid = projectId || state.project?.id;
   const eid = editId || state.edit?.id;
   if (!pid || !eid) {
@@ -4113,6 +4146,19 @@ function afterRender() {
   });
 
   setupInlineDetectionReview();
+
+  const sceneSearch = document.querySelector('#scene-search');
+  if (sceneSearch) {
+    const filter = () => {
+      state.sceneQuery = sceneSearch.value;
+      const query = sceneSearch.value.trim().toLowerCase();
+      document.querySelectorAll('.proof-row[data-search]').forEach((row) => {
+        row.classList.toggle('is-hidden', Boolean(query) && !row.dataset.search.includes(query));
+      });
+    };
+    sceneSearch.addEventListener('input', filter);
+    filter();
+  }
 
   const dropzone = document.querySelector('[data-dropzone]');
   if (dropzone) {
