@@ -1080,7 +1080,7 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
   display: grid; place-items: center;
   border-radius: 8px; background: #f5ddbd; color: var(--amber-ink);
 }
-@media (max-width: 1360px) {
+@media (max-width: 1180px) {
   .toolbar-engine .engine-text { display: none; }
   .toolbar-tab { padding: 0 10px; }
 }
@@ -1121,9 +1121,9 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 
 /* ---------------------------------------------------------------- edit clean layout */
 .workspace.edit.edit-clean {
-  grid-template-columns: 238px minmax(0, 1fr) 330px;
+  grid-template-columns: 260px minmax(0, 1fr) 330px;
   align-items: stretch;
-  height: clamp(390px, 54vh, 570px);
+  height: clamp(410px, 60vh, 640px);
 }
 .edit-clean > .proof-panel,
 .edit-clean > .inspector,
@@ -1157,7 +1157,7 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
   position: absolute;
   left: 38px;
   right: 38px;
-  bottom: 46px;
+  bottom: 64px;
   display: grid;
   gap: 5px;
   justify-items: center;
@@ -1250,7 +1250,7 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .sfx-modal .modal-body { display: grid; gap: 10px; }
 .sfx-modal .g2 { gap: 8px; }
 @media (max-width: 1100px) {
-  .workspace.edit.edit-clean { grid-template-columns: 220px minmax(0, 1fr) 300px; }
+  .workspace.edit.edit-clean { grid-template-columns: 240px minmax(0, 1fr) 300px; }
   .sfx-add-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .edit-clean .inspector-body { flex: 1; overflow: auto; }
@@ -1259,7 +1259,7 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .transcript-overlay {
   left: 24px;
   right: auto;
-  bottom: 44px;
+  bottom: 64px;
   width: min(64%, 640px);
   display: block;
   justify-items: stretch;
@@ -1613,8 +1613,21 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .toolbar-engine { border: 0; background: transparent; padding: 0; cursor: pointer; }
 .toolbar-engine:hover { color: var(--ink); }
 .detect-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
-.detect-box { position: absolute; border: 1.5px solid #ffb454; border-radius: 3px; background: rgba(255,180,84,.10); -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.detect-box { position: absolute; border: 1.5px solid #ffb454; border-radius: 3px; background: rgba(255,180,84,.05); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .detect-box.is-blur { border-color: #ff6b6b; background: rgba(255,107,107,.10); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
-.detect-tag { position: absolute; left: -1px; top: -15px; padding: 1px 3px; border-radius: 2px; background: #ffb454; color: #1c1a14; font: 8px/1.2 var(--mono); white-space: nowrap; }
+.detect-tag { position: absolute; left: -1px; top: 1px; padding: 1px 3px; border-radius: 2px; background: #ffb454; color: #1c1a14; font: 8px/1.2 var(--mono); white-space: nowrap; }
 .detect-box.is-blur .detect-tag { background: #ff6b6b; color: #fff; }
 .detect-legend { position: absolute; left: 10px; top: 10px; z-index: 4; padding: 3px 6px; border-radius: 4px; background: rgba(0,0,0,.58); color: #fff; font: 9px var(--mono); pointer-events: none; }
+dialog.modal { display: flex; flex-direction: column; overflow: hidden; max-height: calc(100vh - 32px); }
+dialog.modal .modal-head { flex: 0 0 auto; }
+dialog.modal .modal-body { flex: 1 1 auto; min-height: 0; max-height: none; scrollbar-gutter: stable; }
+dialog.modal .modal-body::-webkit-scrollbar { width: 10px; }
+dialog.modal .modal-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; border: 2px solid var(--panel); }
+dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
+@media (max-width: 1000px) {
+  .settings-grid { grid-template-columns: 1fr; }
+}
+.proof-row.compact { grid-template-columns: 24px 54px minmax(0, 1fr) auto; gap: 6px; }
+.proof-row.compact .proof-title { font-size: 11px; }
+.proof-row.compact .proof-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.proof-row.compact .proof-state .chip { padding: 1px 4px; font-size: 8px; }

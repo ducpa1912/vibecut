@@ -849,7 +849,7 @@ function screenWelcome() {
         <div class="queue-list">${recentQueue.map((item) => queueCard(item)).join('')}</div>` : ''}
         <div class="engine-card">
           <p class="section-label">Engine</p>
-          <div class="engine-row"><span class="dot"></span><strong>${esc(engineLabel())}</strong></div>
+          <div class="engine-row"><span class="dot${state.engine?.fill?.ready && state.engine?.vision?.available ? '' : ' is-idle'}"></span><strong>${esc(engineLabel())}</strong></div>
           <div class="engine-row">${icon('monitor', 14)} ${free ? `Disk space: ${fmtBytes(free)} free` : 'Disk space: —'}</div>
           <div class="engine-row">${icon('layers', 14)} ${retention ? `${fmtBytes(retention)} in projects` : 'Local project storage'}</div>
         </div>
@@ -1500,7 +1500,7 @@ function sceneProofRows(scenes) {
       <span class="proof-thumb"><img src="${frameUrl(scene.start + 0.1)}" alt=""></span>
       <span class="proof-main">
         <span class="proof-title">${esc(truncate(sceneTitle(scene, index), 34))}</span>
-        <span class="proof-sub">${fmtTC(scene.start)} – ${fmtTC(scene.end)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</span>
+        <span class="proof-sub">${fmtTC(scene.start)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</span>
       </span>
       <span class="proof-state"><span class="${status === 'Layered' ? 'chip green' : 'chip'}">${esc(status)}</span></span>
     </button>`;
@@ -1570,7 +1570,7 @@ function inspectorClean(scene, layer, layers) {
   </div>
   ${layerListMarkup(layer, layers)}
   <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
-  <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
+  <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${state.engine?.fill?.ready ? 'Local fill' : 'Missing model'}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
 }
@@ -2345,7 +2345,7 @@ function screenClean() {
 
       <section style="display:grid;gap:14px;min-width:0">
         <section class="panel" style="overflow:hidden">
-          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: false })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
         </section>
         <section class="panel clean-scene-strip">
           <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered</span>${sceneStripControls('clean-scenes')}</div>
@@ -2379,7 +2379,7 @@ function screenClean() {
           </div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
           <button class="btn wide" type="button" data-action="brush-toggle">${icon('sparkle', 14)} ${state.brushMode ? 'Close brush' : 'Paint a mask'}</button>
-          <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
+          <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${state.engine?.fill?.ready ? 'Local fill' : 'Missing model'}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`
             : `<button class="btn primary wide" type="button" data-action="clean-all">${icon('sparkle', 15)} Clean all scenes</button><button class="btn wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview</button>`}
@@ -2706,8 +2706,27 @@ function detectionLayers(scene, time) {
 function updateDetectionOverlay(player, scene) {
   const overlay = document.querySelector('[data-detect-overlay]');
   if (!overlay || !scene) return;
+  const stage = player.parentElement;
+  const vw = Number(player.videoWidth || 0);
+  const vh = Number(player.videoHeight || 0);
+  if (stage && vw && vh) {
+    const scale = Math.min(stage.clientWidth / vw, stage.clientHeight / vh);
+    const width = vw * scale;
+    const height = vh * scale;
+    Object.assign(overlay.style, {
+      left: `${(stage.clientWidth - width) / 2}px`,
+      top: `${(stage.clientHeight - height) / 2}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+      right: 'auto',
+      bottom: 'auto',
+    });
+  }
   const boxes = detectionLayers(scene, Number(player.currentTime || 0));
-  overlay.innerHTML = boxes.map(({ layer, box }, index) => `<span class="detect-box ${layer.kind === 'blur' ? 'is-blur' : 'is-fill'}" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"><span class="detect-tag">${esc(layer.kind === 'blur' ? 'Blur' : 'Text')} ${index + 1}</span></span>`).join('');
+  overlay.innerHTML = boxes.map(({ layer, box }) => {
+    const label = layer.label || LAYER_KIND[layer.tracklet_kind] || 'Text';
+    return `<span class="detect-box ${layer.kind === 'blur' ? 'is-blur' : 'is-fill'}" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"><span class="detect-tag">${esc(layer.kind === 'blur' ? 'Blur' : label).slice(0, 22)}</span></span>`;
+  }).join('');
 }
 
 function setupInlineDetectionReview() {
@@ -2716,13 +2735,20 @@ function setupInlineDetectionReview() {
   const scene = currentScene();
   if (!scene) return;
   const start = Number(player.dataset.start || scene.start || 0);
+  const end = Number(player.dataset.end || scene.end || 0);
   const seek = () => {
     try { player.currentTime = start; } catch (_) { /* metadata not ready */ }
     updateDetectionOverlay(player, scene);
   };
   if (player.readyState >= 1) seek();
   else player.addEventListener('loadedmetadata', seek, { once: true });
-  const update = () => updateDetectionOverlay(player, scene);
+  const update = () => {
+    if (end > start && player.currentTime >= end - 0.04) {
+      player.pause();
+      player.currentTime = end - 0.04;
+    }
+    updateDetectionOverlay(player, scene);
+  };
   player.addEventListener('timeupdate', update);
   player.addEventListener('seeked', update);
   player.addEventListener('play', update);
@@ -2734,7 +2760,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
   if (!scene) return '';
   if (state.inlinePlaying) {
     return `<div class="split-stage inline-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
-      <video data-inline-player data-start="${Number(scene.start || 0).toFixed(3)}" controls autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>
+      <video data-inline-player data-start="${Number(scene.start || 0).toFixed(3)}" data-end="${Number(scene.end || 0).toFixed(3)}" controls autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>
       <div class="detect-overlay" data-detect-overlay></div>
       <span class="detect-legend">Detection review · blur preview</span>
       <button class="btn small inline-close" type="button" data-action="close-inline-player">${icon('arrowLeft', 12)} Back to proof</button>
@@ -2743,7 +2769,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
   const status = state.previewStatus.get(scene.id) || 'pending';
   const cached = state.previewCache.get(scene.id);
   const after = cached || (useCleanUrl && sceneLayers(scene).length ? cleanPreviewUrl(sceneMid(scene)) : frameUrl(sceneMid(scene)));
-  const blurred = showCleaning && status !== 'ready' && status !== 'failed';
+  const blurred = showCleaning && status === 'cleaning';
   const ready = state.previewStatus.get(scene.id) === 'ready';
   const scenes = getScenes();
   const readyCount = scenes.filter((item) => state.previewStatus.get(item.id) === 'ready').length;
@@ -2796,7 +2822,7 @@ function screenPreview() {
     <div class="workspace preview">
       <section class="preview-main">
         <section class="panel preview-stage" style="overflow:hidden">
-          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: false })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
         </section>
         <section class="panel preview-scenes">
           <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${scenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
@@ -2839,7 +2865,7 @@ function screenPreview() {
           <button class="btn wide" type="button" data-action="proof-all" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 13)} Generate remaining proofs</button>
         </section>
 
-        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon('play', 15)} Render</button>
+        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon('arrowRight', 15)} Continue to Render</button>
       </aside>
     </div>
   </main>`;
@@ -3020,6 +3046,13 @@ async function saveTranslationSettings() {
   }
 }
 
+function packListMarkup() {
+  return (state.packs || []).map((pack) => {
+    const pct = pack.size_bytes ? Math.min(100, Math.round((Number(pack.downloaded_bytes || 0) / pack.size_bytes) * 100)) : 0;
+    return `<div class="pack-row"><div><strong>${esc(pack.name)}</strong><span>${fmtBytes(pack.size_bytes)} · ${esc(pack.license)} · ${esc(pack.detail)}</span>${pack.downloading ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}${pack.error ? `<span class="pack-error">${esc(pack.error)}</span>` : ''}</div>${pack.installed ? `<button class="btn small" type="button" data-action="remove-pack" data-pack="${esc(pack.id)}">Remove</button>` : pack.downloading ? `<span class="small muted">${pct}%</span>` : `<button class="btn small" type="button" data-action="download-pack" data-pack="${esc(pack.id)}">Download</button>`}</div>`;
+  }).join('') || '<p class="small muted">No optional packs.</p>';
+}
+
 async function openSettings() {
   try {
     if (!state.voices.length) await loadVoices();
@@ -3033,6 +3066,8 @@ async function openSettings() {
     state.packs = packs.packs || [];
   } catch (_) { /* keep current */ }
   const storage = state.settings?.storage || {};
+  const translationEngine = state.settings?.translation?.engine || 'auto';
+  const nllbPack = (state.packs || []).find((pack) => pack.id === 'translation-nllb');
   openModal(`<dialog class="modal" aria-label="Settings">
     <div class="modal-head"><h2>Settings</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body">
@@ -3051,28 +3086,21 @@ async function openSettings() {
               : `Rewrite: ${state.engine?.rewrite?.reason || 'Apple Intelligence is unavailable.'}`
           )}</p>`}
           <h3 style="margin-top:12px">Translation</h3>
-          <div class="field"><label>Engine</label>
+          <div class="field"><label for="translation-engine">Engine</label>
             <select id="translation-engine">
               <option value="auto" ${(state.settings?.translation?.engine || 'auto') === 'auto' ? 'selected' : ''}>Auto · Apple first, then local</option>
               <option value="nllb" ${state.settings?.translation?.engine === 'nllb' ? 'selected' : ''}>NLLB pack</option>
               <option value="custom" ${state.settings?.translation?.engine === 'custom' ? 'selected' : ''}>Custom CTranslate2 model</option>
             </select>
           </div>
-          <div class="field"><label>Custom model folder</label>
-            <input id="translation-path" type="text" value="${esc(state.settings?.translation?.custom_path || '')}" placeholder="/path/to/nllb-ct2-int8">
+          <div class="model-line"><span class="dot${nllbPack?.installed ? '' : ' is-idle'}"></span><strong>NLLB pack · ${nllbPack?.installed ? 'installed' : 'not installed'}</strong><span>${nllbPack?.installed ? fmtBytes(nllbPack.size_bytes) : 'Download in Optional downloads'}</span></div>
+          <div class="field"><label for="translation-path">Custom model folder</label>
+            <input id="translation-path" type="text" value="${esc(state.settings?.translation?.custom_path || '')}" placeholder="/path/to/nllb-ct2-int8" ${translationEngine === 'custom' ? '' : 'disabled'}>
           </div>
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
           <p class="small muted">NLLB-200 600M int8 is about 630 MB and is CC-BY-NC-4.0, non-commercial. Apple Translation is preferred. A custom folder must be a CTranslate2 model with model.bin, config.json and sentencepiece.bpe.model.</p>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
-          <h3 style="margin-top:12px">Optional downloads</h3>
-          <div class="pack-list">
-            ${state.packs.map((pack) => {
-              const pct = pack.size_bytes ? Math.min(100, Math.round((Number(pack.downloaded_bytes || 0) / pack.size_bytes) * 100)) : 0;
-              return `<div class="pack-row"><div><strong>${esc(pack.name)}</strong><span>${fmtBytes(pack.size_bytes)} · ${esc(pack.license)} · ${esc(pack.detail)}</span>${pack.downloading ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}${pack.error ? `<span class="pack-error">${esc(pack.error)}</span>` : ''}</div>${pack.installed ? `<button class="btn small" type="button" data-action="remove-pack" data-pack="${esc(pack.id)}">Remove</button>` : pack.downloading ? `<span class="small muted">${pct}%</span>` : `<button class="btn small" type="button" data-action="download-pack" data-pack="${esc(pack.id)}">Download</button>`}</div>`;
-            }).join('') || '<p class="small muted">No optional packs.</p>'}
-          </div>
-          <p class="small muted" style="margin-top:8px">System packs live in macOS: <a href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Translation languages</a> (English, Vietnamese, Chinese), Apple Intelligence for rewrite, and extra voices. DuckSuite never downloads executable code.</p>
         </section>
         <section>
           <h3>Storage</h3>
@@ -3085,6 +3113,9 @@ async function openSettings() {
           <p class="small muted">Always on. Clean is for your own footage or footage you are authorized to edit. Do not use DuckSuite to remove another creator’s watermark or logo. See Terms &amp; Conditions.</p>
           <div class="kv"><span>Language</span><strong>Auto-detect only</strong></div>
           <div class="kv"><span>Version</span><strong>${esc(state.settings?.version || '1.0.0')}</strong></div>
+          <h3 style="margin-top:12px">Optional downloads</h3>
+          <div class="pack-list">${packListMarkup()}</div>
+          <p class="small muted" style="margin-top:8px">System packs live in macOS: <a href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Translation languages</a> (English, Vietnamese, Chinese), Apple Intelligence for rewrite, and extra voices. DuckSuite never downloads executable code.</p>
         </section>
       </div>
     </div>
@@ -3731,11 +3762,10 @@ async function downloadCaptions() {
 async function refreshPacks() {
   const data = await api('/api/packs').catch(() => ({ packs: [] }));
   state.packs = data.packs || [];
+  const list = document.querySelector('.pack-list');
+  if (list) list.innerHTML = packListMarkup();
   if (state.packs.some((pack) => pack.downloading)) {
-    window.setTimeout(async () => {
-      await refreshPacks();
-      if (document.querySelector('dialog')) await openSettings();
-    }, 1500);
+    window.setTimeout(refreshPacks, 1500);
   }
 }
 
@@ -3946,6 +3976,15 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.id === 'translation-engine') {
+    await saveTranslationSettings();
+    await openSettings();
+    return;
+  }
+  if (target.id === 'translation-path') {
+    await saveTranslationSettings();
+    return;
+  }
   if (target.id === 'story-edit-select' || target.id === 'edit-select') {
     await openEditById(target.value);
     return;
