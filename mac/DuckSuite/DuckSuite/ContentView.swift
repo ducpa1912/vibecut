@@ -17,6 +17,13 @@ struct ContentView: View {
                         await model.importVideo(mode: mode, projectID: projectID)
                     },
                     onImportNotice: { model.notice },
+                    onDropFiles: { url, projectID in
+                        await model.importVideo(
+                            at: url,
+                            mode: projectID.isEmpty ? "new" : "scenes",
+                            projectID: projectID.isEmpty ? nil : projectID
+                        )
+                    },
                     onRecordStart: { try await model.startRecording() },
                     onRecordStop: { model.stopRecording() }
                 )
@@ -59,6 +66,7 @@ private struct WebView: NSViewRepresentable {
     let url: URL
     let onImport: @MainActor (String, String?) async -> Bool
     let onImportNotice: @MainActor () -> String?
+    let onDropFiles: @MainActor (URL, String) async -> Bool
     let onRecordStart: @MainActor () async throws -> String
     let onRecordStop: @MainActor () -> String?
 
@@ -71,9 +79,23 @@ private struct WebView: NSViewRepresentable {
         controller.add(context.coordinator, name: "duck")
         configuration.userContentController = controller
 
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = DropWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.underPageBackgroundColor = .clear
+        view.onFiles = { urls in
+            guard let first = urls.first else { return }
+            view.evaluateJavaScript("window.duckProjectId ? window.duckProjectId() : ''") { value, _ in
+                let projectID = (value as? String) ?? ""
+                Task { @MainActor in
+                    let imported = await onDropFiles(first, projectID)
+                    if imported {
+                        view.reload()
+                    } else if let message = onImportNotice(), !message.isEmpty {
+                        context.coordinator.callJS("window.duckImportError", message)
+                    }
+                }
+            }
+        }
         context.coordinator.webView = view
         return view
     }
@@ -88,6 +110,7 @@ private struct WebView: NSViewRepresentable {
         Coordinator(
             onImport: onImport,
             onImportNotice: onImportNotice,
+            onDropFiles: onDropFiles,
             onRecordStart: onRecordStart,
             onRecordStop: onRecordStop
         )
@@ -97,6 +120,7 @@ private struct WebView: NSViewRepresentable {
         weak var webView: WKWebView?
         private let onImport: @MainActor (String, String?) async -> Bool
         private let onImportNotice: @MainActor () -> String?
+        private let onDropFiles: @MainActor (URL, String) async -> Bool
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
         nonisolated(unsafe) private var mouseDownEvent: NSEvent?
@@ -105,11 +129,13 @@ private struct WebView: NSViewRepresentable {
         init(
             onImport: @escaping @MainActor (String, String?) async -> Bool,
             onImportNotice: @escaping @MainActor () -> String?,
+            onDropFiles: @escaping @MainActor (URL, String) async -> Bool,
             onRecordStart: @escaping @MainActor () async throws -> String,
             onRecordStop: @escaping @MainActor () -> String?
         ) {
             self.onImport = onImport
             self.onImportNotice = onImportNotice
+            self.onDropFiles = onDropFiles
             self.onRecordStart = onRecordStart
             self.onRecordStop = onRecordStop
             super.init()
@@ -178,7 +204,7 @@ private struct WebView: NSViewRepresentable {
             }
         }
 
-        private func callJS(_ function: String, _ value: String) {
+        func callJS(_ function: String, _ value: String) {
             guard let data = try? JSONSerialization.data(withJSONObject: [value]),
                   let json = String(data: data, encoding: .utf8) else { return }
             webView?.evaluateJavaScript("\(function)(\(json)[0])")
@@ -199,5 +225,51 @@ private struct WebView: NSViewRepresentable {
             }
             return .cancel
         }
+    }
+}
+
+
+private final class DropWebView: WKWebView {
+    var onFiles: (([URL]) -> Void)?
+
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    private func videoURLs(_ info: NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+        ]
+        let urls = info.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self], options: options
+        ) as? [URL] ?? []
+        return urls.filter {
+            ["mp4", "mov", "m4v"].contains($0.pathExtension.lowercased())
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        videoURLs(sender).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        videoURLs(sender).isEmpty ? [] : .copy
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !videoURLs(sender).isEmpty
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = videoURLs(sender)
+        guard !urls.isEmpty else { return false }
+        onFiles?(urls)
+        return true
     }
 }

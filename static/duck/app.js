@@ -4034,6 +4034,8 @@ function startPolls() {
   }, 2500);
 }
 
+window.duckProjectId = () => state.project?.id || '';
+
 window.duckImportError = (message) => {
   state.importing = false;
   render();

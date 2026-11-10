@@ -143,9 +143,17 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let source = panel.url else {
             return false
         }
+        return await importVideo(at: source, mode: mode, projectID: projectID)
+    }
 
+    /// Import a file already granted to the app, such as a Finder drag.
+    func importVideo(at source: URL, mode: String = "new", projectID: String? = nil) async -> Bool {
+        guard !isImporting else { return false }
+        notice = nil
         isImporting = true
         defer { isImporting = false }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
         do {
             guard let dataRoot else { throw ImportError.noDataRoot }
