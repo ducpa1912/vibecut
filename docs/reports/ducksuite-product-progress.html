@@ -124,24 +124,40 @@ ul.clean li { margin:6px 0; }
   <div class="meta">
     <span class="pill"><span class="dot"></span><strong>Editor core</strong> ready</span>
     <span class="pill"><span class="dot amber"></span><strong>App Store</strong> blocked on signing</span>
-    <span class="pill"><span class="dot"></span><strong>74</strong> tests passing</span>
+    <span class="pill"><span class="dot"></span><strong>81</strong> tests passing</span>
     <span class="pill"><strong>1.0</strong> · build 1</span>
     <span class="pill">2026-11-10</span>
-    <span class="pill"><span class="dot"></span>latest <strong class="mono">1fee59f</strong></span>
+    <span class="pill"><span class="dot"></span>latest <strong class="mono">2d6a09f</strong></span>
   </div>
 </header>
 
 <section class="section" id="latest">
-  <div class="section-head"><h2>Latest development — 10 Nov 2026</h2><p>Nine commits since the 9 Nov snapshot. Newest first.</p></div>
+  <div class="section-head"><h2>Latest development — 10 Nov 2026</h2><p>Ten commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">
-    <div class="card"><div class="chip done">Current</div><div class="big">74</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
-    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">9</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">1fee59f</span>.</p></div>
+    <div class="card"><div class="chip done">Current</div><div class="big">81</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
+    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">10</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">2d6a09f</span>.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
-    <div class="card"><div class="chip done">Clean</div><div class="big">1</div><p><span class="mono">impeccable detect</span> run on the review loop, no findings.</p></div>
+    <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>AI fill quality on fast, detailed footage. Measured, flagged, not solved.</p></div>
   </div>
 
   <div class="timeline" style="margin-top:14px">
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">2d6a09f</strong><span>10 Nov · Bad render review</span></div>
+      <div class="timeline-body">
+        <strong>A finished render was reviewed frame by frame, and the gaps are now named.</strong>
+        <ul class="clean">
+          <li>Check skipped the first two frames of the source, so a title that shows for 66 ms at 0 s was never read and stayed in the render. The first still now comes from the source itself.</li>
+          <li>Display type across the top of the frame reads as a title, not a word-pop caption. Both are cleanable, but the label was wrong.</li>
+          <li>Every clean layer records the measured motion around the line. The layer list, the inspector and Render name the lines where fill will smear, before the render instead of after it.</li>
+          <li>A line that only flashes on screen defaults to Blur: a fill has no calm frame to rebuild from.</li>
+          <li>Clean all asks first, keeps the choices the user made, and reports <span class="mono">fill · blur · off</span> counts.</li>
+          <li>Render queue shows the open project; Welcome shows one import action instead of three.</li>
+        </ul>
+        <span class="mono">81 tests pass</span> · app rebuilt and relaunched · backend now reads the real first frame of the 160 s test project.
+      </div>
+    </div>
+
     <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">1fee59f</strong><span>10 Nov · UX/UI review loop</span></div>
       <div class="timeline-body">
@@ -226,6 +242,11 @@ ul.clean li { margin:6px 0; }
     <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
     <div class="card"><h3>What improved for the build</h3><p>Nine commits, 74 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
     <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
+  </div>
+
+  <div class="callout" style="margin-top:14px">
+    <strong>AI fill on moving food: measured, not solved</strong>
+    <p>LaMa reconstructs one frame well when the plate holds still; on this 160 s cooking video the background moves the whole time. Isolated frames at 8 s, 82 s, 90 s and 140 s were compared against the source, against Blur, and against STTN and MI-GAN. Single-frame LaMa held up better than Blur, which leaves a visible band. A wider work area, a tighter glyph mask, per-frame runs and zero carry each changed the result, none restored real texture. The honest limit: a per-frame model cannot rebuild a plate it has never seen. So fill stays the default, the risk is now measured per line and shown before the render, and Blur is one tap away on any line. Replacing the model (not tuning it) is the only real fix.</p>
   </div>
 
   <div class="callout red" style="margin-top:14px">
