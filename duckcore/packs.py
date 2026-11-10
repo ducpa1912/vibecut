@@ -25,6 +25,11 @@ PACKS = (
         "license": "Apache-2.0",
         "filename": "kokoro-v1.0.onnx",
         "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+        "extra_files": [{
+            "filename": "voices-v1.0.bin",
+            "size_bytes": 28_214_398,
+            "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+        }],
     },
     {
         "id": "speech-whisper",
@@ -35,26 +40,11 @@ PACKS = (
         "license": "MIT",
         "filename": "weights.safetensors",
         "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/main/weights.safetensors",
-    },
-    {
-        "id": "rewrite-qwen3",
-        "name": "Qwen3 4B rewrite pack",
-        "purpose": "rewrite",
-        "detail": "Local rewrite model files. Apple Intelligence is used first; local engine wiring follows.",
-        "size_bytes": 2_263_022_417,
-        "license": "Apache-2.0",
-        "filename": "model.safetensors",
-        "url": "https://huggingface.co/mlx-community/Qwen3-4B-Instruct-2507-4bit/resolve/main/model.safetensors",
-    },
-    {
-        "id": "separation-demucs",
-        "name": "Demucs separation pack",
-        "purpose": "separation",
-        "detail": "Instrumental bed for dub. Review the weight terms before shipping.",
-        "size_bytes": 84_141_911,
-        "license": "MIT code; check weight terms",
-        "filename": "955717e8-8726e21a.th",
-        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
+        "extra_files": [{
+            "filename": "config.json",
+            "size_bytes": 268,
+            "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/main/config.json",
+        }],
     },
 )
 
@@ -75,20 +65,50 @@ def _entry(pack_id: str) -> dict:
     raise KeyError(pack_id)
 
 
-def _path(data_root: Path, pack: dict) -> Path:
-    return _root(data_root) / pack["id"] / pack["filename"]
+def _files(pack: dict) -> list[dict]:
+    files = [{
+        "filename": pack["filename"],
+        "size_bytes": pack["size_bytes"],
+        "url": pack["url"],
+    }]
+    files.extend(pack.get("extra_files") or [])
+    return files
+
+
+def _path(data_root: Path, pack: dict, filename: str = "") -> Path:
+    return _root(data_root) / pack["id"] / (filename or pack["filename"])
+
+
+def installed_path(data_root: Path, pack_id: str) -> Path | None:
+    """Return the pack folder only when every declared file is present."""
+    try:
+        pack = _entry(pack_id)
+    except KeyError:
+        return None
+    folder = Path(data_root) / "models" / "packs" / pack["id"]
+    for item in _files(pack):
+        path = folder / item["filename"]
+        if not path.is_file() or path.stat().st_size < item["size_bytes"] * 0.98:
+            return None
+    return folder
 
 
 def status(data_root: Path) -> list[dict]:
     rows = []
     for pack in PACKS:
-        path = _path(data_root, pack)
         progress = _PROGRESS.get(pack["id"]) or {}
-        installed = path.is_file() and path.stat().st_size >= pack["size_bytes"] * 0.98
+        files = _files(pack)
+        total = sum(int(item["size_bytes"]) for item in files)
+        downloaded = sum(
+            _path(data_root, pack, item["filename"]).stat().st_size
+            for item in files
+            if _path(data_root, pack, item["filename"]).is_file()
+        )
         rows.append({
             **{key: pack[key] for key in ("id", "name", "purpose", "detail", "size_bytes", "license")},
-            "installed": installed,
-            "downloaded_bytes": path.stat().st_size if path.is_file() else int(progress.get("bytes") or 0),
+            "size_bytes": total,
+            "installed": installed_path(data_root, pack["id"]) is not None,
+            "downloaded_bytes": downloaded or int(progress.get("bytes") or 0),
             "downloading": bool(progress.get("running")),
             "error": str(progress.get("error") or ""),
         })
@@ -110,29 +130,34 @@ def start_download(data_root: Path, pack_id: str) -> dict:
 
 
 def _download(data_root: Path, pack: dict) -> None:
-    target = _path(data_root, pack)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(target.suffix + ".part")
+    folder = _root(data_root) / pack["id"]
+    folder.mkdir(parents=True, exist_ok=True)
+    done = 0
+    total = sum(int(item["size_bytes"]) for item in _files(pack))
     try:
-        with urllib.request.urlopen(pack["url"], timeout=60) as response, temporary.open("wb") as writer:
-            total = int(response.headers.get("content-length") or pack["size_bytes"])
-            done = 0
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                writer.write(chunk)
-                done += len(chunk)
-                _PROGRESS[pack["id"]] = {
-                    "running": True, "bytes": done,
-                    "total": total or pack["size_bytes"], "error": "",
-                }
-        if temporary.stat().st_size < pack["size_bytes"] * 0.98:
-            raise RuntimeError("download size does not match the manifest")
-        temporary.replace(target)
-        _PROGRESS[pack["id"]] = {"running": False, "bytes": target.stat().st_size, "error": ""}
+        for item in _files(pack):
+            target = folder / item["filename"]
+            temporary = target.with_suffix(target.suffix + ".part")
+            with urllib.request.urlopen(item["url"], timeout=60) as response, temporary.open("wb") as writer:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    writer.write(chunk)
+                    done += len(chunk)
+                    _PROGRESS[pack["id"]] = {
+                        "running": True, "bytes": done,
+                        "total": total, "error": "",
+                    }
+            if temporary.stat().st_size < item["size_bytes"] * 0.98:
+                raise RuntimeError(f"{item['filename']} size does not match the manifest")
+            temporary.replace(target)
+        _PROGRESS[pack["id"]] = {"running": False, "bytes": done, "error": ""}
     except Exception as exc:  # noqa: BLE001
-        temporary.unlink(missing_ok=True)
+        for item in _files(pack):
+            (folder / item["filename"]).with_suffix(
+                (folder / item["filename"]).suffix + ".part"
+            ).unlink(missing_ok=True)
         _PROGRESS[pack["id"]] = {"running": False, "bytes": 0, "error": str(exc)[:300]}
 
 

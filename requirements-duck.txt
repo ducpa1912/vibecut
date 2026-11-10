@@ -4,3 +4,5 @@ pydantic>=2.6
 numpy>=1.26
 pillow>=10.0
 onnxruntime>=1.18
+kokoro-onnx>=0.4
+soundfile>=0.12

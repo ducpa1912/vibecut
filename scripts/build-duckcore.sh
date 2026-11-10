@@ -26,7 +26,11 @@ mkdir -p "$ROOT/build/pyinstaller-spec"
   --specpath "$ROOT/build/pyinstaller-spec" \
   --paths "$ROOT" \
   --collect-submodules uvicorn \
+  --collect-submodules kokoro_onnx \
+  --collect-data kokoro_onnx \
   --hidden-import duckcore.store \
+  --hidden-import soundfile \
+  --hidden-import onnxruntime \
   "$ROOT/duck_app.py"
 
 printf 'Built %s/duckcore\n' "$OUT"

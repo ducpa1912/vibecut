@@ -2277,7 +2277,7 @@ function inspectorVoice() {
   const cues = scriptCues();
   const active = dub || voice;
   return `<div class="field"><label>Local voice</label><select data-action="voice-select">
-    ${state.voices.length ? state.voices.slice(0, 120).map((item) => `<option value="${esc(item.name)}" ${item.name === state.voiceName ? 'selected' : ''}>${esc(item.name)} · ${esc(item.locale)}</option>`).join('') : `<option>${esc(state.voiceName)}</option>`}
+    ${state.voices.length ? state.voices.slice(0, 120).map((item) => `<option value="${esc(item.name)}" ${item.name === state.voiceName ? 'selected' : ''}>${esc(item.label || item.name)} · ${esc(item.locale)}</option>`).join('') : `<option>${esc(state.voiceName)}</option>`}
   </select></div>
   <div class="field"><label>Voice-over mode</label><select data-action="voice-mode">
     <option value="voice_over" ${state.voiceMode === 'voice_over' ? 'selected' : ''}>Over original sound</option>

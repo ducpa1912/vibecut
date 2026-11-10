@@ -29,7 +29,33 @@ NOVELTY_VOICES = {
 }
 
 
-def list_voices() -> list[dict[str, str]]:
+KOKORO_VOICES = (
+    ("af_heart", "en_US", "Kokoro · Heart"),
+    ("af_bella", "en_US", "Kokoro · Bella"),
+    ("af_nicole", "en_US", "Kokoro · Nicole"),
+    ("am_michael", "en_US", "Kokoro · Michael"),
+    ("am_adam", "en_US", "Kokoro · Adam"),
+    ("bf_emma", "en_GB", "Kokoro · Emma"),
+    ("bm_george", "en_GB", "Kokoro · George"),
+    ("jf_alpha", "ja_JP", "Kokoro · Alpha"),
+    ("jm_kumo", "ja_JP", "Kokoro · Kumo"),
+    ("zf_xiaoxiao", "zh_CN", "Kokoro · Xiaoxiao"),
+    ("zm_yunjian", "zh_CN", "Kokoro · Yunjian"),
+)
+KOKORO_LANGS = {
+    "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja",
+    "p": "pt-br", "z": "cmn",
+}
+
+
+def _kokoro_pack(data_root: Path | None) -> Path | None:
+    if not data_root:
+        return None
+    from duckcore import packs
+    return packs.installed_path(Path(data_root), "tts-kokoro")
+
+
+def list_voices(data_root: Path | None = None) -> list[dict[str, str]]:
     try:
         result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -48,6 +74,11 @@ def list_voices() -> list[dict[str, str]]:
             "sample": (match.group("sample") or "").strip(),
         })
     voices.sort(key=lambda item: (not item["locale"].startswith("en_US"), item["locale"], item["name"]))
+    if _kokoro_pack(data_root) is not None:
+        voices = [
+            {"name": f"kokoro:{voice_id}", "locale": locale, "sample": label, "label": label}
+            for voice_id, locale, label in KOKORO_VOICES
+        ] + voices
     return voices
 
 
@@ -70,7 +101,51 @@ def _duration(path: Path) -> float:
         return 0.0
 
 
-def _synthesize(text: str, voice: str, aiff: Path) -> None:
+def _synthesize_kokoro(text: str, voice: str, output: Path, data_root: Path) -> None:
+    pack = _kokoro_pack(data_root)
+    if pack is None:
+        raise RuntimeError("Kokoro voice pack is not installed.")
+    try:
+        from kokoro_onnx import EspeakConfig, Kokoro
+    except ImportError as exc:
+        raise RuntimeError("Kokoro runtime is not available.") from exc
+    model = pack / "kokoro-v1.0.onnx"
+    voices = pack / "voices-v1.0.bin"
+    engine = None
+    try:
+        engine = Kokoro(str(model), str(voices))
+    except Exception:  # noqa: BLE001
+        for library, data in (
+            ("/opt/homebrew/lib/libespeak-ng.dylib", "/opt/homebrew/share/espeak-ng-data"),
+            ("/usr/lib/libespeak-ng.so", "/usr/share/espeak-ng-data"),
+        ):
+            if Path(library).is_file() and Path(data).is_dir():
+                engine = Kokoro(
+                    str(model), str(voices),
+                    espeak_config=EspeakConfig(lib_path=library, data_path=data),
+                )
+                break
+    if engine is None:
+        raise RuntimeError("Kokoro could not load its voice runtime.")
+    prefix = (voice or "")[:1]
+    language = KOKORO_LANGS.get(prefix, "en-us")
+    try:
+        samples, sample_rate = engine.create(
+            text, voice=voice, speed=1.0, lang=language,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Kokoro voice failed: {str(exc)[:200]}") from exc
+    import soundfile as sf
+
+    sf.write(str(output), samples, sample_rate)
+
+
+def _synthesize(text: str, voice: str, aiff: Path, data_root: Path | None = None) -> None:
+    if str(voice).startswith("kokoro:"):
+        if data_root is None:
+            raise RuntimeError("Kokoro voice pack is not available.")
+        _synthesize_kokoro(text, str(voice).split(":", 1)[1], aiff, data_root)
+        return
     result = subprocess.run(
         [_which_say(), "-v", voice, "-o", str(aiff), text],
         capture_output=True, text=True, timeout=120,
@@ -152,7 +227,13 @@ def build_track(
                 aiff = job_dir / f".cue_{index}.aiff"
                 wav = job_dir / f".cue_{index}.wav"
                 fitted = job_dir / f".cue_{index}.fit.wav"
-                _synthesize(str(cue.get("text") or ""), voice_name, aiff)
+                if str(voice_name).startswith("kokoro:"):
+                    _synthesize_kokoro(
+                        str(cue.get("text") or ""), str(voice_name).split(":", 1)[1],
+                        aiff, data_root,
+                    )
+                else:
+                    _synthesize(str(cue.get("text") or ""), voice_name, aiff)
                 _to_wave(aiff, wav)
                 _fit(wav, fitted, end - start)
                 with wave.open(str(fitted), "rb") as reader:
@@ -165,7 +246,7 @@ def build_track(
             if total > cursor:
                 writer.writeframes(_silence(total - cursor))
     return {
-        "engine": "say",
+        "engine": "kokoro-onnx" if str(voice_name).startswith("kokoro:") else "say",
         "voice": voice_name,
         "mode": mode,
         "audio": str(output.relative_to(Path(data_root) / "projects" / project_id)),
@@ -215,7 +296,12 @@ def preview_line(text: str, voice_name: str, project_id: str, data_root: Path) -
     output = job_dir / f"{token}.wav"
     if not output.is_file():
         aiff = job_dir / f".{token}.aiff"
-        _synthesize(text, voice_name, aiff)
+        if str(voice_name).startswith("kokoro:"):
+            _synthesize_kokoro(
+                text, str(voice_name).split(":", 1)[1], aiff, data_root,
+            )
+        else:
+            _synthesize(text, voice_name, aiff)
         _to_wave(aiff, output)
         aiff.unlink(missing_ok=True)
     return {"audio": str(output.relative_to(Path(data_root) / "projects" / project_id)), "duration": _duration(output)}

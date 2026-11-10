@@ -243,6 +243,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
     data_root = Path(data_root).expanduser().resolve()
     data_root.mkdir(parents=True, exist_ok=True)
+    os.environ["DUCK_DATA_ROOT"] = str(data_root)
     store = ProjectStore(data_root)
     append.recover_commits(store, data_root)
     checks = CheckManager(data_root, store)
@@ -1635,7 +1636,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
     @app.get("/api/voices")
     def local_voices(_: None = Depends(require_token)) -> dict:
-        return {"voices": voice.list_voices()}
+        return {"voices": voice.list_voices(data_root)}
 
     @app.get("/api/projects/{project_id}/edits/{edit_id}/voice")
     def get_voice(

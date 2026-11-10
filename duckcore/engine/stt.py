@@ -237,9 +237,18 @@ def whisper_models() -> list[dict]:
         or DEFAULT_WHISPER_MODEL
     )
     current = normalize_whisper_model(configured)
+    pack_ready = False
+    data_root = os.environ.get("DUCK_DATA_ROOT")
+    if data_root:
+        from duckcore import packs as model_packs
+        pack_ready = model_packs.installed_path(
+            Path(data_root), "speech-whisper",
+        ) is not None
     rows = []
     for item in WHISPER_MODELS:
         cached = (hub / ("models--" + item["id"].replace("/", "--"))).is_dir()
+        if item["id"] == DEFAULT_WHISPER_MODEL and pack_ready:
+            cached = True
         rows.append({**item, "cached": cached, "current": item["id"] == current})
     return rows
 
@@ -349,6 +358,28 @@ def _hf_hub_dir() -> Path:
     return base / "hub"
 
 
+def _local_whisper_pack(job_dir: Path, model: str | None) -> str | None:
+    """Use the DuckSuite data pack before any Hugging Face cache."""
+    if normalize_whisper_model(model) != DEFAULT_WHISPER_MODEL:
+        return None
+    from duckcore import packs as model_packs
+    roots: list[Path] = []
+    data_root = os.environ.get("DUCK_DATA_ROOT")
+    if data_root:
+        roots.append(Path(data_root).expanduser())
+    roots.extend([Path(job_dir), *Path(job_dir).parents])
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+        found = model_packs.installed_path(root, "speech-whisper")
+        if found is not None:
+            return str(found)
+    return None
+
+
 def whisper_model_cached(model: str) -> bool:
     """True when the Whisper weights are already on this machine."""
     value = str(model or "").strip()
@@ -367,7 +398,7 @@ def _whisper_env(model: str) -> dict[str, str]:
     stalls the read. Downloads belong to the Setup / packs flow.
     """
     env = dict(os.environ)
-    if whisper_model_cached(model):
+    if Path(model).expanduser().is_dir() or whisper_model_cached(model):
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -1295,7 +1326,8 @@ def transcribe(
         return None
     out_dir = Path(job_dir) / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
-    chosen_model = normalize_whisper_model(model)
+    model_name = normalize_whisper_model(model)
+    chosen_model = _local_whisper_pack(job_dir, model_name) or model_name
     log_path = out_dir / "whisper.log"
     json_path = out_dir / "transcript.json"
     try:
@@ -1360,7 +1392,8 @@ def transcribe(
         "segments": payload["segments"],
         "words": payload["words"],
         "provider": "whisper",
-        "model": chosen_model,
+        "model": model_name,
+        "model_path": chosen_model if chosen_model != model_name else "",
     }
 
 
