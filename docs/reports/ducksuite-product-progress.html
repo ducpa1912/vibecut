@@ -124,13 +124,118 @@ ul.clean li { margin:6px 0; }
   <div class="meta">
     <span class="pill"><span class="dot"></span><strong>Editor core</strong> ready</span>
     <span class="pill"><span class="dot amber"></span><strong>App Store</strong> blocked on signing</span>
-    <span class="pill"><span class="dot"></span><strong>52</strong> tests passing</span>
+    <span class="pill"><span class="dot"></span><strong>74</strong> tests passing</span>
     <span class="pill"><strong>1.0</strong> · build 1</span>
-    <span class="pill">2026-11-09</span>
+    <span class="pill">2026-11-10</span>
+    <span class="pill"><span class="dot"></span>latest <strong class="mono">1fee59f</strong></span>
   </div>
 </header>
 
+<section class="section" id="latest">
+  <div class="section-head"><h2>Latest development — 10 Nov 2026</h2><p>Nine commits since the 9 Nov snapshot. Newest first.</p></div>
+
+  <div class="grid g4">
+    <div class="card"><div class="chip done">Current</div><div class="big">74</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
+    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">9</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">1fee59f</span>.</p></div>
+    <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
+    <div class="card"><div class="chip done">Clean</div><div class="big">1</div><p><span class="mono">impeccable detect</span> run on the review loop, no findings.</p></div>
+  </div>
+
+  <div class="timeline" style="margin-top:14px">
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">1fee59f</strong><span>10 Nov · UX/UI review loop</span></div>
+      <div class="timeline-body">
+        <strong>Review pass on the whole editor surface.</strong>
+        <ul class="clean">
+          <li>Settings modal scrolls, downloads stay visible.</li>
+          <li>NLLB status and custom model path are shown; AI fill status reports the truth.</li>
+          <li>Preview shows After and the cleaning state; primary action reads “Continue to Render”.</li>
+          <li>Edit workspace and scene rows fixed. Detection boxes align to the painted video and the scene end.</li>
+          <li>Blur applies only to Blur layers.</li>
+        </ul>
+        <span class="mono">74 tests pass</span> · app rebuilt and released locally · checked 1440×900 and 1280×800 · <span class="mono">impeccable detect</span> clean.
+      </div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">c53c6f9</strong><span>10 Nov · Script and translation</span></div>
+      <div class="timeline-body">
+        <strong>Translation no longer depends on Apple alone.</strong>
+        <ul class="clean">
+          <li>Optional NLLB-200 600M int8 pack: 601 MB, CC-BY-NC-4.0 (non-commercial).</li>
+          <li>CTranslate2 and SentencePiece bundled. Apple Translation tried first, NLLB as fallback.</li>
+          <li>Custom CTranslate2 model path in Settings.</li>
+          <li>Detection review plays the video with per-layer blur and outline boxes.</li>
+          <li>Proofs no longer gate render.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">e8f974a</strong><span>10 Nov · Preview workflow</span></div>
+      <div class="timeline-body">
+        <strong>Preview stops generating proofs the user did not ask for.</strong>
+        <ul class="clean">
+          <li>Proofs are optional. Preview generates only the current scene proof.</li>
+          <li>Scene id 0 bug fixed. Render is enabled immediately.</li>
+          <li>Explicit “Generate remaining proofs” action. Untouched scenes are labeled “No proof”.</li>
+          <li>Measured on a 51-scene project: many or all proof requests before, now 1 on entry.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">7dfb722</strong><span>10 Nov · Local model packs</span></div>
+      <div class="timeline-body">
+        <strong>Models live in app data, not framework caches.</strong>
+        <ul class="clean">
+          <li>Whisper uses the DuckSuite app-data pack (weights + config). HF Whisper cache removed; 1.5 GB freed.</li>
+          <li>Kokoro ONNX and voices wired and bundled.</li>
+          <li>Qwen and Demucs dead pack entries removed. 71 tests at that point.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">8632be1</strong><span>10 Nov · Finder import</span></div>
+      <div class="timeline-body"><strong>Native drag/drop import fixed.</strong> WKWebView drop target plus security-scoped copy. Dropping appends to the open project or creates a new one. The Finder picker path is unchanged.</div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">19b1f0b</strong><span>10 Nov · Refactor</span></div>
+      <div class="timeline-body"><strong>app.js split without behavior change.</strong> <span class="mono">timeline-model.js</span>, <span class="mono">audio-tools.js</span> and <span class="mono">editor-markup.js</span> extracted. Node tests cover the extracted helpers.</div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">8feec43</strong><span>10 Nov · Loop 3 UX and trust</span></div>
+      <div class="timeline-body"><strong>Truthful state replaces implied state.</strong> Ready vs “Setup needed” engine language, truthful Clean scope, explicit story selection, story context on Preview and Render, real output size and path, blocker list, transcript move, media inspector, and Script/Caption tools split apart.</div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">c83dfed</strong><span>10 Nov · Loop 2 story work</span></div>
+      <div class="timeline-body"><strong>Stories became first-class project content.</strong> Clean and captions are inherited, persistent story banner with edit selector and back-to-full, image/video/scene beats, reorder and remove, media preview and render, and caption skip over media beats.</div>
+    </div>
+
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">7308bbb</strong><span>10 Nov · Loop 1 audio</span></div>
+      <div class="timeline-body"><strong>Per-row audio control.</strong> Trim with source offset, fades, volume 0, mute/solo, waveform, audition, preview mix, sound and legacy API fallbacks, and a global solo-safe render path.</div>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:14px">
+    <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
+    <div class="card"><h3>What improved for the build</h3><p>Nine commits, 74 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
+    <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
+  </div>
+
+  <div class="callout red" style="margin-top:14px">
+    <strong>New licensing gate: NLLB is non-commercial</strong>
+    <p>The optional NLLB-200 600M int8 pack is CC-BY-NC-4.0. A paid $29 App Store build cannot ship it as a bundled or default path without a separate commercial license. Keep it an explicit optional download for non-commercial use, or replace it before submission. The product promise of “no downloaded executable code” still holds: this is model data only.</p>
+  </div>
+</section>
+
 <nav class="toc" aria-label="Report sections">
+  <a href="#latest">Latest development</a>
   <a href="#summary">Executive summary</a>
   <a href="#plan">Plan revision</a>
   <a href="#ui">UI/UX and screens</a>
