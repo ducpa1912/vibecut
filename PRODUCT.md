@@ -1,182 +1,137 @@
 # Product
 
-> Status 2026-11-11: the build is local-only and about 70% complete by the founder's own estimate. App Store work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
+> Status 2026-11-12: local-only macOS app, about 70 % complete by the founder's estimate. App Store
+> work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
 
 <!-- impeccable:product-schema 1 -->
 
-Recorded 2026-11-07, revised 2026-11-11 (REQ-20261111-05) to match the build and the decisions taken since. VibeCut Studio is the frozen reference codebase; **DuckSuite** is the offline macOS product. Where the 7 Nov record and the build disagree, this file now says which is shipped, which is planned and which is deferred.
-
-Distribution: [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md) (paused). Commercial: [docs/duck/COMMERCIAL.md](docs/duck/COMMERCIAL.md).
+**DuckSuite** is the offline macOS product. VibeCut Studio is the frozen reference codebase; where
+this file and the build disagree, the build wins and this file is corrected.
 
 ## Platform
 
-macOS 26.0+ on Apple silicon. The floor comes from SpeechAnalyzer and FoundationModels; lowering it is a feature change. The intended channel is the Mac App Store; that work is paused until the product is good. The web products come later, in this order: DuckClean, DuckClassic, DuckStudio.
+macOS 26.0+ on Apple silicon. The floor comes from SpeechAnalyzer and FoundationModels; lowering it
+is a feature change. Distribution: Mac App Store, paused until the product is good. Web products come
+later, in this order: DuckClean, DuckClassic, DuckStudio.
 
 ## Product family
 
 | Product | Buyer | Job | Surface | Price |
 |---|---|---|---|---|
-| **DuckSuite** | Mac creator-editor | Take one long video, find the scenes, clean old text, edit script, captions and voice, render 1080p. | Mac app | **$29 one-time** |
-| **DuckClean** | Anyone with one finished video and old text | Upload, find burned-in text, clean it, download. No timeline. | Web, **shipped from the Classic lane** | Free trial; paid CPU; Express GPU waitlist |
-| **DuckClassic** | Operator or automation buyer | Cloud clean/quick render, API, templates, credits. Not a pro editor. | Web | Credits |
-| **DuckStudio** | Non-Mac creator or team | Full cloud suite: assets, edit, captions, voice, clean, publish, collaboration. | Web | Subscription or credits |
+| **DuckSuite** | Mac creator-editor | One long video → scenes found, old text cleaned, script/captions/voice, 1080p render | Mac app | **$29 one-time** |
+| **DuckClean** | Anyone with one finished video and old text | Upload, clean burned-in text, download | Web (Classic lane) | Free trial; paid CPU; GPU waitlist |
+| **DuckClassic** | Operator / automation buyer | Cloud clean and quick render, API, credits | Web | Credits |
+| **DuckStudio** | Non-Mac creator or team | Full cloud suite | Web | Subscription / credits |
 
-DuckSuite is the only product being built. The other three are roadmap.
+DuckSuite is the only product being built.
 
 ## DuckSuite
 
-**One sentence:** DuckSuite turns one long video into the few clips you will actually post — old text cleaned, captions timed, voice or dub added — on your Mac, for one price.
+**One sentence:** DuckSuite turns one long video into the few clips you will actually post — old text
+cleaned, captions timed, voice or dub added — on your Mac, for one price.
 
 ```text
 Welcome → Check → Edit ⇄ Clean focus → Preview → Render
 ```
 
-One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, status, queue, settings. No project tabs.
+One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, status, queue, settings.
 
-- **Check** finds scene cuts, transcript, on-screen text and story candidates. The editor opens while it runs.
-- **Edit** is a three-panel desk (scenes, preview with transcript overlay, inspector) over one timeline, with focus modes for Script, Audio, SFX and Clean.
+- **Check** finds scene cuts, transcript, on-screen text and story candidates. It also reads frame 0,
+  the frame after every cut and onset moments.
+- **Edit** is a three-panel desk (scenes, preview with transcript overlay, inspector) over one
+  timeline, with focus modes for Script, Audio, SFX and Clean.
+- **Clean** gives one layer per text line: LaMa fill, Blur or Off. The fill hole is the line's own
+  ink, grown 6 px. A line over a moving background is flagged `moves`.
 - **Preview** plays before / compare / after. Proofs are optional; render never waits for one.
-- **Render** writes one 1080p MP4 at the source aspect, 24 or 30 fps, through a local queue.
+- **Render** writes one 1080p MP4 at the source aspect, 24 or 30 fps, through a local queue, then
+  scores every clean layer for leftover text and reports frames checked, hits and flicker.
 
-### What is shipped, planned, deferred
+### Shipped, planned, deferred
 
 | Area | In the build today | Planned (`PLAN.md`) | Deferred or cut |
 |---|---|---|---|
-| Import | One local file, picker or Finder drag; append to the same project | Creator-readable error copy | URL / path import |
-| Check | Scenes, transcript, Vision OCR, stories; true first frame read | — | Faces, saliency, music detection as product features |
-| Clean | One layer per text line; LaMa fill or Blur or Off; `moves` flag; a line read once (under 0.6 s) defaults to Blur; Clean all confirms and reports counts | Time estimate before render (loop 1); faster fill (loop 3); better fill on moving footage (loop 5) | Model picker for the default; GPU toggle |
-| Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy), captions with style and SRT | Rewrite without the hidden Ollama fallback (loop 6) | Publish kit, titles, hashtags |
-| Voice | macOS voices, Kokoro pack, dub, music and SFX rows on one audio track | Manual microphone test | Voice cloning |
-| Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Colour grading, LUTs, keyframes |
-| Render | Source aspect, 1080p, 24/30 fps, H.264/AAC, queue scoped to the project | Render screen layout (loop 9) | 9:16 / 4:5 / 1:1 / 16:9 switching, auto-frame, 4K, 60 fps, HDR, ProRes |
-| Models | LaMa bundled; Whisper and Kokoro as optional data packs; translation from a user-supplied CTranslate2 folder | Local slots for Whisper, LLM URL on this Mac, ONNX voice, ONNX fill (loop 7); SHA-256 per pack (loop 8) | Any translation weights shipped or hosted by DuckSuite |
-| Cloud | None. Nothing uploads. | — | After v1: user-key providers, off until ticked, consent per task. Cloud render plans, render broker |
-| Store | No StoreKit code. $29 paid app restores through the buyer's Apple ID | — | Signing, TestFlight, review: paused |
-
-The "in the build" column follows the Done list in `TODO.md` and the code read on 2026-11-11; it was not re-tested by hand in this revision.
+| Import | One local file, picker or Finder drag; append to the same project | Creator-readable error copy (loop 8) | URL / path import |
+| Check | Scenes, transcript, Vision OCR, stories, true first frame, cut/onset stills | — | Faces, saliency, music as product features |
+| Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, post-render ink check with one refill | Better fill on moving footage (loop 5) | Model picker for the default |
+| Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy), captions + SRT | Rewrite without the hidden Ollama fallback (loop 6) | Publish kit, titles, hashtags |
+| Voice | macOS voices, Kokoro pack, dub, music and SFX on one audio track | Manual microphone test (loop 8) | Voice cloning |
+| Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Grading, LUTs, keyframes |
+| Render | Source aspect, 1080p, 24/30 fps, H.264/AAC, queue scoped to the project, estimate on screen, leftover-text check | Render screen layout (loop 9) | Aspect switching, auto-frame, 4K, 60 fps, HDR, ProRes |
+| Models | LaMa bundled (GPU); Whisper + Kokoro optional packs; translation from a user CTranslate2 folder | Local slots for Whisper, LLM URL, ONNX voice, ONNX fill (loop 7); SHA-256 per pack (loop 8) | Any translation weights shipped or hosted by DuckSuite |
+| Cloud | None. Nothing uploads | — | User keys after v1; cloud render plans |
 
 ### Known limits, stated plainly
 
-- **AI fill is slow, and uneven.** LaMa runs on the CPU. On an M1 with 8 GB the review project (160 s, 60 s of text) needs about 28 min of fill, and the same job ran up to 4.6× longer when the Mac was busy. The app shows its estimate before a render starts. A GPU path measured 4.6× faster but is not in the build.
-- **AI fill is weak on moving footage.** It cannot rebuild a background it never saw. In the review project 33 of 41 text lines sit on moving footage. Those lines carry a `moves` badge.
-- **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe Vietnamese.
+- **LaMa cannot rebuild a background it never saw.** Most lines sit on moving footage; those carry a
+  `moves` badge and can smear.
+- **The leftover-text check reads whole lines.** A partly filled line under 85 % is not reported, and
+  a still scene edge inside a box can score as ink; a one-frame flash and scenery are
+  indistinguishable without OCR. The Render screen says both.
+- **GPU fill is fast, not instant.** Cold render on the review project: 418 s; CPU fill is 4.6× slower
+  or worse under load.
+- **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe it.
 - **Apple Intelligence must be enabled** for rewrite; without it the rewrite is a basic cleanup.
 - **macOS 26 only.**
 
 ### Decisions in force
 
-- **$29 one-time.** No account, no in-app purchase, no login. Restore is the App Store's, by Apple ID.
-- **v1 is completely local.** No telemetry, no upload path, no keys. The user extends a step by plugging in a local model. User keys are planned for after v1.
-- **One shipped model: LaMa.** Every other model step takes a local default or a user-supplied local model. No step requires a download. The UI names no model for a user slot and links no download.
-- **Text clean is LaMa fill or explicit Blur.** A line over a moving background is flagged, never silently switched to blur.
-- **Dub is required**, with an editable script and three languages: English, Vietnamese, Chinese.
-- **1080p, 24 or 30 fps.** No LUTs, no colour grading, no publish kit.
+- **$29 one-time.** No account, no in-app purchase. Restore is the App Store's, by Apple ID.
+- **v1 is completely local.** No telemetry, no upload, no keys. A step may take a user-supplied local
+  model; none requires a download.
+- **One shipped model: LaMa.** Every other model step takes a local default or a user-supplied local
+  model. The UI names no model for a user slot and links no download.
+- **Text clean is LaMa fill or explicit Blur.** Never a silent switch to blur.
+- **Dub is required**, with an editable script in English, Vietnamese and Chinese.
+- **1080p, 24 or 30 fps.** No LUTs, no grading, no publish kit.
 - **Do not hide a limit.** Measure it and show it.
 
 ### Pricing
 
 | Offer | Price | State |
 |---|---:|---|
-| DuckSuite app | **$29 one-time** | The only offer being built. All local tools; 1.x bug fixes and macOS compatibility |
-| DuckSuite Render (CPU) | $5/month | Deferred. Founder decision of 2026-11-06; nothing in the build |
-| DuckSuite Render Plus (GPU) | $20/month | Deferred behind a GPU benchmark |
+| DuckSuite app | **$29 one-time** | The only offer being built |
+| DuckSuite Render (CPU) | $5/month | Deferred |
+| DuckSuite Render Plus (GPU) | $20/month | Deferred |
 
-## DuckClean
+## Other lanes (roadmap, not being built)
 
-**DuckClean ships from the Classic lane, not Studio.**
-
-- New `DUCKCLEAN` profile composed from `CLASSIC` in `core/profiles.py`.
-- Entry point: `classic_app.py` / a thin `duckclean_app.py` that configures the profile before importing the shared backend.
-- Reuses Classic's `check`, `cleanup`, `ai_fill` and render pieces.
-- No Studio page, no stories, no Edit document, no Studio queue, no Studio timeline.
-- Clean-only flow: upload → detect text → choose AI fill or blur → download.
-- Free trial on HF free CPU. Paid CPU follows. Express is a T4/on-demand waitlist.
-- Linux OCR must be tested on 40–60 real clips. If it fails, DuckClean uses a Mac OCR worker or stays Mac-assisted.
-
-## DuckClassic
-
-Cloud clean and quick render for operators and automation buyers.
-
-- Credits, API render, templates, batch clean, quick queue.
-- Not a pro video editor; no colour grading, no multi-track NLE, no publish suite.
-- Reuses the DuckClean/DuckSuite render broker and worker image.
-
-## DuckStudio
-
-Full cloud suite for non-Mac users.
-
-- Assets, editing, captions, voice, clean, publish, collaboration.
-- Not Phase 1. Do not build shared tenancy, accounts or team features before DuckSuite and DuckClean are paying.
+- **DuckClean** — clean-only web flow from the Classic lane: upload → detect → fill or blur → download.
+- **DuckClassic** — cloud clean and quick render, credits, API, templates, batch.
+- **DuckStudio** — full cloud suite for non-Mac users; not Phase 1.
 
 ## Users
 
-### DuckSuite
-
-A solo creator-editor on Apple Silicon with one long recording or one finished video and a deadline. They want the few clips they will post, not a clip farm. They value local custody, a flat price and a file they keep.
-
-### DuckClean
-
-A repurposer with one finished video and old burned-in text. They do not want a timeline. They want upload, clean, download.
-
-### DuckClassic
-
-An operator or automation buyer who wants repeatable cloud clean/render through a simple UI or API.
-
-### DuckStudio
-
-A non-Mac creator or small team that wants the full suite without installing anything.
-
-## Positioning
-
-DuckSuite is the local Mac essential toolkit for creators who will not upload client footage or pay per clip. It does the few jobs that matter — dissect, detect, clean, voice, dub, edit, export — and leaves the pro NLE and the publish suite to other products.
+A solo creator-editor on Apple silicon with one long recording and a deadline, who values local
+custody, a flat price and a file they keep.
 
 ## Operating context
 
-- One Mac, one project, one source. Long sessions; a render can take far longer than the video when AI fill runs.
-- Footage may belong to a client. Custody and deletion matter; nothing leaves the Mac in v1.
-- The app must work offline after optional packs are installed.
-- The reference machine is the smallest one: M1, 8 GB RAM. A limit that shows there is a product limit.
+One Mac, one project, one source. Footage may belong to a client: nothing leaves the Mac in v1. The
+app must work offline after optional packs are installed. The reference machine is the smallest one:
+M1, 8 GB. A limit that shows there is a product limit.
 
-### Non-goals for DuckSuite v1
+### Non-goals for v1
 
-- 720p, 2K, 4K, 60 fps, HDR, ProRes, 10-bit.
-- LUTs, colour grading, motion keyframes.
-- B-roll libraries, stock assets, multi-video projects.
-- Publish kit, titles/hashtags/description, cover variants, review links, versions.
-- Batch across projects, templates, API, automation.
-- Voice cloning, generated music.
-- A DuckSuite account, a DuckSuite key, a proxy, or any shipped provider key.
-- URL/XHS/path import.
-- Multi-set comparison UI, strength score, queue-all from stories.
-- Admin console, Classic, LAN review links, telemetry, analytics.
+720p/2K/4K/60 fps/HDR/ProRes/10-bit · LUTs and grading · B-roll and stock libraries · multi-video
+projects · publish kit and cover variants · batch, templates, API, automation · voice cloning,
+generated music · a DuckSuite account, key or proxy · URL import · admin console, telemetry.
 
-## Brand commitments
+## Brand and craft
 
-- The family name is **Duck**. The Mac product is **DuckSuite for Mac**. The cloud products always carry their descriptor: **DuckClean**, **DuckClassic**, **DuckStudio**.
-- The duck is a mark, not a mascot. No cartoon behaviour in the product.
-- Copy is plain and honest: state the limit, give a route to fix the error, never present a score as proof.
+- The family name is **Duck**; the Mac product is **DuckSuite for Mac**.
+- Copy is plain and honest: state the limit, give a route to fix the error, never present a score as
+  proof.
 - One accent: amber. Blue only for cloud status. Red only for destructive/error.
-- DuckSuite feels like a daylight workbench with a dark video canvas. DuckClean is white and calm. DuckClassic is dense and quick. DuckStudio is dark and full.
-
-## Evidence on hand
-
-- 83 automated tests; a ground-truth fill benchmark (`scripts/bench_fill.py`): the tighter fill hole gained +1.1 dB PSNR on the review project and +0.8 dB on a second one.
-- One review project, 160 s, 1080×1920: captions were gone at 2 s, 10 s and 90 s in the last render; the 0 s title is gone in a 4.75 s render made on 2026-11-11, with 0 of 142 frames showing text.
-- Session record and request log: `docs/reports/SESSION.html`, `MEMORY.md`.
-- Not on hand: a render made with the current fill version, a measured GPU or CoreML fill, a signed app, an App Store review, a clean-Mac install, a manual microphone test, a second tester, a paying customer.
-
-Do not invent proof. `PLAN.md` is the evidence plan.
+- Daylight workbench with a dark video canvas.
+- WCAG 2.2 AA target: visible focus, 200 % zoom, keyboard paths, screen-reader labels, live regions,
+  colour never the only signal. Test at 1024×700, 1280×800 and 1440×900.
 
 ## Product principles
 
-1. **Local custody beats cloud convenience.** The Mac app is complete without an account.
-2. **One object through every change.** A project, edit, render and export never silently fork or overwrite.
-3. **Fail visibly and recover.** Show the real reason and the real time left. No fake ETA, no silent fallback.
-4. **No silent quality downgrade.** AI fill default; missing model fails visibly; blur is an explicit choice.
-5. **Sell hours, not infinity.** Any future cloud plan has a visible cap and a measured cost.
-6. **Ship the small thing.** DuckSuite is a utility suite, not a mini-Studio.
-7. **Build before planning more.** One plan (`PLAN.md`), one loop, one commit.
-
-## Accessibility and inclusion
-
-WCAG 2.2 AA is the target for DuckSuite and DuckClean: visible focus, 200% zoom, keyboard paths, screen-reader labels, live regions for render/queue/model download, colour never the only signal, reduced motion, and captions for sample videos. Minimum 12 px labels, 13 px panel body, 15 px body. Test at 1024×700, 1280×800 and 1440×900.
+1. **Local custody beats cloud convenience.**
+2. **One object through every change.** No silent fork or overwrite.
+3. **Fail visibly and recover.** Real reason, real time left. No fake ETA, no silent fallback.
+4. **No silent quality downgrade.** Fill default; missing model fails visibly; blur is a choice.
+5. **Sell hours, not infinity.** Any cloud plan has a visible cap and a measured cost.
+6. **Ship the small thing.** A utility suite, not a mini-Studio.
+7. **Build before planning more.** One plan, one loop, one commit.

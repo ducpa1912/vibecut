@@ -1,7 +1,23 @@
 # AGENTS.md — DuckSuite
 
-Read `PLAN.md` (the build order), `MEMORY.md` (what was asked and answered) and `TODO.md` (what is
-left) before touching code. Planning is closed as of 2026-11-11: work the loops in `PLAN.md` in order.
+Read `PLAN.md` (the build order), `MEMORY.md` (direction and decisions in force), `TODO.md` (open
+work) and `PRODUCT.md` (what the product is) before touching code. Planning is closed: work the loops
+in `PLAN.md` in order.
+
+## Context budget — what to read, what not to
+
+The session compacts when too much is pulled in. Read the four working documents, this contract, and
+the current loop's `BRIEF.md` and `review.md`. Nothing else.
+
+- **Never open** `old_memory.md`, `old_todo.md`, `old_plan.md`. They are frozen snapshots; `grep` them
+  only if the human asks for a specific old fact.
+- **Never read** `docs/reports/SESSION.html` or `docs/reports/ducksuite-product-progress.html` into
+  context, and never read another loop's review. They are the human's tracking record: you append to
+  the report with a scripted insert and print nothing, and you do not load them to "get up to speed".
+- **Keep the working documents small.** `MEMORY.md` stays under ~80 lines, `TODO.md` lists only open
+  work, `PLAN.md` only open loops. When a loop closes, move its request entry, done items and closed
+  plan text into the matching `old_*.md` in the same commit. Archives are write-only for agents.
+- Never re-read a file you just wrote, and never dump a whole document to find one line: `grep` it.
 
 ## What this is
 
@@ -25,7 +41,8 @@ docs/            reports, team reviews, plans
 3. Merge target is this branch, `ducksuite`. `main` has no common ancestor and lives in another
    worktree. Never merge it.
 4. Do not hide a limit. If fill cannot rebuild what it covers, measure it and say so in the UI.
-5. Old information is never deleted from the progress report. New entries go on top.
+5. Old information is never deleted. The report keeps every entry (new on top); closed request
+   entries, done items and closed loops move to `old_memory.md`, `old_todo.md`, `old_plan.md`.
 6. Existing comments in code are payload. Do not shorten or delete one you were not asked to change.
 
 ## Request intake — the factory loop
@@ -46,7 +63,8 @@ revision. If it needs a new panel, state, endpoint or data flow, it is new.
 
 Do this before writing code.
 
-1. **`MEMORY.md`** — append one entry under `## Request log`:
+1. **`MEMORY.md`** — append one entry under `## Request log` (keep the file under ~80 lines; move
+   closed entries to `old_memory.md` when their loop closes):
 
    ```md
    ### REQ-20261111-01 · 2026-11-11
@@ -64,8 +82,11 @@ Do this before writing code.
    ```
 
 3. Implement, test, then tick the items and fill `Outcome`. Name the change, not the sha of the
-   commit that contains the record; a commit cannot contain its own hash.
-4. Add the loop to `docs/reports/ducksuite-product-progress.html` on top, old entries kept.
+   commit that contains the record; a commit cannot contain its own hash. In the same commit, move
+   the closed entry to `old_memory.md` and the done items to `old_todo.md`, so the working files
+   hold only open work.
+4. Add the loop to `docs/reports/ducksuite-product-progress.html` on top, old entries kept. Do it
+   with a scripted insert against the known anchor; do not read the file into context.
 
 ### For a revision
 
@@ -228,15 +249,19 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 6. Close the loop in the same commit: tick `TODO.md`, fill `Outcome` in `MEMORY.md`, add the entry
    to `docs/reports/ducksuite-product-progress.html` on top.
 
-Definition of done: behaviour + test + the three documents changed in one commit. A commit that
-changes behaviour but leaves the documents stale is not done.
+Definition of done: behaviour + test + `MEMORY.md`, `TODO.md`, the loop's `review.md` and a report
+row in one commit. Closed content is archived in `old_*.md` in that same commit; the working files
+stay current and small. A commit that changes behaviour but leaves the documents stale is not done.
 
 ## Where the evidence lives
 
-- `PLAN.md` — the one active build plan, measured state, and which documents are historical.
-- `PRODUCT.md` — what is shipped, planned and deferred; known limits.
-- `docs/reports/ducksuite-product-progress.html` — product report, newest on top, plus the session log.
-- `docs/reports/SESSION.html` — session record: requests, 18 phases, evidence, cost model, limits.
+Working documents (read these): `PLAN.md`, `MEMORY.md`, `TODO.md`, `PRODUCT.md`, this file.
+
+- `old_memory.md`, `old_todo.md`, `old_plan.md` — frozen history. **Agents do not read them.**
+- `docs/reports/ducksuite-product-progress.html` — the human's product report, newest on top.
+  **Append only; never read into context.**
+- `docs/reports/SESSION.html` — the human's session record. **Do not read; do not edit unless asked.**
+- `docs/teams/<loop>/BRIEF.md` and `review.md` — the current loop only.
 - `docs/duck/BYOK-PLAN.md` — bring-your-own-key/model design and rollout.
 - `docs/duck/GPU-FILL-PLAN.md` — LaMa on CoreML/MPS/cloud, with the packaging cost.
 - `docs/duck/gpu-fill-bench.md` — the measured CPU / CoreML / MPS numbers and the estimate fix.
