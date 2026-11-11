@@ -61,6 +61,82 @@ export interface SourceRow {
   probeJson: Record<string, unknown> | null;
 }
 
+export interface DetectionRunRow {
+  id: string;
+  revision: string;
+  engine: 'auto' | 'paddleocr' | 'rapidocr';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  progressMilli: number;
+  framesRead: number;
+  framesSkipped: number;
+  framesTotal: number;
+  coverageMilli: number | null;
+  effectiveFpsMilli: number | null;
+  truncated: boolean;
+  ocrAvailable: boolean;
+  logoModelAvailable: boolean;
+  warnings: string[];
+  modelVersions: Record<string, string>;
+  detectionWidth: number | null;
+  detectionHeight: number | null;
+  computeSeconds: number;
+  deviceClass: DeviceClass | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  cancelRequestedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface DetectionGroupRow {
+  id: string;
+  kind: 'text' | 'logo' | 'watermark' | 'image' | 'user_box';
+  lane: number;
+  orderIndex: number;
+  sampleText: string | null;
+  box: { x: number; y: number; w: number; h: number };
+  confidenceMilli: number;
+  includedDefault: boolean;
+  lowConfidence: boolean;
+  members: DetectionMemberRow[];
+}
+
+export interface DetectionMemberRow {
+  id: string;
+  orderIndex: number;
+  text: string | null;
+  rangeMode: 'ranges' | 'whole_source';
+  ranges: Array<{
+    beat_id: string;
+    beat_index: number;
+    start_frame: number;
+    end_frame: number;
+  }>;
+  box: { x: number; y: number; w: number; h: number };
+  confidenceMilli: number;
+  provenance: 'ocr' | 'logo' | 'user_box' | 'manual';
+  maskId: string | null;
+  maskKey: string | null;
+  maskKind: 'glyph' | 'region' | 'feather' | null;
+  maskFormat: 'png' | 'webp' | null;
+  maskProvenance: 'ocr' | 'logo' | 'user_box' | 'manual' | null;
+  maskModelVersion: string | null;
+  includedDefault: boolean;
+  lowConfidence: boolean;
+}
+
+export interface BeatRow {
+  id: string;
+  index: number;
+  startFrame: number;
+  endFrame: number;
+  startMs: number;
+  endMs: number;
+  boundary: 'start' | 'scene' | 'cap' | 'end';
+  status: 'pending' | 'ready' | 'empty' | 'failed';
+  hasTarget: boolean;
+}
+
 export interface ProxyRow {
   id: string;
   width: number;
@@ -593,6 +669,50 @@ export class Db {
     return { id: row.id, created: false };
   }
 
+  /**
+   * Create a job, or return a failed/cancelled one to the queue.
+   *
+   * A failed detection used to leave its idempotency key occupied, so a retry
+   * inserted a new detection run and then collided with the old job. Resetting
+   * the job keeps one row and one attempt history slot.
+   */
+  async createOrRetryJob(input: {
+    userId: string;
+    itemId: string;
+    assetId: string;
+    kind: JobKind;
+    deviceClass: DeviceClass;
+    idempotencyKey: string;
+    request?: Record<string, unknown>;
+    workerJobId: string;
+  }): Promise<{ id: string; created: boolean; retried: boolean }> {
+    const created = await this.createJob(input);
+    if (created.created) return { ...created, retried: false };
+
+    const { rows } = await this.sql.query<{ id: string }>(
+      `update worker_jobs
+          set status = 'queued', attempts = 0, worker_job_id = $3,
+              request_json = $4::jsonb, device_class = $5,
+              error_code = null, error_detail = null,
+              started_at = null, finished_at = null, lease_expires_at = null,
+              updated_at = now()
+        where kind = $1 and idempotency_key = $2
+          and status in ('failed', 'cancelled')
+        returning id`,
+      [
+        input.kind,
+        input.idempotencyKey,
+        input.workerJobId,
+        JSON.stringify(input.request ?? {}),
+        input.deviceClass,
+      ],
+    );
+    const row = rows[0];
+    return row
+      ? { id: row.id, created: false, retried: true }
+      : { ...created, retried: false };
+  }
+
   async job(jobId: string): Promise<WorkerJobRow | null> {
     const { rows } = await this.sql.query<{
       id: string;
@@ -701,6 +821,7 @@ export class Db {
         `update library_items
             set duration_ms = $3, width = $4, height = $5, fps_num = $6,
                 fps_den = $7, rotation = $8, has_audio = $9, codec = $10,
+                status = case when status = 'uploaded' then 'probing' else status end,
                 status_error_code = null, status_error_detail = null
           where id = $1 and user_id = $2`,
         [
@@ -717,6 +838,564 @@ export class Db {
         ],
       );
     });
+  }
+
+  /**
+   * Beats are only usable once the proxy exists and dissection succeeded; the
+   * item is `ready` exactly then, whichever job finishes second.
+   */
+  private static readinessSql = `
+    update library_items li
+       set status = 'ready', status_error_code = null, status_error_detail = null
+     where li.id = $1 and li.user_id = $2
+       and li.status in ('uploading', 'uploaded', 'probing', 'dissecting')
+       and li.proxy_asset_id is not null
+       and exists (
+         select 1 from source_assets sa
+          where sa.id = li.source_asset_id and sa.dissect_status = 'succeeded'
+       )`;
+
+  async markDissecting(userId: string, itemId: string): Promise<void> {
+    await this.sql.query(
+      `update library_items set status = 'dissecting'
+        where id = $1 and user_id = $2 and status in ('uploaded', 'probing')`,
+      [itemId, userId],
+    );
+  }
+
+  async applyDissect(
+    job: { userId: string; itemId: string; assetId: string },
+    input: {
+      beats: Array<{
+        index: number;
+        startFrame: number;
+        endFrame: number;
+        startMs: number;
+        endMs: number;
+        boundary: 'start' | 'scene' | 'cap' | 'end';
+      }>;
+      manifestHash: string;
+      manifest: Record<string, unknown>;
+      sourceSha256: string;
+    },
+  ): Promise<void> {
+    await this.sql.transaction(async (tx) => {
+      await tx.query(`delete from beats where source_asset_id = $1`, [job.assetId]);
+      await tx.query(
+        `update source_assets
+            set dissect_status = 'succeeded', beat_manifest_hash = $2,
+                beat_manifest_json = $3::jsonb, sha256 = coalesce(sha256, $4),
+                error_code = null, error_detail = null
+          where id = $1`,
+        [
+          job.assetId,
+          input.manifestHash,
+          JSON.stringify(input.manifest),
+          input.sourceSha256,
+        ],
+      );
+      for (const beat of input.beats) {
+        await tx.query(
+          `insert into beats
+             (user_id, source_asset_id, beat_manifest_hash, "index", start_frame,
+              end_frame, start_ms, end_ms, boundary, status)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
+          [
+            job.userId,
+            job.assetId,
+            input.manifestHash,
+            beat.index,
+            beat.startFrame,
+            beat.endFrame,
+            beat.startMs,
+            beat.endMs,
+            beat.boundary,
+          ],
+        );
+      }
+      await tx.query(Db.readinessSql, [job.itemId, job.userId]);
+    });
+  }
+
+  /**
+   * Dissection failed for good. The proxy still plays, so the item is marked
+   * ready with an explicit error instead of being reported as unusable.
+   */
+  async failDissect(
+    userId: string,
+    itemId: string,
+    assetId: string,
+    code: string,
+    detail: string,
+  ): Promise<void> {
+    await this.sql.transaction(async (tx) => {
+      await tx.query(
+        `update source_assets
+            set dissect_status = 'failed', error_code = $2, error_detail = $3
+          where id = $1`,
+        [assetId, code, detail],
+      );
+      await tx.query(
+        `update library_items
+            set status = case when proxy_asset_id is not null then 'ready' else 'failed' end,
+                status_error_code = 'dissect_failed', status_error_detail = $3
+          where id = $1 and user_id = $2`,
+        [itemId, userId, detail],
+      );
+    });
+  }
+
+  async beats(userId: string, itemId: string): Promise<BeatRow[]> {
+    const { rows } = await this.sql.query<{
+      id: string;
+      index: number;
+      start_frame: number;
+      end_frame: number;
+      start_ms: number;
+      end_ms: number;
+      boundary: BeatRow['boundary'];
+      status: BeatRow['status'];
+      has_target: boolean;
+    }>(
+      `select b.id, b."index", b.start_frame, b.end_frame, b.start_ms, b.end_ms,
+              b.boundary, b.status, b.has_target
+         from beats b
+         join library_items li on li.source_asset_id = b.source_asset_id
+        where li.id = $1 and li.user_id = $2 and li.deleted_at is null
+        order by b."index"`,
+      [itemId, userId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      index: row.index,
+      startFrame: row.start_frame,
+      endFrame: row.end_frame,
+      startMs: row.start_ms,
+      endMs: row.end_ms,
+      boundary: row.boundary,
+      status: row.status,
+      hasTarget: row.has_target,
+    }));
+  }
+
+  async createDetectionRun(input: {
+    id: string;
+    userId: string;
+    assetId: string;
+    revision: string;
+    engine: 'auto' | 'paddleocr' | 'rapidocr';
+    detectionWidth: number | null;
+    detectionHeight: number | null;
+    workerJobId: string;
+  }): Promise<string> {
+    const { rows } = await this.sql.query<{ id: string }>(
+      `insert into detection_runs
+         (id, user_id, source_asset_id, revision, engine, detection_width,
+          detection_height, status, worker_job_id)
+       values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
+       returning id`,
+      [
+        input.id,
+        input.userId,
+        input.assetId,
+        input.revision,
+        input.engine,
+        input.detectionWidth,
+        input.detectionHeight,
+        input.workerJobId,
+      ],
+    );
+    const row = rows[0];
+    if (!row) throw new Error('detection_runs insert returned no row');
+    return row.id;
+  }
+
+  async startDetectionRun(runId: string): Promise<void> {
+    await this.sql.query(
+      `update detection_runs
+          set status = 'running', started_at = coalesce(started_at, now())
+        where id = $1 and status = 'queued'`,
+      [runId],
+    );
+  }
+
+  async detectionRun(runId: string): Promise<DetectionRunRow | null> {
+    const { rows } = await this.sql.query<Record<string, unknown>>(
+      `${DETECTION_RUN_SELECT} where r.id = $1`,
+      [runId],
+    );
+    return rows[0] ? toDetectionRun(rows[0]) : null;
+  }
+
+  async latestDetectionRun(
+    userId: string,
+    itemId: string,
+  ): Promise<DetectionRunRow | null> {
+    const { rows } = await this.sql.query<Record<string, unknown>>(
+      `${DETECTION_RUN_SELECT}
+        join library_items li on li.source_asset_id = r.source_asset_id
+       where li.id = $1 and li.user_id = $2 and li.deleted_at is null
+       order by r.created_at desc limit 1`,
+      [itemId, userId],
+    );
+    return rows[0] ? toDetectionRun(rows[0]) : null;
+  }
+
+  async detectionState(
+    userId: string,
+    itemId: string,
+  ): Promise<{
+    run: DetectionRunRow | null;
+    groups: DetectionGroupRow[];
+    beats: BeatRow[];
+  }> {
+    const run = await this.latestDetectionRun(userId, itemId);
+    if (!run) return { run: null, groups: [], beats: await this.beats(userId, itemId) };
+    const { rows } = await this.sql.query<{
+      id: string;
+      kind: DetectionGroupRow['kind'];
+      lane: number;
+      order_index: number;
+      sample_text: string | null;
+      box_x: number;
+      box_y: number;
+      box_w: number;
+      box_h: number;
+      confidence_milli: number;
+      included_default: boolean;
+      low_confidence: boolean;
+    }>(
+      `select id, kind, lane, order_index, sample_text, box_x, box_y, box_w, box_h,
+              confidence_milli, included_default, low_confidence
+         from detection_groups where run_id = $1 order by order_index`,
+      [run.id],
+    );
+    const members = await this.sql.query<{
+      id: string;
+      group_id: string;
+      order_index: number;
+      text: string | null;
+      range_mode: 'ranges' | 'whole_source';
+      ranges_json: DetectionMemberRow['ranges'];
+      box_x: number;
+      box_y: number;
+      box_w: number;
+      box_h: number;
+      confidence_milli: number;
+      provenance: DetectionMemberRow['provenance'];
+      mask_id: string | null;
+      r2_key: string | null;
+      mask_kind: DetectionMemberRow['maskKind'];
+      mask_format: 'png' | 'webp' | null;
+      mask_provenance: DetectionMemberRow['maskProvenance'];
+      mask_model_version: string | null;
+      included_default: boolean;
+      low_confidence: boolean;
+    }>(
+      `select m.id, m.group_id, m.order_index, m.text, m.range_mode, m.ranges_json,
+              m.box_x, m.box_y, m.box_w, m.box_h, m.confidence_milli, m.provenance,
+              ma.id as mask_id, ma.r2_key, ma.kind as mask_kind,
+              ma.format as mask_format,
+              ma.provenance as mask_provenance,
+              ma.model_version as mask_model_version,
+              m.included_default, m.low_confidence
+         from detection_members m
+         left join mask_assets ma on ma.id = m.mask_asset_id
+        where m.group_id in (select id from detection_groups where run_id = $1)
+        order by m.group_id, m.order_index`,
+      [run.id],
+    );
+    const byGroup = new Map<string, DetectionMemberRow[]>();
+    for (const row of members.rows) {
+      const list = byGroup.get(row.group_id) ?? [];
+      list.push({
+        id: row.id,
+        orderIndex: row.order_index,
+        text: row.text,
+        rangeMode: row.range_mode,
+        ranges: row.ranges_json ?? [],
+        box: { x: row.box_x, y: row.box_y, w: row.box_w, h: row.box_h },
+        confidenceMilli: row.confidence_milli,
+        provenance: row.provenance,
+        maskId: row.mask_id,
+        maskKey: row.r2_key,
+        maskKind: row.mask_kind,
+        maskFormat: row.mask_format,
+        maskProvenance: row.mask_provenance,
+        maskModelVersion: row.mask_model_version,
+        includedDefault: row.included_default,
+        lowConfidence: row.low_confidence,
+      });
+      byGroup.set(row.group_id, list);
+    }
+    return {
+      run,
+      groups: rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        lane: row.lane,
+        orderIndex: row.order_index,
+        sampleText: row.sample_text,
+        box: { x: row.box_x, y: row.box_y, w: row.box_w, h: row.box_h },
+        confidenceMilli: row.confidence_milli,
+        includedDefault: row.included_default,
+        lowConfidence: row.low_confidence,
+        members: byGroup.get(row.id) ?? [],
+      })),
+      beats: await this.beats(userId, itemId),
+    };
+  }
+
+  async requestDetectionCancel(
+    userId: string,
+    itemId: string,
+  ): Promise<DetectionRunRow | null> {
+    const run = await this.latestDetectionRun(userId, itemId);
+    if (!run) return null;
+    if (run.status !== 'queued' && run.status !== 'running') return run;
+    await this.sql.query(
+      `update detection_runs
+          set cancel_requested_at = now(),
+              status = case when status = 'queued' then 'cancelled' else status end,
+              finished_at = case when status = 'queued' then now() else finished_at end
+        where id = $1`,
+      [run.id],
+    );
+    return this.detectionRun(run.id);
+  }
+
+  async applyDetection(
+    runId: string,
+    payload: {
+      truncated: boolean;
+      framesRead: number;
+      framesTotal: number;
+      framesSkipped: number;
+      effectiveFpsMilli: number;
+      ocrAvailable: boolean;
+      logoModelAvailable: boolean;
+      warnings: string[];
+      modelVersions: Record<string, string>;
+      computeSeconds: number;
+      deviceClass: DeviceClass;
+      /** null means every beat was in scope. */
+      scopeBeatIndexes: number[] | null;
+      groups: Array<{
+        id: string;
+        kind: DetectionGroupRow['kind'];
+        lane: number;
+        orderIndex: number;
+        sampleText: string | null;
+        box: { x: number; y: number; w: number; h: number };
+        confidenceMilli: number;
+        includedDefault: boolean;
+        lowConfidence: boolean;
+        members: Array<
+          Omit<
+            DetectionMemberRow,
+            | 'maskKey'
+            | 'maskId'
+            | 'maskKind'
+            | 'maskFormat'
+            | 'maskProvenance'
+            | 'maskModelVersion'
+          > & { maskId: string | null }
+        >;
+      }>;
+      masks: Array<{
+        id: string;
+        key: string;
+        kind: 'glyph' | 'region' | 'feather';
+        bytes: number;
+        groupId: string;
+        memberId: string;
+        format: 'png' | 'webp';
+        frameStart: number;
+        frameEnd: number;
+        provenance: DetectionMemberRow['provenance'];
+        modelVersion: string;
+      }>;
+    },
+  ): Promise<boolean> {
+    return this.sql.transaction(async (tx) => {
+      const { rows } = await tx.query<{ cancel_requested_at: string | null }>(
+        `select cancel_requested_at from detection_runs where id = $1 for update`,
+        [runId],
+      );
+      const run = rows[0];
+      if (!run) return false;
+      if (run.cancel_requested_at) {
+        await tx.query(
+          `update detection_runs set status = 'cancelled', finished_at = now()
+            where id = $1`,
+          [runId],
+        );
+        return false;
+      }
+      // A new revision replaces the previous scan's beat truth. Without this
+      // reset, beats from the old run stay `ready`/`has_target`.
+      await tx.query(
+        `update beats
+            set has_target = false, status = 'pending', detection_run_id = null
+          where source_asset_id = (
+            select source_asset_id from detection_runs where id = $1
+          )`,
+        [runId],
+      );
+      const coverageMilli = payload.framesTotal
+        ? Math.round((payload.framesRead * 1000) / payload.framesTotal)
+        : 0;
+      await tx.query(
+        `update detection_runs
+            set status = 'succeeded', progress_milli = 1000,
+                frames_read = $2, frames_skipped = $3, frames_total = $4,
+                coverage_milli = $5, effective_fps_milli = $13, truncated = $6,
+                ocr_available = $7,
+                logo_model_available = $8, warnings_json = $9::jsonb,
+                model_versions_json = $10::jsonb, compute_seconds = $11,
+                device_class = $12, finished_at = now(),
+                error_code = null, error_detail = null
+          where id = $1`,
+        [
+          runId,
+          payload.framesRead,
+          payload.framesSkipped,
+          payload.framesTotal,
+          coverageMilli,
+          payload.truncated,
+          payload.ocrAvailable,
+          payload.logoModelAvailable,
+          JSON.stringify(payload.warnings),
+          JSON.stringify(payload.modelVersions),
+          payload.computeSeconds,
+          payload.deviceClass,
+          payload.effectiveFpsMilli,
+        ],
+      );
+      for (const group of payload.groups) {
+        await tx.query(
+          `insert into detection_groups
+             (id, user_id, run_id, kind, lane, order_index, sample_text,
+              box_x, box_y, box_w, box_h, confidence_milli, member_count,
+              included_default, low_confidence)
+           select $1, r.user_id, r.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+             from detection_runs r where r.id = $2`,
+          [
+            group.id,
+            runId,
+            group.kind,
+            group.lane,
+            group.orderIndex,
+            group.sampleText,
+            group.box.x,
+            group.box.y,
+            group.box.w,
+            group.box.h,
+            group.confidenceMilli,
+            group.members.length,
+            group.includedDefault,
+            group.lowConfidence,
+          ],
+        );
+        for (const member of group.members) {
+          await tx.query(
+            `insert into detection_members
+               (id, user_id, group_id, order_index, text, range_mode, ranges_json,
+                box_x, box_y, box_w, box_h, confidence_milli, provenance,
+                mask_asset_id, included_default, low_confidence)
+             select $1, g.user_id, g.id, $3, $4, $5, $6::jsonb, $7, $8, $9, $10,
+                    $11, $12, null, $13, $14
+               from detection_groups g where g.id = $2`,
+            [
+              member.id,
+              group.id,
+              member.orderIndex,
+              member.text,
+              member.rangeMode,
+              JSON.stringify(member.ranges),
+              member.box.x,
+              member.box.y,
+              member.box.w,
+              member.box.h,
+              member.confidenceMilli,
+              member.provenance,
+              member.includedDefault,
+              member.lowConfidence,
+            ],
+          );
+        }
+      }
+
+      // Masks reference both the group and the member, so they land last.
+      for (const mask of payload.masks) {
+        await tx.query(
+          `insert into mask_assets
+             (id, user_id, run_id, group_id, member_id, kind, r2_key, format, bytes,
+              frame_start, frame_end, provenance, model_version)
+           select $1, r.user_id, r.id, $3, $4, $5, $2, $6, $7, $8, $9, $10, $11
+             from detection_runs r where r.id = $12`,
+          [
+            mask.id,
+            mask.key,
+            mask.groupId,
+            mask.memberId,
+            mask.kind,
+            mask.format,
+            mask.bytes,
+            mask.frameStart,
+            mask.frameEnd,
+            mask.provenance,
+            mask.modelVersion,
+            runId,
+          ],
+        );
+        await tx.query('update detection_members set mask_asset_id = $2 where id = $1', [
+          mask.memberId,
+          mask.id,
+        ]);
+      }
+
+      // has_target comes from the members that actually exist, never from a plan.
+      await tx.query(
+        `update beats b
+            set has_target = true, status = 'ready', detection_run_id = $1
+          where b.source_asset_id = (select source_asset_id from detection_runs where id = $1)
+            and exists (
+              select 1
+                from detection_members m
+                join detection_groups g on g.id = m.group_id
+               where g.run_id = $1
+                 and (m.range_mode = 'whole_source'
+                      or exists (
+                        select 1 from jsonb_array_elements(m.ranges_json) r
+                         where (r ->> 'beat_id')::uuid = b.id
+                      ))
+            )`,
+        [runId],
+      );
+      // A complete scan proves the selected beats have nothing. A scoped scan
+      // never claims anything about beats it did not read.
+      await tx.query(
+        `update beats b
+            set status = 'empty', detection_run_id = $1
+          where b.source_asset_id = (select source_asset_id from detection_runs where id = $1)
+            and b.status = 'pending' and $2 = false
+            and ($3::int[] is null or b."index" = any($3::int[]))`,
+        [runId, payload.truncated, payload.scopeBeatIndexes],
+      );
+      // `library_items.detection_revision` is a projection of the latest run,
+      // not a stored column, so nothing to keep in sync here.
+      return true;
+    });
+  }
+
+  async failDetectionRun(runId: string, code: string, detail: string): Promise<void> {
+    await this.sql.query(
+      `update detection_runs
+          set status = 'failed', error_code = $2, error_detail = $3, finished_at = now()
+        where id = $1 and status in ('queued', 'running')`,
+      [runId, code, detail],
+    );
   }
 
   async applyProxy(
@@ -781,10 +1460,16 @@ export class Db {
         `update library_items
             set proxy_asset_id = (select id from proxy_assets where r2_key = $3),
                 poster_asset_id = (select id from poster_assets where r2_key = $4),
+                status = case
+                  when status in ('uploading', 'uploaded', 'probing') then 'dissecting'
+                  when status = 'dissecting' then 'dissecting'
+                  else status
+                end,
                 status_error_code = null, status_error_detail = null
           where id = $1 and user_id = $2`,
         [job.itemId, job.userId, input.proxyKey, input.posterKey],
       );
+      await tx.query(Db.readinessSql, [job.itemId, job.userId]);
     });
   }
 
@@ -812,4 +1497,48 @@ export class Db {
       [itemId, userId],
     );
   }
+}
+
+const DETECTION_RUN_SELECT = `
+  select r.id, r.revision, r.engine, r.status, r.progress_milli, r.frames_read,
+         r.frames_skipped, r.frames_total, r.coverage_milli, r.effective_fps_milli,
+         r.truncated,
+         r.ocr_available, r.logo_model_available, r.warnings_json,
+         r.model_versions_json, r.detection_width, r.detection_height,
+         r.compute_seconds, r.device_class, r.error_code, r.error_detail,
+         r.cancel_requested_at, r.started_at, r.finished_at
+    from detection_runs r`;
+
+function toDetectionRun(row: Record<string, unknown>): DetectionRunRow {
+  return {
+    id: String(row.id),
+    revision: String(row.revision),
+    engine: row.engine as DetectionRunRow['engine'],
+    status: row.status as DetectionRunRow['status'],
+    progressMilli: Number(row.progress_milli),
+    framesRead: Number(row.frames_read),
+    framesSkipped: Number(row.frames_skipped),
+    framesTotal: Number(row.frames_total),
+    coverageMilli: row.coverage_milli === null ? null : Number(row.coverage_milli),
+    effectiveFpsMilli:
+      row.effective_fps_milli === null ? null : Number(row.effective_fps_milli),
+    truncated: Boolean(row.truncated),
+    ocrAvailable: Boolean(row.ocr_available),
+    logoModelAvailable: Boolean(row.logo_model_available),
+    warnings: (row.warnings_json as string[] | null) ?? [],
+    modelVersions: (row.model_versions_json as Record<string, string> | null) ?? {},
+    detectionWidth: row.detection_width === null ? null : Number(row.detection_width),
+    detectionHeight: row.detection_height === null ? null : Number(row.detection_height),
+    computeSeconds: Number(row.compute_seconds ?? 0),
+    deviceClass: (row.device_class as DetectionRunRow['deviceClass']) ?? null,
+    errorCode: (row.error_code as string | null) ?? null,
+    errorDetail: (row.error_detail as string | null) ?? null,
+    cancelRequestedAt: row.cancel_requested_at
+      ? new Date(row.cancel_requested_at as string).toISOString()
+      : null,
+    startedAt: row.started_at ? new Date(row.started_at as string).toISOString() : null,
+    finishedAt: row.finished_at
+      ? new Date(row.finished_at as string).toISOString()
+      : null,
+  };
 }

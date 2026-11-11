@@ -35,6 +35,11 @@ class MemoryBucket implements MediaBucket {
   async delete(key: string | string[]) {
     for (const item of Array.isArray(key) ? key : [key]) this.objects.delete(item);
   }
+
+  async put(key: string, bytes: Uint8Array) {
+    this.objects.set(key, { size: bytes.byteLength, etag: 'put' });
+    return { size: bytes.byteLength };
+  }
 }
 
 function fakeSigner(): Signer {
@@ -148,6 +153,92 @@ function harness(options: { worker?: boolean } = {}): Harness {
           device_class: 'cpu',
           input_bytes: 1000,
           output_bytes: 0,
+        },
+      });
+    }
+    if (url.endsWith('/v1/dissect')) {
+      return Response.json({
+        job_id: body.job_id,
+        status: 'succeeded',
+        beats: [
+          { index: 0, start_frame: 0, end_frame: 120, boundary: 'start' },
+          { index: 1, start_frame: 120, end_frame: 240, boundary: 'cap' },
+          { index: 2, start_frame: 240, end_frame: 360, boundary: 'cap' },
+        ],
+        source_sha256: 'a'.repeat(64),
+        usage: { compute_seconds: 1.25, device_class: 'cpu', input_bytes: 1000 },
+      });
+    }
+    if (url.endsWith('/v1/detect')) {
+      const revision = body.revision as string;
+      const beats = body.beats as Array<{
+        id: string;
+        index: number;
+        start_frame: number;
+        end_frame: number;
+      }>;
+      return Response.json({
+        job_id: body.job_id,
+        status: 'succeeded',
+        revision,
+        groups: [
+          {
+            group_id: '11111111-1111-4111-8111-111111111111',
+            kind: 'text',
+            lane: 0,
+            order_index: 0,
+            sample_text: 'DUCK',
+            box: { x: 10, y: 20, w: 100, h: 40 },
+            confidence_milli: 900,
+            included_default: true,
+            low_confidence: false,
+            members: [
+              {
+                member_id: '22222222-2222-4222-8222-222222222222',
+                order_index: 0,
+                text: 'DUCK',
+                range_mode: 'ranges',
+                ranges: beats.slice(0, 2).map((beat) => ({
+                  beat_id: beat.id,
+                  beat_index: beat.index,
+                  start_frame: beat.start_frame,
+                  end_frame: beat.end_frame,
+                })),
+                box: { x: 10, y: 20, w: 100, h: 40 },
+                confidence_milli: 900,
+                provenance: 'ocr',
+                mask: {
+                  mask_id: '44444444-4444-4444-8444-444444444444',
+                  r2_key: '',
+                  format: 'png',
+                  frame_start: beats[0]?.start_frame ?? 0,
+                  frame_end: beats[0]?.end_frame ?? 60,
+                  provenance: 'ocr',
+                  model_version: 'rapidocr-onnxruntime-1.4',
+                  bytes: 0,
+                  png_base64:
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+                },
+                included_default: true,
+                low_confidence: false,
+              },
+            ],
+          },
+        ],
+        coverage: {
+          frames_total: 360,
+          frames_read: 360,
+          frames_skipped: 0,
+          effective_fps_milli: 30_000,
+          truncated: false,
+          ocr_available: true,
+          logo_model_available: false,
+          warnings: ['logo_model_unavailable'],
+        },
+        usage: {
+          compute_seconds: 3.5,
+          device_class: 'cpu',
+          model_versions: { ocr: 'rapidocr-onnxruntime-1.4', logo: 'unavailable' },
         },
       });
     }
@@ -644,9 +735,10 @@ describe('probe and proxy jobs', () => {
       fps_num: number;
       has_audio: boolean;
       probe_status: string;
+      item_status: string;
     }>(
       `select li.duration_ms, li.width, li.height, li.fps_num, li.has_audio,
-              sa.probe_status
+              li.status as item_status, sa.probe_status
          from library_items li join source_assets sa on sa.library_item_id = li.id
         where li.id = $1`,
       [upload.library_item_id],
@@ -658,8 +750,12 @@ describe('probe and proxy jobs', () => {
       fps_num: 30,
       has_audio: true,
       probe_status: 'succeeded',
+      // Reading the file is a real state: the item is not "ready" until a
+      // verified proxy and a dissection exist.
+      item_status: 'dissecting',
     });
-    expect(h.enqueued).toHaveLength(2);
+    // Proxy and dissection are dispatched side by side.
+    expect(h.enqueued).toHaveLength(3);
 
     const proxyRow = await db.query<{ id: string }>(
       `select id from worker_jobs where kind = 'proxy'`,
@@ -678,8 +774,69 @@ describe('probe and proxy jobs', () => {
       size: 12_345,
       etag: 'proxy',
     });
+    h.media.objects.set(`u/${userId}/src/${assetId}/poster.jpg`, {
+      size: 2_000,
+      etag: 'poster',
+    });
 
     expect(await runJob(runtime, proxyJobId)).toBe('ack');
+
+    // Proxy alone is not ready: detection needs beats, so the item waits.
+    const afterProxyOnly = await db.query<{ status: string }>(
+      'select status from library_items where id = $1',
+      [upload.library_item_id],
+    );
+    expect(afterProxyOnly.rows[0]?.status).toBe('dissecting');
+
+    const dissectRow = await db.query<{ id: string }>(
+      `select id from worker_jobs where kind = 'dissect'`,
+    );
+    expect(await runJob(runtime, dissectRow.rows[0]?.id as string)).toBe('ack');
+
+    const beats = await db.query<{
+      index: number;
+      start_frame: number;
+      end_frame: number;
+      start_ms: number;
+      end_ms: number;
+      boundary: string;
+    }>(
+      `select "index", start_frame, end_frame, start_ms, end_ms, boundary from beats order by "index"`,
+    );
+    expect(beats.rows).toEqual([
+      {
+        index: 0,
+        start_frame: 0,
+        end_frame: 120,
+        start_ms: 0,
+        end_ms: 4000,
+        boundary: 'start',
+      },
+      {
+        index: 1,
+        start_frame: 120,
+        end_frame: 240,
+        start_ms: 4000,
+        end_ms: 8000,
+        boundary: 'cap',
+      },
+      {
+        index: 2,
+        start_frame: 240,
+        end_frame: 360,
+        start_ms: 8000,
+        end_ms: 12_000,
+        boundary: 'cap',
+      },
+    ]);
+    const manifest = await db.query<{
+      beat_manifest_hash: string;
+      dissect_status: string;
+    }>('select beat_manifest_hash, dissect_status from source_assets where id = $1', [
+      assetId,
+    ]);
+    expect(manifest.rows[0]?.dissect_status).toBe('succeeded');
+    expect(manifest.rows[0]?.beat_manifest_hash).toMatch(/^[0-9a-f]{64}$/);
 
     const play = await h.app.request(
       `/api/v1/library/${upload.library_item_id}/play`,
@@ -695,6 +852,280 @@ describe('probe and proxy jobs', () => {
     expect(ticket.duration_ms).toBe(12_000);
     expect(ticket.width).toBe(720);
     expect(ticket.url).toContain('/proxy.mp4');
+
+    const afterProxy = await db.query<{ status: string }>(
+      'select status from library_items where id = $1',
+      [upload.library_item_id],
+    );
+    expect(afterProxy.rows[0]?.status).toBe('ready');
+  });
+
+  it('runs detection, stores groups and masks, and reports coverage', async () => {
+    const h = harness();
+    const upload = await uploaded(h);
+    const runtime = {
+      db: new Db(pgliteSql(db)),
+      signer: h.signer,
+      media: h.media,
+      enqueue: async (message: { job_id: string }) => {
+        h.enqueued.push(message);
+      },
+      fetcher: h.fetcher,
+      cpuWorkerUrl: 'https://worker.test',
+      secret: 'test-secret',
+      keyId: 'v1',
+    };
+    const token = await tokenFor('user_one');
+    const jobId = async (kind: string) =>
+      (
+        await db.query<{ id: string }>('select id from worker_jobs where kind = $1', [
+          kind,
+        ])
+      ).rows[0]?.id as string;
+
+    expect(await runJob(runtime, await jobId('probe'))).toBe('ack');
+    const asset = await db.query<{ user_id: string; id: string }>(
+      'select user_id, id from source_assets where library_item_id = $1',
+      [upload.library_item_id],
+    );
+    const userId = asset.rows[0]?.user_id as string;
+    const assetId = asset.rows[0]?.id as string;
+    h.media.objects.set(`u/${userId}/src/${assetId}/proxy.mp4`, {
+      size: 12_345,
+      etag: 'proxy',
+    });
+    h.media.objects.set(`u/${userId}/src/${assetId}/poster.jpg`, {
+      size: 2_000,
+      etag: 'poster',
+    });
+    expect(await runJob(runtime, await jobId('proxy'))).toBe('ack');
+    expect(await runJob(runtime, await jobId('dissect'))).toBe('ack');
+    expect(
+      (
+        await db.query<{ status: string }>(
+          'select status from library_items where id = $1',
+          [upload.library_item_id],
+        )
+      ).rows[0]?.status,
+    ).toBe('ready');
+
+    const posted = await h.app.request(
+      `/api/v1/library/${upload.library_item_id}/detect`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: true, logos: true }),
+      },
+      env(),
+    );
+    expect(posted.status).toBe(202);
+    const queued = (await posted.json()) as { run: { status: string; revision: string } };
+    expect(queued.run.status).toBe('queued');
+    expect(queued.run.revision).toMatch(/^[0-9a-f]{64}$/);
+
+    expect(await runJob(runtime, await jobId('detect'))).toBe('ack');
+
+    const state = await h.app.request(
+      `/api/v1/library/${upload.library_item_id}/detect`,
+      { headers: { authorization: `Bearer ${token}` } },
+      env(),
+    );
+    expect(state.status).toBe(200);
+    const wire = (await state.json()) as {
+      run: {
+        status: string;
+        coverage: number | null;
+        ocr_available: boolean;
+        logo_model_available: boolean;
+        warnings: string[];
+      };
+      groups: Array<{
+        sample_text: string;
+        members: Array<{ mask: { url: string } | null; ranges: unknown[] }>;
+      }>;
+      beats: Array<{ status: string; has_target: boolean }>;
+      selection_counts: { groups: number; members: number; beats_with_target: number };
+    };
+    expect(wire.run.status).toBe('succeeded');
+    expect(wire.run.coverage).toBe(1);
+    expect(wire.run.ocr_available).toBe(true);
+    expect(wire.run.logo_model_available).toBe(false);
+    expect(wire.run.warnings).toContain('logo_model_unavailable');
+    expect(wire.groups[0]?.sample_text).toBe('DUCK');
+    expect(wire.groups[0]?.members[0]?.mask?.url).toContain('.png');
+    expect(wire.selection_counts).toEqual({
+      groups: 1,
+      members: 1,
+      beats_with_target: 2,
+    });
+    expect(wire.beats.map((beat) => beat.status)).toEqual(['ready', 'ready', 'empty']);
+    expect([...h.media.objects.keys()].some((key) => key.includes('/detect/'))).toBe(
+      true,
+    );
+
+    const masks = await db.query<{ provenance: string; kind: string }>(
+      'select provenance, kind from mask_assets',
+    );
+    expect(masks.rows[0]).toEqual({ provenance: 'ocr', kind: 'glyph' });
+  });
+
+  it('retries a failed detection plan without orphaning a run', async () => {
+    const h = harness();
+    const upload = await uploaded(h);
+    const runtime = {
+      db: new Db(pgliteSql(db)),
+      signer: h.signer,
+      media: h.media,
+      enqueue: async (message: { job_id: string }) => {
+        h.enqueued.push(message);
+      },
+      fetcher: h.fetcher,
+      cpuWorkerUrl: 'https://worker.test',
+      secret: 'test-secret',
+      keyId: 'v1',
+    };
+    const token = await tokenFor('user_one');
+    const jobId = async (kind: string) =>
+      (
+        await db.query<{ id: string }>('select id from worker_jobs where kind = $1', [
+          kind,
+        ])
+      ).rows[0]?.id as string;
+
+    expect(await runJob(runtime, await jobId('probe'))).toBe('ack');
+    const asset = await db.query<{ user_id: string; id: string }>(
+      'select user_id, id from source_assets where library_item_id = $1',
+      [upload.library_item_id],
+    );
+    const userId = asset.rows[0]?.user_id as string;
+    const assetId = asset.rows[0]?.id as string;
+    h.media.objects.set(`u/${userId}/src/${assetId}/proxy.mp4`, {
+      size: 12_345,
+      etag: 'proxy',
+    });
+    h.media.objects.set(`u/${userId}/src/${assetId}/poster.jpg`, {
+      size: 2_000,
+      etag: 'poster',
+    });
+    expect(await runJob(runtime, await jobId('proxy'))).toBe('ack');
+    expect(await runJob(runtime, await jobId('dissect'))).toBe('ack');
+
+    const body = { text: true, logos: true };
+    const first = await h.app.request(
+      `/api/v1/library/${upload.library_item_id}/detect`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env(),
+    );
+    expect(first.status).toBe(202);
+    const firstRun = (await first.json()) as { run: { id: string; status: string } };
+    expect(firstRun.run.status).toBe('queued');
+
+    await db.query(
+      `update worker_jobs set status = 'failed', attempts = max_attempts,
+              error_code = 'render_failed'
+        where kind = 'detect'`,
+    );
+    await db.query(`update detection_runs set status = 'failed' where id = $1`, [
+      firstRun.run.id,
+    ]);
+
+    const retry = await h.app.request(
+      `/api/v1/library/${upload.library_item_id}/detect`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env(),
+    );
+    expect(retry.status).toBe(202);
+    const retried = (await retry.json()) as { run: { id: string; status: string } };
+    expect(retried.run.id).not.toBe(firstRun.run.id);
+    expect(retried.run.status).toBe('queued');
+
+    const jobs = await db.query<{ status: string }>(
+      `select status from worker_jobs where kind = 'detect'`,
+    );
+    expect(jobs.rows).toEqual([{ status: 'queued' }]);
+    const runs = await db.query<{ count: number }>(
+      `select count(*)::int as count from detection_runs`,
+    );
+    expect(runs.rows[0]?.count).toBe(2);
+  });
+
+  it('scopes detection to the selected beats', async () => {
+    const h = harness();
+    const upload = await uploaded(h);
+    const runtime = {
+      db: new Db(pgliteSql(db)),
+      signer: h.signer,
+      media: h.media,
+      enqueue: async (message: { job_id: string }) => {
+        h.enqueued.push(message);
+      },
+      fetcher: h.fetcher,
+      cpuWorkerUrl: 'https://worker.test',
+      secret: 'test-secret',
+      keyId: 'v1',
+    };
+    const token = await tokenFor('user_one');
+    const jobId = async (kind: string) =>
+      (
+        await db.query<{ id: string }>('select id from worker_jobs where kind = $1', [
+          kind,
+        ])
+      ).rows[0]?.id as string;
+
+    expect(await runJob(runtime, await jobId('probe'))).toBe('ack');
+    const asset = await db.query<{ user_id: string; id: string }>(
+      'select user_id, id from source_assets where library_item_id = $1',
+      [upload.library_item_id],
+    );
+    const userId = asset.rows[0]?.user_id as string;
+    const assetId = asset.rows[0]?.id as string;
+    h.media.objects.set(`u/${userId}/src/${assetId}/proxy.mp4`, {
+      size: 12_345,
+      etag: 'proxy',
+    });
+    h.media.objects.set(`u/${userId}/src/${assetId}/poster.jpg`, {
+      size: 2_000,
+      etag: 'poster',
+    });
+    expect(await runJob(runtime, await jobId('proxy'))).toBe('ack');
+    expect(await runJob(runtime, await jobId('dissect'))).toBe('ack');
+
+    const posted = await h.app.request(
+      `/api/v1/library/${upload.library_item_id}/detect`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          text: true,
+          logos: true,
+          scope: { beat_indexes: [1] },
+        }),
+      },
+      env(),
+    );
+    expect(posted.status).toBe(202);
+    expect(await runJob(runtime, await jobId('detect'))).toBe('ack');
+
+    const detectCall = h.calls.find((call) => call.path === '/v1/detect');
+    const sentBeats = detectCall?.body.beats as Array<{ index: number }> | undefined;
+    expect(sentBeats?.map((beat) => beat.index)).toEqual([1]);
+
+    const beats = await db.query<{ status: string; has_target: boolean }>(
+      'select status, has_target from beats order by "index"',
+    );
+    expect(beats.rows.map((beat) => beat.status)).toEqual([
+      'pending',
+      'ready',
+      'pending',
+    ]);
   });
 
   it('records worker_unavailable and leaves the upload usable when dispatch fails', async () => {

@@ -35,6 +35,22 @@ describe('r2Signer', () => {
     expect(url.searchParams.get('X-Amz-Expires')).toBe('600');
     expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
   });
+
+  it('uses a local endpoint and path-style bucket when one is configured', async () => {
+    const local = r2Signer({
+      accountId: 'local',
+      bucket: 'duckclean-media',
+      accessKeyId: 'duckclean',
+      secretAccessKey: 'duckclean-dev-secret',
+      endpoint: 'http://127.0.0.1:9000/',
+    });
+    const ticket = await local.presignPut('u/user/src/a/source.mp4', 900, 'video/mp4');
+    const url = new URL(ticket.url);
+    expect(url.origin).toBe('http://127.0.0.1:9000');
+    expect(url.pathname).toBe('/duckclean-media/u/user/src/a/source.mp4');
+    // MinIO signs a concrete region; `auto` is an R2-only value.
+    expect(url.searchParams.get('X-Amz-Credential')).toContain('/us-east-1/s3/');
+  });
 });
 
 describe('verifyUpload', () => {
@@ -46,6 +62,9 @@ describe('verifyUpload', () => {
     },
     async delete() {
       return undefined;
+    },
+    async put(_key, bytes) {
+      return { size: bytes.byteLength };
     },
   };
 

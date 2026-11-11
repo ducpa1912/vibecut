@@ -43,7 +43,7 @@ require_value() {
   esac
 }
 
-echo "DuckClean M1 doctor"
+echo "DuckClean M1/M2 doctor"
 echo "root: $ROOT"
 echo
 
@@ -85,14 +85,44 @@ else
   bad "web/.env.local is missing; copy web/.env.example"
 fi
 
+local_mode=0
+if [ -f "$API_ENV" ]; then
+  local_endpoint="$(value_of "$API_ENV" R2_ENDPOINT || true)"
+  local_app_env="$(value_of "$API_ENV" APP_ENV || true)"
+  if [ -n "$local_endpoint" ] && [ "$local_app_env" != "production" ]; then
+    local_mode=1
+    pass "local mode: media goes to $local_endpoint, not R2"
+  fi
+fi
+
 echo
 echo "-- Cloudflare --"
-if command -v npx >/dev/null 2>&1; then
+if [ "$local_mode" = "1" ]; then
+  note "local mode skips Cloudflare credentials; delete R2_ENDPOINT to use real R2"
+  if command -v minio >/dev/null 2>&1; then
+    pass "minio is installed (npm run dev:s3)"
+  else
+    note "minio is not installed; run 'brew install minio' for npm run dev:s3"
+  fi
+elif command -v npx >/dev/null 2>&1; then
   if npx --yes wrangler whoami 2>&1 | grep -qi "not authenticated"; then
     bad "Wrangler is not logged in; run 'npx wrangler login'"
   else
     pass "Wrangler is authenticated"
   fi
+fi
+
+echo
+echo "-- local services --"
+if [ "$local_mode" = "1" ]; then
+  for port in 5432 9000; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      exec 3>&-
+      pass "port $port is listening"
+    else
+      note "nothing is listening on port $port (npm run dev:db / npm run dev:s3)"
+    fi
+  done
 fi
 
 echo
@@ -122,6 +152,14 @@ if command -v curl >/dev/null 2>&1; then
   if [ -n "$worker_url" ]; then
     worker_health="$(curl -sS --max-time 4 "${worker_url%/}/health" 2>/dev/null || true)"
     if printf '%s' "$worker_health" | grep -q '"status":"ok"'; then pass "CPU worker health is ok"; else note "CPU worker is not reachable"; fi
+    if printf '%s' "$worker_health" | grep -q '"name":"ocr","version":[^n]'; then
+      pass "worker reports an OCR model"
+    elif printf '%s' "$worker_health" | grep -q '"ocr_unavailable"\|"name":"ocr"'; then
+      note "worker has no OCR model; detection will report ocr_unavailable (pip install '.[ocr]')"
+    fi
+    if printf '%s' "$worker_health" | grep -q '"name":"logo","version":null'; then
+      note "worker has no logo model; detection reports logo_model_unavailable"
+    fi
   fi
 else
   note "curl is missing"
@@ -133,4 +171,4 @@ if [ "$fail" -gt 0 ]; then
   echo "M1 is not ready. Fix the FAIL lines, then run 'make check' and 'npm run m1:doctor' again."
   exit 1
 fi
-echo "M1 configuration looks ready. Start the API, worker and web, then upload a real clip."
+echo "Configuration looks ready. Start the API, worker and web, then upload a real clip."

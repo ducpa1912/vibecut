@@ -38,9 +38,11 @@ These were open or under-specified in `plan.md`; the plan is updated to match.
 5. **Detection cadence is every frame.** `frame_policy` has exactly one value,
    `every_frame`. A beat whose frame cap is hit reports `truncated` and
    `frames_skipped`; it never silently samples.
-6. **Masks are per member range**, stored as PNG/WebP in R2 with `provenance`
-   and `model_version`. Render receives signed mask URLs, so no detection model
-   runs during render.
+6. **Masks are per member in M2**, stored as PNG/WebP in R2 with `provenance`
+   and `model_version`. The mask is the union of the member's observed glyph
+   positions across its ranges, so moving text cannot be left unmasked.
+   Per-range masks are a later refinement. Render receives signed mask URLs, so
+   no detection model runs during render.
 7. **One package manager.** npm workspaces (`web`, `api`). No pnpm/Bun lockfile.
 8. **Python packaging is `pyproject.toml`.** No `requirements.txt`; the image
    installs the package with `pip install .`.
@@ -251,17 +253,22 @@ the database rejects that combination and so does the worker contract.
 
 1. Scene pass: ffmpeg at 480 px height, `select='gt(scene,0.30)'`, PTS taken per
    frame.
-2. Cut points: `0`, scene timestamps, `frame_count`.
+2. Cut points: scene timestamps only. `0` and `frame_count` are the edges, not
+   cuts.
 3. Snap every cut to `round(t * fps_num / fps_den)`, clamp to
-   `[0, frame_count]`, drop duplicates.
-4. Split any span longer than `max_seconds` into the fewest equal pieces that
-   are all at least `min_seconds` where possible.
-5. Merge a span shorter than `min_seconds` into the next span when the result
-   stays within `max_seconds`; otherwise into the previous span; otherwise leave
-   it short and count it as-is.
-6. Assign boundaries: first `start`, scene-cut starts `scene`, cap splits `cap`,
-   last `end`.
-7. Assert contiguity and `sum(end_frame - start_frame) == frame_count`.
+   `[1, frame_count - 1]`, drop duplicates. A cut is used only when it is at
+   least `min_seconds` after the current span start and at most `max_seconds`
+   after it; a closer cut is absorbed into the current span.
+4. When no usable cut exists, the span is capped at `max_seconds`. A cap split
+   never cuts a later scene cut short: the cut is reconsidered against the next
+   start.
+5. Assign boundaries by the reason the span started: first `start`, a scene cut
+   `scene`, a cap `cap`. `end` is reserved and not emitted by dissection.
+6. Assert contiguity and `sum(end_frame - start_frame) == frame_count`.
+
+M2 delta: step 4 keeps long static shots at `max_seconds` rather than splitting
+into equal pieces. A 10 s static shot is `4 + 4 + 2`, which keeps every span
+above `min_seconds` and keeps cap boundaries predictable for render.
 
 Same source hash + same params + same fps ⇒ same manifest hash.
 
@@ -308,8 +315,23 @@ POST /v1/cancel
   (`width`, `height`, `duration_ms`, `fps_num`, `fps_den`, `bytes`, and the
   poster's `frame_index`). The API verifies the proxy's `HEAD` size before it
   records the derivative; a worker response alone is not proof.
-- Detection returns groups/members/ranges/mask refs and coverage; it never
-  returns pixels.
+- `POST /v1/dissect` returns `beats` plus `source_sha256`, the digest of the
+  bytes the worker actually read. The worker no longer computes the beat
+  manifest hash: the API is the only implementation of canonical JSON, so it
+  hashes the returned plan (`api/src/canonical.ts`). One hasher, one truth.
+- `POST /v1/detect` returns groups/members/ranges/mask refs and coverage. Masks
+  leave the worker inline as `mask.png_base64` with an empty `r2_key`; the API
+  uploads the PNG to R2 and fills the key. There is no presigned mask PUT yet,
+  so this is the M2 delta; video bytes still never pass through the API.
+- `scope.beat_indexes` filters the beats sent to the worker. Unread beats stay
+  `pending`; a scoped run never marks them empty.
+- M2 OCR is RapidOCR only. `engine: paddleocr` is rejected until that model is
+  packaged; the worker never reports an engine it did not run.
+- M2 has a 600 OCR-frame run cap. `truncated` and `effective_fps` report the
+  real scan; `frames_read + frames_skipped == frames_total` for the selected
+  beats.
+- Cancel: the API discards a result that arrives after `cancel_requested_at`.
+  Compute already spent is still reported and billed.
 - A missing engine or model is reported (`available: false` with a reason) and
   disables that option. It never silently downgrades to a worse engine.
 

@@ -149,7 +149,8 @@ export function authOptionsFromEnv(
   return {
     issuer,
     audience: env.CLERK_AUDIENCE.trim(),
-    jwksUrl: env.CLERK_JWKS_URL ?? `${issuer}/.well-known/jwks.json`,
+    // An empty env var is not a URL: `??` would keep "" and `new URL("")` throws.
+    jwksUrl: env.CLERK_JWKS_URL?.trim() || `${issuer}/.well-known/jwks.json`,
     jwksJson,
     allowedOrigins: env.ALLOWED_ORIGINS.split(',')
       .map((origin) => origin.trim())

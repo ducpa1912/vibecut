@@ -52,7 +52,7 @@ jobs:
           cache-dependency-path: worker/pyproject.toml
 
       - name: Install
-        run: pip install -e "worker[dev]"
+        run: pip install -e "worker[dev,ocr]"
 
       - name: Format check
         run: ruff format --check worker

@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import type { QueryResultRow } from 'pg';
 
 /**
@@ -25,7 +25,68 @@ function poolFor(connectionString: string): Pool {
   return pool;
 }
 
-export function pgSql(connectionString: string): Sql {
+export interface PgSqlOptions {
+  /**
+   * Development only. `wrangler dev` runs on workerd with `nodejs_compat`, and a
+   * socket returned to a pool after one request is still tied to that request's
+   * I/O context; reusing it makes the next request look hung. One connection per
+   * call avoids that. Production keeps the pooled Hyperdrive pattern.
+   */
+  perCallConnection?: boolean;
+}
+
+function clientSql(connect: () => Promise<Client>): Sql {
+  const run = async <T>(fn: (client: Client) => Promise<T>): Promise<T> => {
+    const client = await connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  };
+
+  return {
+    query<T extends QueryResultRow>(text: string, values?: readonly unknown[]) {
+      return run(async (client) => {
+        const result = await client.query<T>(text, values ? [...values] : undefined);
+        return { rows: result.rows };
+      });
+    },
+    transaction<T>(fn: (tx: Sql) => Promise<T>) {
+      return run(async (client) => {
+        await client.query('begin');
+        const tx: Sql = {
+          async query<U extends QueryResultRow>(
+            text: string,
+            values?: readonly unknown[],
+          ) {
+            const result = await client.query<U>(text, values ? [...values] : undefined);
+            return { rows: result.rows };
+          },
+          transaction: async <U>(inner: (tx2: Sql) => Promise<U>) => inner(tx),
+        };
+        try {
+          const value = await fn(tx);
+          await client.query('commit');
+          return value;
+        } catch (error) {
+          await client.query('rollback').catch(() => undefined);
+          throw error;
+        }
+      });
+    },
+  };
+}
+
+export function pgSql(connectionString: string, options: PgSqlOptions = {}): Sql {
+  if (options.perCallConnection) {
+    return clientSql(async () => {
+      const client = new Client({ connectionString });
+      await client.connect();
+      return client;
+    });
+  }
+
   const pool = poolFor(connectionString);
   return {
     async query<T extends QueryResultRow>(text: string, values?: readonly unknown[]) {

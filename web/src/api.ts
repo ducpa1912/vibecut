@@ -1,6 +1,7 @@
 import type {
   ApiErrorBody,
   ApiErrorEnvelope,
+  DetectionView,
   LibraryDetail,
   LibraryPage,
   Me,
@@ -93,6 +94,17 @@ export class Api {
 
   item(id: string): Promise<LibraryDetail> {
     return this.request<LibraryDetail>(`/library/${encodeURIComponent(id)}`);
+  }
+
+  detection(id: string): Promise<DetectionView> {
+    return this.request<DetectionView>(`/library/${encodeURIComponent(id)}/detect`);
+  }
+
+  startDetection(id: string): Promise<DetectionView> {
+    return this.request<DetectionView>(`/library/${encodeURIComponent(id)}/detect`, {
+      method: 'POST',
+      body: JSON.stringify({ text: true, logos: true }),
+    });
   }
 
   play(id: string): Promise<PlayTicket> {

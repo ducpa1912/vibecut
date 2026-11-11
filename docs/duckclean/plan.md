@@ -1,6 +1,9 @@
 # DuckClean build plan
 
-Status: **M1 code complete; live cloud provisioning pending.** M0 contract is
+Status: **M1 and M2 code complete; live cloud provisioning pending.** Verified
+end to end on a local no-Cloudflare stack (PGlite + MinIO + the real worker):
+upload → probe → proxy → dissect → detect, with real ffmpeg and real RapidOCR.
+M0 contract is
 frozen in [`contract.md`](./contract.md). Hosting and worker cost is in
 [`cost-model.md`](./cost-model.md); provider alternatives are in
 [`providers.md`](./providers.md). Brand-new cloud product on a standalone
@@ -41,11 +44,11 @@ keys, data model and billing unit are the parts that must not drift.
 ```
 duckclean/
   web/                         # Vite + React + TypeScript SPA → Cloudflare Pages
-    src/                       # M1: library, upload, item player
+    src/                       # library, upload, player, detection panel
   api/                         # Cloudflare Worker (Hono)
     src/
       index.ts                 # Worker default: fetch + queue handlers
-      app.ts                   # M1 routes: health, me, uploads, library, play
+      app.ts                   # routes: health, me, uploads, library, play, detect
       runtime.ts               # bindings → pool, signer, verifier, queue
       auth.ts                  # Clerk JWKS verification + identity
       db.ts / sql.ts           # user-scoped queries; Hyperdrive or PGlite
@@ -58,6 +61,7 @@ duckclean/
       # later tasks add: routes/{detections,renders,previews,billing,webhooks}
     migrations/0001_init.sql   # frozen schema
     migrations/0002_m1.sql     # posters + worker dispatch records
+    migrations/0003_m2.sql     # detection run effective fps
     openapi.yaml               # frozen HTTP contract
     test/                      # migration (PGlite), OpenAPI, hashing, zod
   worker/                      # Python worker, one image for CPU and GPU
@@ -65,12 +69,15 @@ duckclean/
     README.md                  # Hugging Face Space metadata
     pyproject.toml             # deps + ruff + mypy + pytest config
     duckclean_worker/
-      app.py                   # FastAPI: health, probe, proxy, cancel
+      app.py                   # FastAPI: health, probe, proxy, dissect, detect, cancel
       media.py                 # ffprobe, proxy, poster, ffmpeg
+      dissect.py               # scene pass, frame snapping, beat planner
+      detect.py                # frame decode, tiled OCR, tracklets, masks, coverage
       storage.py               # presigned GET/PUT, local test seam
       contract.py              # pydantic wire models, route payloads
       signing.py               # HMAC-SHA256 + clock skew
-      # M2 adds: beats.py, frames.py, ocr.py, logos.py, masks.py
+      # M4/M5 add: logos.py, fill/{lama,propainter,generative}.py, render.py,
+      # assemble.py, usage.py
       # M5 adds: fill/{lama,propainter,generative}.py, render.py,
       # assemble.py, usage.py
     tests/
@@ -412,22 +419,28 @@ Failure handling: abandoned uploads are deleted by an R2 lifecycle rule after
 
 ### 7.3 Detect
 
-Per beat, independently, so beats parallelize:
+M2 scans the selected beats sequentially; the per-beat unit is ready for M3
+parallel workers. A scoped request sends only the chosen beats, and unread beats
+remain `pending` rather than being called empty.
 
-1. Extract every frame at native fps, capped by `max_width = 1920` and a
-   per-beat frame cap.
-2. Global OCR pass per frame.
-3. Tiled OCR pass for small corner text when `tile_small_text` is on: 2×2 or
-   3×3 tiles with 10% overlap.
-4. Logo/watermark pass: open-vocabulary detection with prompts
-   `logo`, `watermark`, `channel bug`, plus region prompts when the user drew a
-   box.
+1. Extract every frame at native fps, capped by `max_width = 1920`.
+2. Global or tiled OCR per frame. `tile_small_text` uses 2×2 or the full 3×3
+   grid with 10% overlap.
+3. M2 uses RapidOCR. PaddleOCR is not packaged, so the API rejects it rather
+   than recording an engine the worker cannot run.
+4. The open-vocabulary logo/watermark pass is not packaged in M2. Every run
+   reports `logo_model_unavailable`; it never silently skips the pass.
 5. Merge observations into tracklets inside the beat.
 6. Join tracklets across adjacent beats when text, box and time are continuous.
-7. Build groups and members server-side. One group per visual text area or
-   logo cluster. Members keep their own tight boxes and time ranges.
-8. Rasterise glyph masks and region masks; upload masks to R2.
-9. Mark each beat `has_target` and write the aggregate coverage.
+7. Build groups and members server-side. One group per visual text area; lines
+   in that area are separate members with their own tight boxes and ranges.
+8. Rasterise one union glyph/region mask per member across its ranges. A
+   per-range mask is later; the union never leaves moving text unmasked.
+9. Mark each scanned beat `has_target` or `empty`; write coverage.
+
+M2 has a **600 OCR-frame run cap**. A longer plan reports `truncated` and a real
+effective cadence; it never claims a full scan. M3 chunks long sources across
+runs. A 30 fps source beyond about 20 seconds will therefore stop at the cap.
 
 Detection output must include:
 

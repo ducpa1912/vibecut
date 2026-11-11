@@ -320,14 +320,21 @@ class DissectRequest(StrictModel):
 
 
 class DissectResponse(StrictModel):
+    """The worker reports the spans and the source bytes it measured them from.
+
+    The canonical manifest hash is owned by the API (`api/src/canonical.ts`), so
+    there is exactly one implementation of it: the worker returns
+    ``source_sha256`` and the API hashes the plan itself.
+    """
+
     job_id: UUID
     status: JobStatus
     beats: list[BeatSpec]
-    beat_manifest_hash: str
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     usage: Usage
 
     @model_validator(mode="after")
-    def _beats_tile_source(self) -> DissectResponse:
+    def _beats_tile_each_other(self) -> DissectResponse:
         expected = 0
         for position, beat in enumerate(self.beats):
             if beat.index != position:
@@ -360,6 +367,8 @@ class DetectOptions(StrictModel):
     max_width: Annotated[int, Field(ge=320, le=3840)] = 1920
     min_confidence_milli: Annotated[int, Field(ge=0, le=1000)] = 350
     regions: list[DetectRegion] = Field(default_factory=list)
+    # The API already filters `beats`; this is carried for revision/debug truth.
+    scope_beat_indexes: list[Annotated[int, Field(ge=0)]] | None = None
 
 
 class DetectBeat(StrictModel):
@@ -380,16 +389,23 @@ class DetectRequest(StrictModel):
 
 
 class MaskResult(StrictModel):
-    """Masks are written to R2 and referenced, never returned as pixels."""
+    """A mask the API must persist. See docs/duckclean/contract.md §Masks.
+
+    The detect call has no presigned PUT for masks, so a mask leaves the worker
+    inline as base64 PNG and the API writes it to R2. ``r2_key`` is filled by
+    the API; the worker sends it empty.
+    """
 
     mask_id: UUID
     r2_key: str
+    kind: Literal["glyph", "region", "feather"] = "glyph"
     format: Literal["png", "webp"]
     frame_start: Annotated[int, Field(ge=0)]
     frame_end: Annotated[int, Field(ge=0)]
     provenance: Provenance
     model_version: str
     bytes: Annotated[int, Field(ge=0)] = 0
+    png_base64: str | None = None
 
 
 class DetectedMember(StrictModel):

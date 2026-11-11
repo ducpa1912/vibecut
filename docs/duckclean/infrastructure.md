@@ -1,8 +1,8 @@
 # DuckClean infrastructure
 
-Status: M1 code is complete. No live cloud resource is provisioned yet. This
-document separates what exists in the repo from what must be created in an
-account.
+Status: M1 and M2 code is complete. No live cloud resource is provisioned yet.
+This document separates what exists in the repo from what must be created in an
+account, and how to run the whole pipeline locally without any of it.
 
 Run `npm run m1:doctor` to check local env files, Wrangler auth and live health
 without printing secrets.
@@ -224,15 +224,44 @@ npx wrangler pages deploy web/dist --project-name duckclean
 Add the Pages origin to `ALLOWED_ORIGINS` in `api/wrangler.toml` and to R2 CORS.
 The API and Pages are different origins, so CORS must include the exact origin.
 
-## Local M1
+## Local development without Cloudflare
 
-1. Copy `api/.dev.vars.example` to `api/.dev.vars`; fill Clerk, Postgres, R2.
-2. Copy `web/.env.example` to `web/.env.local`; fill the Clerk publishable key.
-3. Run migrations against the Postgres in `localConnectionString`.
-4. Start the API: `npm run dev:api`.
-5. Start the worker: `cd worker && ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799`.
-6. Start the web: `npm run dev:web`.
-7. Open `http://127.0.0.1:5173` and upload one real clip.
+No account is needed to run the real pipeline. Two dev-only seams:
+
+- **Postgres** — `npm run dev:db` starts PGlite on `127.0.0.1:5432` and applies
+  every `api/migrations/*.sql` once (tracked in `dev_schema_migrations`). Point
+  `localConnectionString` in `api/wrangler.toml` at
+  `postgres://duckclean:duckclean@127.0.0.1:5432/duckclean`.
+- **R2** — `npm run dev:s3` starts MinIO on `:9000`, creates the `duckclean-media`
+  bucket and sets CORS for the Vite origins. Set `R2_ENDPOINT`,
+  `R2_REGION=us-east-1` and local credentials in `api/.dev.vars`. The API refuses
+  this override when `APP_ENV=production`.
+
+`npm run dev:db` must be restarted after a new migration file is added; it
+applies only migrations it has not recorded.
+
+Order:
+
+1. `npm run dev:db`, `npm run dev:s3`
+2. `pip install -e 'worker[ocr]'` once, so `/v1/detect` has the OCR model
+3. `npm run dev:api` (wrangler dev on `:8787`)
+4. `cd worker && set -a && . ./.env && set +a && ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799`
+5. `npm run dev:web` and open `http://127.0.0.1:5173`
+
+Clerk is still the sign-in path; local runs verify a token minted against a
+local JWKS via `AUTH_JWKS_JSON` (development only, ignored in production).
+
+`wrangler dev` shares one isolate between HTTP and the queue consumer, so the
+first request right after a job finishes can return a one-off 500. Retrying is
+the honest workaround; production isolates the consumer.
+
+## Local M1/M2 acceptance (proven on this machine)
+
+- Real MP4 → presigned PUT to MinIO → HEAD verify → probe → 720p proxy → ready.
+- Dissection: one 1.5 s clip → one beat `[0, 12)` at 8 fps; hash frozen.
+- Detection: 12/12 frames read, `DUCK` found, 29 groups, masks served as PNG.
+- `logo_model_available: false` with `logo_model_unavailable`, never a silent
+  skip.
 
 ## M1 acceptance
 
@@ -249,6 +278,11 @@ The API and Pages are different origins, so CORS must include the exact origin.
 - Clerk, R2, Postgres and Wrangler are not provisioned on this machine.
 - The CPU worker is not deployed.
 - The frontend is built but not deployed.
-- M1 does not detect text yet; detection and beats are M2.
+- Logo/watermark detection has no packaged model; every run reports
+  `logo_model_available: false` and `logo_model_unavailable`.
+- Detection has a per-run frame budget (`MAX_OCR_FRAMES = 600` in
+  `worker/duckclean_worker/detect.py`). A longer source is reported as
+  `truncated` with `frame_cap`; chunked runs are M3 work.
+- A `wrangler dev` request that follows a finished job can return one 500.
 - `wrangler.toml` still contains a zero Hyperdrive ID and placeholder Clerk
   issuer until the resources exist.

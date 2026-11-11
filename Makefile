@@ -19,7 +19,7 @@ setup:
 	npm install
 	$(PYTHON) -m venv $(VENV)
 	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -e "worker[dev]"
+	$(PY) -m pip install -e "worker[dev,ocr]"
 
 lint: lint-js lint-py
 

@@ -119,7 +119,7 @@ def test_dissect_beats_must_tile_the_source() -> None:
             job_id=uuid4(),
             status=JobStatus.SUCCEEDED,
             beats=beats,
-            beat_manifest_hash="f" * 64,
+            source_sha256="f" * 64,
             usage=usage(),
         )
 

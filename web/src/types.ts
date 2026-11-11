@@ -91,6 +91,90 @@ export interface ProxyInfo {
   bytes: number;
 }
 
+export interface DetectionRange {
+  beat_id: string;
+  beat_index: number;
+  start_frame: number;
+  end_frame: number;
+}
+
+export interface DetectionMaskRef {
+  id: string;
+  kind: 'glyph' | 'region' | 'feather';
+  format: 'png' | 'webp';
+  url: string | null;
+  expires_at: string | null;
+  provenance: 'ocr' | 'logo' | 'user_box' | 'manual';
+  model_version: string;
+}
+
+export interface DetectionMember {
+  id: string;
+  text: string | null;
+  range_mode: 'ranges' | 'whole_source';
+  ranges: DetectionRange[];
+  box: { x: number; y: number; w: number; h: number };
+  confidence: number;
+  provenance: 'ocr' | 'logo' | 'user_box' | 'manual';
+  mask: DetectionMaskRef | null;
+  included_default: boolean;
+  low_confidence: boolean;
+  fill_keys: number[];
+}
+
+export interface DetectionGroup {
+  id: string;
+  kind: 'text' | 'logo' | 'watermark' | 'image' | 'user_box';
+  lane: number;
+  order_index: number;
+  sample_text: string | null;
+  box: { x: number; y: number; w: number; h: number };
+  confidence: number;
+  member_count: number;
+  included_default: boolean;
+  low_confidence: boolean;
+  members: DetectionMember[];
+}
+
+export interface DetectionRunInfo {
+  id: string;
+  revision: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  progress: number;
+  engine: 'auto' | 'paddleocr' | 'rapidocr';
+  model_versions: Record<string, string>;
+  frames_read: number;
+  frames_skipped: number;
+  frames_total: number;
+  effective_fps: number | null;
+  coverage: number | null;
+  truncated: boolean;
+  ocr_available: boolean;
+  logo_model_available: boolean;
+  warnings: string[];
+  compute_seconds: number;
+  device_class: 'cpu' | 'gpu_standard' | 'gpu_premium' | null;
+  error: { code: string; message: string } | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DetectionBeat {
+  beat_id: string;
+  index: number;
+  start_ms: number;
+  end_ms: number;
+  status: 'pending' | 'ready' | 'empty' | 'failed';
+  has_target: boolean;
+}
+
+export interface DetectionView {
+  run: DetectionRunInfo | null;
+  groups: DetectionGroup[];
+  beats: DetectionBeat[];
+  selection_counts: { groups: number; members: number; beats_with_target: number };
+}
+
 export interface LibraryDetail extends LibraryItem {
   source: {
     id: string;
@@ -110,9 +194,9 @@ export interface LibraryDetail extends LibraryItem {
     total: number;
     with_target: number;
     manifest_hash: string | null;
-    items: unknown[];
+    items: DetectionBeat[];
   };
-  detection: null;
+  detection: DetectionView | null;
   render: null;
 }
 

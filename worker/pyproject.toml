@@ -15,6 +15,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The detector. Packaged separately because the ONNX runtime and its models are
+# heavy, and the worker reports `ocr_unavailable` when they are missing instead
+# of pretending a scan happened.
+ocr = [
+  "rapidocr-onnxruntime>=1.4,<2",
+]
 dev = [
   "pytest>=8.3,<10",
   "ruff>=0.8,<1",

@@ -19,6 +19,10 @@ export interface Bindings {
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
+  /** Development only: local S3 endpoint (MinIO). Ignored in production. */
+  R2_ENDPOINT?: string;
+  /** SigV4 region for the local endpoint; R2 itself uses `auto`. */
+  R2_REGION?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_METER_EVENT_NAME?: string;
 }

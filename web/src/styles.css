@@ -15,25 +15,65 @@
   --radius: 6px;
   --tap: 44px;
   font-family:
-    'Inter',
+    'Inter Variable',
     ui-sans-serif,
     system-ui,
     -apple-system,
     'Segoe UI',
     sans-serif;
   font-synthesis: none;
+
   background: var(--ink);
   color: var(--paper);
-}
-
-* {
-  box-sizing: border-box;
 }
 
 html,
 body,
 #root {
   min-height: 100%;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--vermilion) 40%, transparent);
+  color: var(--paper);
+}
+
+/* Scrollbars ship on the theme, not the browser default. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hair);
+  border-radius: 999px;
+  border: 3px solid color-mix(in srgb, var(--ink) 70%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--slate);
+}
+
+/* Focus is deliberate, quiet, and visible — never removed. */
+:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: 2px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
 }
 
 body {
@@ -45,6 +85,7 @@ body {
     var(--ink);
   color: var(--paper);
   -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 button,
@@ -59,7 +100,7 @@ button {
 code,
 pre,
 .as-run {
-  font-family: 'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Roboto Mono', monospace;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', monospace;
   font-variant-numeric: tabular-nums;
 }
 
@@ -240,24 +281,27 @@ pre,
   text-align: left;
 }
 
-.row:hover,
-.row:focus-visible {
+.row:hover {
   background: color-mix(in srgb, var(--panel) 70%, transparent);
-  outline: none;
+}
+
+.row:focus-visible {
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--hair);
 }
 
 .row--active {
   background: var(--panel);
-  box-shadow: inset 2px 0 0 var(--vermilion);
+  box-shadow: inset 0 0 0 1px var(--hair);
 }
 
 .poster {
   display: block;
-  width: 40px;
-  height: 56px;
-  flex: 0 0 40px;
+  width: 36px;
+  height: 52px;
+  flex: 0 0 36px;
   border: 1px solid var(--hair);
-  border-radius: 3px;
+  border-radius: var(--radius);
   object-fit: cover;
   background: var(--panel-2);
 }
@@ -297,18 +341,22 @@ pre,
 
 .status--ready {
   color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 70%, var(--hair));
 }
 
 .status--busy {
   color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 70%, var(--hair));
 }
 
 .status--failed {
   color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 70%, var(--hair));
 }
 
 .status--muted {
   color: var(--muted);
+  opacity: 0.85;
 }
 
 .as-run {
@@ -326,6 +374,7 @@ pre,
 
 .as-run--detail {
   margin: 1rem 0 0;
+  padding: 0 1rem 1rem;
   color: var(--paper);
   white-space: normal;
 }
@@ -381,7 +430,7 @@ pre,
 
 .item-media {
   display: grid;
-  min-height: 180px;
+  min-height: 120px;
   place-items: center;
   overflow: hidden;
   border-bottom: 1px solid var(--hair);
@@ -429,7 +478,7 @@ pre,
 
 .facts > div {
   min-width: 0;
-  padding: 0.55rem 0;
+  padding: 0.5rem 0;
   border-top: 1px solid var(--hair);
 }
 
@@ -512,19 +561,24 @@ pre,
 
 .upload-panel {
   position: fixed;
-  right: 1rem;
-  bottom: calc(72px + 1rem + env(safe-area-inset-bottom));
-  left: 1rem;
+  inset: auto 1rem calc(72px + 1rem + env(safe-area-inset-bottom)) 1rem;
   z-index: 40;
+  width: min(100%, 44rem);
   display: grid;
   gap: 0.6rem;
-  max-width: 34rem;
-  margin: 0 auto;
-  padding: 1rem;
+  padding: 0.875rem;
   border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  scrollbar-gutter: stable both-edges;
+  animation: rise 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .upload-head {
@@ -546,6 +600,7 @@ pre,
   height: 4px;
   overflow: hidden;
   background: var(--hair);
+  border-radius: 999px;
 }
 
 .meter span {
@@ -561,7 +616,7 @@ pre,
   justify-content: space-between;
   gap: 1rem;
   margin: 0.75rem 0;
-  padding: 0.65rem 0.75rem;
+  padding: 0.6rem 0.75rem;
   border: 1px solid color-mix(in srgb, var(--red) 55%, var(--hair));
   border-radius: var(--radius);
   color: var(--red);
@@ -572,6 +627,14 @@ pre,
   margin: 0;
   color: var(--red);
   font-size: 0.8125rem;
+}
+
+.detection {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+  padding: 0 1rem;
+  border-top: 1px solid var(--hair);
 }
 
 /* ---------------------------------------------------------------- desktop */
@@ -602,4 +665,63 @@ pre,
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* -------------------------------------------------------------- detection */
+
+.detection {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hair);
+}
+
+.detection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.detection-head h3 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.detections {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detections li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+
+.detections li > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detection-kind {
+  flex: none;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--hair);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }

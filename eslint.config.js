@@ -11,6 +11,8 @@ export default tseslint.config(
       '**/coverage/**',
       '**/*.d.ts',
       '.venv/**',
+      // Scratch harnesses from local end-to-end runs; gitignored, never shipped.
+      '**/.dev/**',
     ],
   },
   js.configs.recommended,
@@ -30,7 +32,8 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.config.js', '**/*.config.ts'],
+    files: ['**/*.config.js', '**/*.config.ts', 'scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
     rules: { 'no-console': 'off' },
   },
 );

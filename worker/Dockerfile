@@ -10,7 +10,9 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY duckclean_worker ./duckclean_worker
-RUN pip install --no-cache-dir .
+# `[ocr]` brings the ONNX OCR model used by /v1/detect. Without it the worker
+# still runs and reports `ocr_unavailable` rather than inventing detections.
+RUN pip install --no-cache-dir ".[ocr]"
 
 ENV DUCKCLEAN_WORK_DIR=/tmp/duckclean \
     DUCKCLEAN_DEVICE_CLASS=cpu \

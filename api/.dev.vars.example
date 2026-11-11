@@ -27,6 +27,16 @@ R2_BUCKET=duckclean-media
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 
+# Local development without Cloudflare. When R2_ENDPOINT is set and APP_ENV is
+# not `production`, presigned URLs and HEAD verification use this local S3
+# server instead of R2 (start it with `npm run dev:s3`). These are fixed
+# development credentials, not secrets. Leave R2_ENDPOINT empty to use R2.
+# R2_ENDPOINT=http://127.0.0.1:9000
+# R2_REGION=us-east-1
+# R2_ACCOUNT_ID=local
+# R2_ACCESS_KEY_ID=duckclean
+# R2_SECRET_ACCESS_KEY=duckclean-dev-secret
+
 # Billing is M6; leave empty until Stripe is wired.
 STRIPE_SECRET_KEY=
 STRIPE_METER_EVENT_NAME=

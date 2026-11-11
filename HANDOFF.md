@@ -16,6 +16,8 @@ this document and the docs in `docs/duckclean/`.
   `main`.
 - Push only to `origin/duckclean`. Never push to `main` or `classic`.
 
+For the current M2 implementation and next steps, read `FREEBUFF_HANDOFF.md`.
+
 ## Mission
 
 Given a real user video:
@@ -222,6 +224,19 @@ render_hours = compute_seconds * weight / 3600
    mux, download.
 7. **M6 Billing and launch** — estimate, ledger, Stripe, quotas, retention.
 8. **M7 Best quality** — ProPainter, generative fill, automatic logo detection.
+
+### State (2026-11-09)
+
+M0, M1 and M2 are implemented. The whole pipeline ran end to end on this
+machine with no Cloudflare account: PGlite for Postgres, MinIO for S3, the real
+uvicorn worker with real ffmpeg and RapidOCR. One 1.5 s clip produced a single
+beat `[0, 12)`, 12/12 frames read, `DUCK` detected, 29 groups, 29 stored masks
+served as PNG, and `beats_with_target = 1`. `logo_model_available` is `false`
+with `logo_model_unavailable`; no logo model is packaged.
+
+Live cloud is **not** provisioned, so Clerk production callbacks, real R2,
+Neon/Hyperdrive, Cloudflare Queues and the Hugging Face Space are unverified.
+M3 is not started; the item view carries a read-only detection summary.
 
 ## First three tasks
 
