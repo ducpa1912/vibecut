@@ -74,6 +74,10 @@ from `GET …/render/estimate`. Review project: up to 2 h 45 min of AI fill. 88 
 **Loop 2 (same day):** re-Check found the title; a 4.75 s render showed it gone but leaked subtitles
 on 3 of 142 frames at line edges. Layer ranges widened in `detect._run_range`, flash limit 0.6 s.
 Re-render: 0 of 142 frames with text. 90 tests. The loop 1 estimate reads several times too high.
+**Loop 3 (same day):** measured on a busy M1 8 GB. Per fill: CPU 2.09 s, CoreML 67.88 s, MPS 0.74 s.
+Real clip, cold: MPS 50 s, CPU 189–864 s for the same job. CoreML closed. Estimate fixed (a stale 35 s
+rate; now the middle of the last three fills): the project is about 28 min of fill on CPU. Open for
+the founder: bundle torch (about +0.8 GB) for MPS. 92 tests.
 
 ## Session log
 

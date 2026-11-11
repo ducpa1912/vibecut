@@ -9,17 +9,14 @@ review carry the review file. Items marked `PLAN` came from the 11 Nov code and 
 **Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
 render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
 
-## Loop 3 — measure fill speed, then decide (REQ-20261111-04) (next)
+## Loop 3 — fill speed: founder decision open (REQ-20261111-04)
 
-- [ ] PLAN · calibrate the render estimate: clip 1 took 189 s against "up to about 19 min";
-  `fill_rates.json` was not updated by two real renders
-
-- [ ] REQ-20261111-04 · extend `bench_fill.py` with `--device cpu|gpu` and `--model`
-- [ ] REQ-20261111-04 · measure CPU vs CoreML EP vs MPS on the same 10 frames; write `docs/duck/gpu-fill-bench.md`
-- [ ] PLAN · same bench: `fill_plan.keys` 6/s vs 3/s on a moving span (20 of 41 layers plan 6/s)
-- [ ] REQ-20261111-04 · decide packaging from the numbers: CoreML, bundle torch, or stay CPU
-- [ ] REQ-20261111-04 · add `device` to `span_key` and bump `textfill.VERSION` before any GPU fill ships
-- [ ] REQ-20261111-04 · Settings row shows the real device and the reason when GPU is unavailable
+- [ ] REQ-20261111-04 · **founder decides:** bundle torch + `big-lama.pt` for MPS fill (4.6× faster on a
+  real span, about +0.8 GB) or stay CPU. Numbers: `docs/duck/gpu-fill-bench.md`
+- [ ] REQ-20261111-04 · if yes: PyInstaller build with torch, measure the real bundle size and launch time
+- [ ] REQ-20261111-04 · if yes: `render_edit` passes the chosen device to `prepare_span`; CPU fallback stays
+- [ ] REQ-20261111-04 · if yes: Settings row shows the real device and the reason when GPU is unavailable
+- [ ] PLAN · repeat the MPS real-span run 3 times and on a 60 s span: variance, heat, memory
 
 ## Loop 4 — one full render of the review project
 
@@ -119,6 +116,15 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — loop 3, fill speed measured (`docs/teams/loop-03-fill-speed/review.md`)
+- [x] REQ-20261111-04 · `bench_fill.py --device cpu|coreml|gpu --model`
+- [x] REQ-20261111-04 · CPU 2.09 s, CoreML 67.88 s, MPS 0.74 s per fill on the same 10 frames; same PSNR/SSIM
+- [x] REQ-20261111-04 · real span, clip 1 cold: MPS 50 s; CPU 189–864 s for the identical job
+- [x] REQ-20261111-04 · CoreML EP closed (32× slower than CPU)
+- [x] REQ-20261111-04 · cache key already separates devices (`method_stamp`); no key change needed
+- [x] PLAN · flat 3 fills/s doubles the runs (121 vs 61); the scan plan stays
+- [x] PLAN · estimate fixed: stored rate is the middle of the last three fills; project ≈ 28 min of fill, not 2 h 45 min
 
 ### 11 Nov — loop 2, title proof on a short span (`docs/teams/loop-02-title-short-span/review.md`)
 - [x] Re-Check: `title` tracklet at 0 s, y 0.321; 42 tracklets
