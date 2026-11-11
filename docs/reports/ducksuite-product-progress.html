@@ -125,24 +125,40 @@ ul.clean li { margin:6px 0; }
     <span class="pill"><span class="dot"></span><strong>Editor core</strong> ready</span>
     <span class="pill"><span class="dot amber"></span><strong>App Store</strong> paused by decision</span>
     <span class="pill"><span class="dot amber"></span><strong>AI fill</strong> measured limit</span>
-    <span class="pill"><span class="dot"></span><strong>81</strong> tests passing</span>
+    <span class="pill"><span class="dot"></span><strong>82</strong> tests passing</span>
     <span class="pill"><strong>1.0</strong> · build 1</span>
     <span class="pill">2026-11-10</span>
-    <span class="pill"><span class="dot"></span>latest <strong class="mono">2d6a09f</strong></span>
+    <span class="pill"><span class="dot"></span>latest <strong class="mono">7d6a70e</strong></span>
   </div>
 </header>
 
 <section class="section" id="latest">
-  <div class="section-head"><h2>Latest development — 10 Nov 2026</h2><p>Ten commits since the 9 Nov snapshot. Newest first.</p></div>
+  <div class="section-head"><h2>Latest development — 10 Nov 2026</h2><p>Eleven commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">
-    <div class="card"><div class="chip done">Current</div><div class="big">81</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
-    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">10</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">2d6a09f</span>.</p></div>
+    <div class="card"><div class="chip done">Current</div><div class="big">82</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
+    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">11</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">7d6a70e</span>.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
-    <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>AI fill quality on fast, detailed footage. Measured, flagged, not solved.</p></div>
+    <div class="card"><div class="chip active">Open</div><div class="big">+1.1</div><p>dB PSNR from a tighter fill hole. Moving texture is still invented, not recovered.</p></div>
   </div>
 
   <div class="timeline" style="margin-top:14px">
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">7d6a70e</strong><span>11 Nov · Fill quality loop</span></div>
+      <div class="timeline-body">
+        <strong>AI fill is now measured against ground truth, and the first win is real.</strong>
+        <ul class="clean">
+          <li>New benchmark: paint a caption on frames with no text, run the same fill path, score PSNR/SSIM/error against the untouched frame.</li>
+          <li>Sweep of hole size, work-area context and model-input upscaling. Context and upscaling did nothing; the hole did.</li>
+          <li>The fill hole now grows 0.04 of the line height and 0.10 for the outline, not 0.06 and 0.18. Blur keeps the wide margin.</li>
+          <li>Result on the review project: <span class="mono">+1.1 dB</span> PSNR, <span class="mono">+0.02</span> SSIM, 17% lower mean error, same run time. A second, 4:3 project shows <span class="mono">+0.8 dB</span>.</li>
+          <li>Fill cache version moved to 12, so fills made under the old hole are not reused.</li>
+          <li>End-to-end Check on the first 3 s now finds the 66 ms title as a <span class="mono">title</span> layer at 0–0.25 s.</li>
+        </ul>
+        <span class="mono">82 tests pass</span> · benchmark at <span class="mono">scripts/bench_fill.py</span> · real-span re-fill at 90 s and 157 s checked, no outline residue.
+      </div>
+    </div>
+
     <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">2d6a09f</strong><span>10 Nov · Bad render review</span></div>
       <div class="timeline-body">
@@ -241,13 +257,13 @@ ul.clean li { margin:6px 0; }
 
   <div class="grid g3" style="margin-top:14px">
     <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
-    <div class="card"><h3>What improved for the build</h3><p>Ten commits, 81 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
+    <div class="card"><h3>What improved for the build</h3><p>Eleven commits, 82 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
     <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
   </div>
 
   <div class="callout" style="margin-top:14px">
-    <strong>AI fill on moving food: measured, not solved</strong>
-    <p>LaMa reconstructs one frame well when the plate holds still; on this 160 s cooking video the background moves the whole time. Isolated frames at 8 s, 82 s, 90 s and 140 s were compared against the source, against Blur, and against STTN and MI-GAN. Single-frame LaMa held up better than Blur, which leaves a visible band. A wider work area, a tighter glyph mask, per-frame runs and zero carry each changed the result, none restored real texture. The honest limit: a per-frame model cannot rebuild a plate it has never seen. So fill stays the default, the risk is now measured per line and shown before the render, and Blur is one tap away on any line. Replacing the model (not tuning it) is the only real fix.</p>
+    <strong>AI fill on moving food: measured, improved, still limited</strong>
+    <p>LaMa reconstructs one frame well when the plate holds still; on the 160 s cooking video the background moves the whole time. A ground-truth benchmark now paints a caption onto text-free frames and scores the fill: the shipped default reaches <span class="mono">23.6 dB</span> PSNR on that project and <span class="mono">23.6 dB</span> on a 4:3 project, up from <span class="mono">22.5</span> and <span class="mono">22.8</span> after the hole was tightened. Blur was checked at 90 s and left a visible band where the fill left none. A wider work area, a glyph-tight mask, per-frame runs, zero carry, STTN, MI-GAN and input upscaling each changed the result, none restored real texture. The honest limit: a per-frame model cannot rebuild a plate it has never seen. So fill stays the default, the risk is measured per line and shown before the render, and Blur is one tap away on any line. Replacing the model (not tuning it) is the only real fix.</p>
   </div>
 
   <div class="callout red" style="margin-top:14px">
@@ -404,7 +420,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 <section class="section" id="evidence">
   <div class="section-head"><h2>Verification evidence</h2><p>What was actually run. No “looks fine” claims.</p></div>
   <div class="grid g4">
-    <div class="card"><div class="big">81</div><p>Python tests pass on the current build; 52 on the 9 Nov snapshot below.</p></div>
+    <div class="card"><div class="big">82</div><p>Python tests pass on the current build; 52 on the 9 Nov snapshot below.</p></div>
     <div class="card"><div class="big">10</div><p>Latest UI screens captured from the running build.</p></div>
     <div class="card"><div class="big">3</div><p>Append integrity loops: UI, data, job API.</p></div>
     <div class="card"><div class="big">1</div><p>Signed distribution attempt: blocked at team selection.</p></div>
@@ -426,6 +442,8 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
       <tr><td>Clean plan routing</td><td><span class="chip done">Pass</span></td><td>Steady line keeps Fill; a flash under 0.5 s defaults to Blur; a user choice survives clean all.</td></tr>
       <tr><td>Clean all confirmation</td><td><span class="chip done">Pass</span></td><td>Modal names the layer count and the rules; 41 layers on the review project, cancel leaves them untouched.</td></tr>
       <tr><td>Render queue scope</td><td><span class="chip done">Pass</span></td><td><span class="mono">1 job</span> for the open project; other projects sit behind the All projects toggle.</td></tr>
+      <tr><td>Fill hole benchmark</td><td><span class="chip done">Pass</span></td><td>10 text-free frames, ground truth: <span class="mono">22.5 → 23.6 dB</span> PSNR after the tighter hole, same run time. Second project <span class="mono">22.8 → 23.6 dB</span>.</td></tr>
+      <tr><td>Fill residue check</td><td><span class="chip done">Pass</span></td><td>Thick-outline run (0.11 of line height) still scores <span class="mono">25.1 dB</span> with the new hole; real re-fill at 90 s and 157 s shows no outline.</td></tr>
       <tr><td>App Store export</td><td><span class="chip blocked">Blocked</span></td><td>“No Team Found in Archive”; 0 valid signing identities.</td></tr>
     </tbody>
   </table>
@@ -517,7 +535,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
     <div class="card"><h3>Intelligence limits</h3><p>Rewrite uses Apple Intelligence first; this Mac falls back to basic filler cleanup. Apple Translation needs language packs installed in macOS. NLLB, Whisper, Kokoro and LaMa are wired; the NLLB pack is CC-BY-NC-4.0 and cannot ship as a paid default.</p></div>
     <div class="card"><h3>Audio limits</h3><p>Generated voice uses Apple <span class="mono">say</span>. Recording compiles and has entitlement text, but has not been manually microphone-tested. Dub mutes original audio; music is optional.</p></div>
     <div class="card"><h3>Distribution limits</h3><p>No DMG. Mac App Store only. Archive is unsigned. TestFlight has not run. The screenshots use an internal fixture.</p></div>
-    <div class="card"><h3>Clean limits</h3><p>AI fill is a per-frame model. It rebuilds a still plate well and cannot rebuild food that moves under the words. Check measures that motion per line, the app names the risky lines before a render, and Blur is one tap away. Replacing the model is the only real fix; tuning LaMa is not. A 66 ms title card at <span class="mono">0 s</span> is now detected, but any text shorter than one OCR sample can still be missed.</p></div>
+    <div class="card"><h3>Clean limits</h3><p>AI fill is a per-frame model. It rebuilds a still plate well and cannot rebuild food that moves under the words. Check measures that motion per line, the app names the risky lines before a render, and Blur is one tap away. A tighter hole bought <span class="mono">+1.1 dB</span>; past that, replacing the model is the only real fix. A 66 ms title card at <span class="mono">0 s</span> is now detected, but any text shorter than one OCR sample can still be missed.</p></div>
   </div>
 </section>
 
@@ -533,7 +551,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 
 <footer class="footer">
   <span>DuckSuite · Product progress and revised Phase 1 plan · 2026-11-10</span>
-  <span>81 tests · unsigned archive pass · App Store upload blocked · fill quality measured, not solved</span>
+  <span>82 tests · unsigned archive pass · App Store upload blocked · fill quality measured and improved</span>
 </footer>
 
 </div>
