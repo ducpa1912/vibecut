@@ -6,8 +6,9 @@ loop at a time, top to bottom. Done items stay listed so nothing is repeated by 
 Items that came from a request carry its id (`REQ-YYYYMMDD-NN`), matching `MEMORY.md`. Items from a
 review carry the review file. Items marked `PLAN` came from the 11 Nov code and data review.
 
-**Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
-render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
+**Loop 4 is done.** Fills are warm for the review project at `textfill.VERSION` 13; a full render
+takes about a minute when only a few spans change, minutes when cold. Do not run one to prove a
+small fix; render the span that shows it.
 
 ## Loop 3 — fill speed: GPU default, CPU as a pack (REQ-20261111-04/07)
 
@@ -26,7 +27,7 @@ render takes hours on this Mac, and any fill change in loop 3 would make it cold
 - [x] tests: last frame inside a range gets a hole; 108 pass
 - [x] re-Check and re-render: 0 leaks in 4,800 frames (final render 19:15)
 
-## Loop 4 — one full render of the review project — **done 2026-11-11**
+## Loop 4 — one full render of the review project — **done 2026-11-11** (`docs/teams/loop-06-full-render/review.md`)
 
 - [x] **Render once and review**, with the loop 1 estimate on screen first. Check 0, 2, 10, 90, 157 s
   and OCR a 2 s scan: no burned-in text, no outline residue, no frozen patch at a cut.

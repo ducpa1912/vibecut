@@ -153,7 +153,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 101 pass; 1 skips when node is not on PATH
+python3 -m pytest -q tests      # 117 pass; 1 skips when node is not on PATH
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth
@@ -200,6 +200,9 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
   last (`detect._run_range`). Half a step leaked two frames of text. Prove edge changes by OCR on
   every frame of a short render, not on spot frames.
 - Proofs are optional. Render never waits for a proof.
+- OCR comparison is `duckcore.textmatch.same_text`; never add a second rule.
+- The render queue claims a job and sets `worker_pid` in one transaction. Never reintroduce
+  select-then-update, and only requeue a running job whose worker is gone.
 - Fill ships GPU-first: torch and `big-lama.pt` are bundled (981 MB total); GPU is the default.
   CPU is an optional 198 MB download (`fill-lama-cpu`) that installs `lama_fp32.onnx` into
   `models/fill`; the CPU button stays disabled until it is installed. onnxruntime stays for that pack

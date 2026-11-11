@@ -8,7 +8,7 @@ loops below, `AGENTS.md` is the working contract.
 
 | Fact | Value | Source |
 |---|---|---|
-| Branch / tests | `ducksuite`, 101 pass | `python3 -m pytest -q tests` |
+| Branch / tests | `ducksuite`, 117 pass | `python3 -m pytest -q tests` |
 | Bundle | 981 MB (torch 565, GPU model 196, sidecar 136, ffmpeg 41; no ONNX) | `du -sh build/DuckSuite-Xcode.app` |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2, 13 GB free disk | `sysctl`, `sw_vers`, `df` |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips | `edits/ed_38a4c36a3aae.json` |
@@ -17,7 +17,7 @@ loops below, `AGENTS.md` is the working contract.
 | Fill engine | PyTorch MPS on the GPU (default); CPU via the optional `fill-lama-cpu` pack | `textfill/lama.py:_providers` |
 | Cold render | fill ≈ 28 min on CPU at the measured ~6 s a unit, up to ~2 h when the Mac is busy; ≈ 4.5 min on MPS (one run) | `docs/duck/gpu-fill-bench.md` |
 | Fill cache | every stored fill is stale since `textfill.VERSION` 12 | `textfill/__init__.py` |
-| Renders on disk | one 4.75 s proof render from loop 2 | `renders/` |
+| Renders on disk | baseline + three loop 4 renders; final 19:15 has 0 leaks | `renders/` |
 
 ## What is actually wrong
 
@@ -76,11 +76,12 @@ bundle 1.2 GB, real GPU render proof, 98 tests.
 - Accept: one table, measured on this Mac, peak memory under 8 GB; the decision recorded. If
   anything ships: `device` in `span_key`, `VERSION` bump, Settings shows the real device.
 
-### Loop 4 — one full render of the review project
+### Loop 4 — one full render of the review project — **done 2026-11-11**
 
 - Only after loops 1–3. The estimate from loop 1 is on screen before Start.
-- Accept: frames at 0, 2, 10, 90, 157 s and a 2 s OCR scan show no burned-in text, no outline
-  residue, no frozen patch at a cut; the real wall-clock is recorded next to the estimate.
+- Result: `docs/teams/loop-06-full-render/review.md`. Final render 19:15, 0 leaks in 4,800 frames;
+  fill 72.46 -> 70.13 s, blur 0.57 -> 0.60 s; title 0.317 -> 0.067 s; 76 s vs 333.8 s estimate.
+  A later refactor pass left output unchanged (117 tests).
 
 ### Loop 5 — a better fill for moving footage
 

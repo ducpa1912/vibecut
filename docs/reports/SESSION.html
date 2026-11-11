@@ -78,8 +78,8 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
   <p class="sub">DuckSuite, 6–11 November 2026. 132 requests, 18 phases, one branch. This file records the session itself: the words, the decisions, the evidence and the commits. The product-owner narrative lives in <span class="mono">docs/reports/ducksuite-product-progress.html</span>; when the two disagree, this one wins.</p>
   <div class="meta">
     <span class="pill"><span class="dot"></span><b>branch</b> ducksuite</span>
-    <span class="pill"><b>build</b> <span class="mono">8683a7b</span></span>
-    <span class="pill"><span class="dot"></span><b>83</b> tests</span>
+    <span class="pill"><b>build</b> <span class="mono">30d9b8c</span></span>
+    <span class="pill"><span class="dot"></span><b>117</b> tests</span>
     <span class="pill"><b>18</b> phases</span>
     <span class="pill"><b>138</b> requests</span>
     <span class="pill"><span class="dot amber"></span><b>App Store</b> paused</span>
@@ -311,6 +311,7 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
         <li><strong>Fixed:</strong> true first-frame read, title classification, motion flag, flash → blur, Clean-all confirm, queue scope, one import, layout balance.</li>
         <li><strong>Measured:</strong> ground-truth fill benchmark; tighter hole gives +1.1 dB PSNR at the same run time.</li>
         <li><strong>Docs:</strong> report, MEMORY, TODO, AGENTS, and the request-intake factory loop.</li>
+        <li><strong>Loop 4 closed:</strong> 0 leaks in 4,800 frames, fill 72.46 → 70.13 s, title 0.317 → 0.067 s. A later refactor brought the suite to 117.</li>
         <li><strong>After the log window:</strong> translation weights removed entirely; Settings takes any CTranslate2 folder; BYOK plan written; $29 restore and the macOS 26 floor confirmed from the SDK.</li>
       </ul>
     </div>
@@ -481,7 +482,7 @@ c83dfed feat(story): carry edits into stories and extend with beats
 </section>
 
 <section id="bundle">
-  <div class="head"><h2>Bundle and platform</h2><p>What ships, what downloads, and the floor it runs on. Measured on <span class="mono">8683a7b</span>.</p></div>
+  <div class="head"><h2>Bundle and platform</h2><p>What ships, what downloads, and the floor it runs on. Measured on <span class="mono">30d9b8c</span>.</p></div>
   <div class="grid g4">
     <div class="card"><div class="big">377 MB</div><p>Whole app bundle.</p></div>
     <div class="card"><div class="big">198 MB</div><p>LaMa, bundled. Clean is the product; it cannot be a download.</p></div>
@@ -560,11 +561,11 @@ c83dfed feat(story): carry edits into stories and extend with beats
   <table>
     <thead><tr><th style="width:8%">Order</th><th style="width:52%">Work</th><th style="width:40%">Done when</th></tr></thead>
     <tbody>
-      <tr><td><b>1</b></td><td>Re-run Check on <span class="mono">prj_e95348a97316</span></td><td>The 0 s title exists as a clean layer at 0.0–0.25 s</td></tr>
-      <tr><td><b>2</b></td><td>Clean all → confirm</td><td>Title layer defaults to Blur; user choices kept</td></tr>
-      <tr><td><b>3</b></td><td>Render and review 0/2/10/90/157 s</td><td>No text, no outline, no freeze frame at the cut</td></tr>
-      <tr><td><b>4</b></td><td>Fill model for moving footage</td><td>Benchmark beats 23.6 dB or the licence decision is made</td></tr>
-      <tr><td><b>5</b></td><td>Layout: render restructure, inspector fade, empty lanes, portrait strip</td><td>No screen ends above 85% of a 900 px window</td></tr>
+      <tr><td><b>1</b></td><td>Fill model for moving footage</td><td>A candidate beats 23.6 dB or none does and the warning stays</td></tr>
+      <tr><td><b>2</b></td><td>Code matches the rules (loop 6)</td><td>No silent Ollama fallback; unused online settings gone</td></tr>
+      <tr><td><b>3</b></td><td>Local model slots (loop 7)</td><td>Whisper folder, LLM URL, voice and fill slots</td></tr>
+      <tr><td><b>4</b></td><td>$29 build readiness (loop 8)</td><td>Pack hashes, LGPL offer, smaller Whisper</td></tr>
+      <tr><td><b>5</b></td><td>Layout balance (loop 9)</td><td>No screen ends above 85% of a 900 px window</td></tr>
       <tr><td><b>6</b></td><td>Cold render cost</td><td>A 160 s render has a visible estimate and a warm-cache path</td></tr>
       <tr><td><b>7</b></td><td>Shrink the Whisper pack or make it per-language</td><td>Vietnamese works without a 1.61 GB first run</td></tr>
       <tr><td><b>8</b></td><td>LaMa GPU variance and thermal drop on a long render</td><td>Numbers in <span class="mono">gpu-fill-bench.md</span>; decision recorded</td></tr>
@@ -589,7 +590,7 @@ c83dfed feat(story): carry edits into stories and extend with beats
 
 <footer>
   <span>DuckSuite · session log · 6–11 Nov 2026</span>
-  <span>branch ducksuite · build 8683a7b · 83 tests</span>
+  <span>branch ducksuite · build 30d9b8c · 117 tests</span>
 </footer>
 
 </div>

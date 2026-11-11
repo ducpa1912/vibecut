@@ -105,6 +105,11 @@ separate “Write .srt file” toggle; “Burn into video” is unchanged. Test:
 - `e3f5839` fix(clean): end a text range on its last real frame
 - this commit: refine matcher, tool scene-text rule, F2–F5 tests, docs
 
+## After the loop
+
+A later refactor pass (REQ-20261111-10) left render output unchanged and raised the suite to
+117 tests; the numbers above are the closure state at 109 tests.
+
 ## What we did not test
 
 - A real CPU-engine pack download and CPU fill (the pack was not installed, per the brief).
