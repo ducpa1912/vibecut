@@ -25,7 +25,8 @@ struct ContentView: View {
                         )
                     },
                     onRecordStart: { try await model.startRecording() },
-                    onRecordStop: { model.stopRecording() }
+                    onRecordStop: { model.stopRecording() },
+                    onChooseModelFolder: { await model.chooseModelFolder() }
                 )
             } else if let error = model.error {
                 VStack(spacing: 14) {
@@ -69,6 +70,7 @@ private struct WebView: NSViewRepresentable {
     let onDropFiles: @MainActor (URL, String) async -> Bool
     let onRecordStart: @MainActor () async throws -> String
     let onRecordStop: @MainActor () -> String?
+    let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -112,7 +114,8 @@ private struct WebView: NSViewRepresentable {
             onImportNotice: onImportNotice,
             onDropFiles: onDropFiles,
             onRecordStart: onRecordStart,
-            onRecordStop: onRecordStop
+            onRecordStop: onRecordStop,
+            onChooseModelFolder: onChooseModelFolder
         )
     }
 
@@ -123,6 +126,7 @@ private struct WebView: NSViewRepresentable {
         private let onDropFiles: @MainActor (URL, String) async -> Bool
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
+        private let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
         nonisolated(unsafe) private var mouseDownEvent: NSEvent?
         nonisolated(unsafe) private var mouseMonitor: Any?
 
@@ -131,13 +135,15 @@ private struct WebView: NSViewRepresentable {
             onImportNotice: @escaping @MainActor () -> String?,
             onDropFiles: @escaping @MainActor (URL, String) async -> Bool,
             onRecordStart: @escaping @MainActor () async throws -> String,
-            onRecordStop: @escaping @MainActor () -> String?
+            onRecordStop: @escaping @MainActor () -> String?,
+            onChooseModelFolder: @escaping @MainActor () async -> (path: String?, error: String?)
         ) {
             self.onImport = onImport
             self.onImportNotice = onImportNotice
             self.onDropFiles = onDropFiles
             self.onRecordStart = onRecordStart
             self.onRecordStop = onRecordStop
+            self.onChooseModelFolder = onChooseModelFolder
             super.init()
             mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
                 self?.mouseDownEvent = event
@@ -201,6 +207,19 @@ private struct WebView: NSViewRepresentable {
             if type == "recordStop" {
                 let path = onRecordStop() ?? ""
                 callJS("window.duckRecordingStopped", path)
+            }
+
+            if type == "chooseModelFolder" {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let result = await self.onChooseModelFolder()
+                    if let path = result.path {
+                        self.callJS("window.duckModelFolder", path)
+                    } else if let error = result.error {
+                        self.callJS("window.duckModelFolderError", error)
+                    }
+                }
+                return
             }
         }
 

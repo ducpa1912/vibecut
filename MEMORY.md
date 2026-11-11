@@ -27,6 +27,17 @@ plan before code, so the repo carries its own work order and history.
 the three documents.
 **Outcome:** intake pipeline documented and in force; no behaviour change, 82 tests still pass.
 
+### REQ-20261111-02 · 2026-11-11
+**Request:** "ok, then build the setting for user to bring their own model in (not explicit say any model).
+So they can download NLLB and use, but we do not provide any download, just the ability to plug it in.
+Also plan for BYOK for all the task in the workflow"
+**Read as:** the app ships no translation model and names none. The user supplies a CTranslate2 folder;
+DuckSuite only validates and loads it. Every model-backed step gets a bring-your-own path.
+**Response:** remove the NLLB pack and its download UI, finish the custom-model setting with a native
+folder picker that copies the folder into app data, keep the copy model-neutral, and write the BYOK
+plan for STT, translation, rewrite, voice, and fill.
+**Outcome:** NLLB pack and download UI removed; Settings now takes any CTranslate2 folder, copied into app data with a native picker and validated against model.bin/config.json/sentencepiece. BYOK plan written at `docs/duck/BYOK-PLAN.md`. 83 tests.
+
 ## Session log
 
 | # | Time | Request | Response |

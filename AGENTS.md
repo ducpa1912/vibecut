@@ -132,6 +132,8 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 - Proofs are optional. Render never waits for a proof.
 - A line over a moving background is flagged (`quality: "moving"`), not silently switched to blur.
   Only a flash under 0.5 s defaults to blur.
+- DuckSuite ships no translation weights and hosts no translation download. The user supplies a
+  CTranslate2 folder; Settings copies it into app data and validates the three files.
 - `clean.patch_layer` marks a layer `auto: false`; Clean all must keep the user's Fill/Blur/Off choice.
 - Clean all is destructive-ish: it confirms first and reports `fill · blur · off` counts.
 

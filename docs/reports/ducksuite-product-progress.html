@@ -144,6 +144,20 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-02</strong><span>11 Nov · Bring your own model</span></div>
+      <div class="timeline-body">
+        <strong>DuckSuite no longer ships or downloads a translation model.</strong>
+        <ul class="clean">
+          <li>The NLLB pack, its download button and every model name left the app. CC-BY-NC-4.0 cannot ride in a paid build.</li>
+          <li>Settings takes any CTranslate2 folder: native picker, copied into app data, validated for <span class="mono">model.bin</span>, <span class="mono">config.json</span> and <span class="mono">sentencepiece.bpe.model</span>.</li>
+          <li>Apple Translation stays the default. A missing model now says “choose a folder”, not “download a pack”.</li>
+          <li>BYOK plan covers every model-backed task: Keychain store, provider registry, per-task consent. <span class="mono">docs/duck/BYOK-PLAN.md</span>.</li>
+        </ul>
+        <span class="mono">83 tests</span> · app rebuilt and relaunched.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-01</strong><span>11 Nov · Workflow</span></div>
       <div class="timeline-body">
         <strong>The repo now carries its own work order.</strong>

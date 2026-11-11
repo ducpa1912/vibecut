@@ -146,6 +146,54 @@ final class AppModel: ObservableObject {
         return await importVideo(at: source, mode: mode, projectID: projectID)
     }
 
+    /// Copy a user-chosen model folder into app data so the sandboxed core can read it.
+    /// No model is named here: any CTranslate2 folder with the three files works.
+    func chooseModelFolder() async -> (path: String?, error: String?) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a model folder"
+        panel.message = "A CTranslate2 folder with model.bin, config.json and sentencepiece.bpe.model. It is copied into DuckSuite."
+        panel.prompt = "Use Folder"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let source = panel.url else {
+            return (nil, nil)
+        }
+        guard let dataRoot else {
+            return (nil, "DuckSuite has no data folder.")
+        }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let required = ["model.bin", "config.json", "sentencepiece.bpe.model"]
+        let missing = required.filter {
+            !FileManager.default.fileExists(
+                atPath: source.appendingPathComponent($0).path
+            )
+        }
+        guard missing.isEmpty else {
+            return (nil, "Missing \(missing.joined(separator: ", ")).")
+        }
+        let name = source.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = name.isEmpty ? "custom" : name
+        let target = dataRoot
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("translation", isDirectory: true)
+            .appendingPathComponent(folder, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+            try FileManager.default.copyItem(at: source, to: target)
+            return (target.path, nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
+    }
+
     /// Import a file already granted to the app, such as a Finder drag.
     func importVideo(at source: URL, mode: String = "new", projectID: String? = nil) async -> Bool {
         guard !isImporting else { return false }

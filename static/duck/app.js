@@ -3102,16 +3102,44 @@ async function saveTranslationSettings() {
   try {
     const engine = document.querySelector('#translation-engine')?.value || 'auto';
     const path = document.querySelector('#translation-path')?.value || '';
+    if (engine === 'custom' && !path) {
+      toast('Choose a model folder first.', 'bad');
+      return;
+    }
     const data = await api('/api/settings', {
       method: 'PATCH',
       body: JSON.stringify({ translation_engine: engine, translation_model_path: path }),
     });
     state.settings = data;
+    const status = await api('/api/translation/model').catch(() => null);
+    if (status && !status.ready) {
+      toast(`Saved, but missing: ${(status.missing || []).join(', ') || 'model files'}.`, 'bad');
+      return;
+    }
     toast('Translation settings saved.');
   } catch (error) {
     toast(`Translation settings: ${error.message}`, 'bad');
   }
 }
+
+function chooseModelFolder() {
+  if (window.webkit?.messageHandlers?.duck) {
+    window.webkit.messageHandlers.duck.postMessage({ type: 'chooseModelFolder' });
+    return;
+  }
+  toast('The folder picker is only available in the app.', 'bad');
+}
+
+window.duckModelFolder = async (path) => {
+  const input = document.querySelector('#translation-path');
+  if (input) input.value = path || '';
+  const engine = document.querySelector('#translation-engine');
+  if (engine) engine.value = 'custom';
+  await saveTranslationSettings();
+  if (typeof openSettings === 'function') await openSettings();
+};
+
+window.duckModelFolderError = (message) => toast(String(message || 'Could not use that folder.'), 'bad');
 
 function packListMarkup() {
   return (state.packs || []).map((pack) => {
@@ -3134,7 +3162,6 @@ async function openSettings() {
   } catch (_) { /* keep current */ }
   const storage = state.settings?.storage || {};
   const translationEngine = state.settings?.translation?.engine || 'auto';
-  const nllbPack = (state.packs || []).find((pack) => pack.id === 'translation-nllb');
   openModal(`<dialog class="modal" aria-label="Settings">
     <div class="modal-head"><h2>Settings</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body">
@@ -3155,17 +3182,18 @@ async function openSettings() {
           <h3 style="margin-top:12px">Translation</h3>
           <div class="field"><label for="translation-engine">Engine</label>
             <select id="translation-engine">
-              <option value="auto" ${(state.settings?.translation?.engine || 'auto') === 'auto' ? 'selected' : ''}>Auto · Apple first, then local</option>
-              <option value="nllb" ${state.settings?.translation?.engine === 'nllb' ? 'selected' : ''}>NLLB pack</option>
-              <option value="custom" ${state.settings?.translation?.engine === 'custom' ? 'selected' : ''}>Custom CTranslate2 model</option>
+              <option value="auto" ${(state.settings?.translation?.engine || 'auto') === 'auto' ? 'selected' : ''}>Apple Translation</option>
+              <option value="custom" ${state.settings?.translation?.engine === 'custom' ? 'selected' : ''}>A model I provide</option>
             </select>
           </div>
-          <div class="model-line"><span class="dot${nllbPack?.installed ? '' : ' is-idle'}"></span><strong>NLLB pack · ${nllbPack?.installed ? 'installed' : 'not installed'}</strong><span>${nllbPack?.installed ? fmtBytes(nllbPack.size_bytes) : 'Download in Optional downloads'}</span></div>
-          <div class="field"><label for="translation-path">Custom model folder</label>
-            <input id="translation-path" type="text" value="${esc(state.settings?.translation?.custom_path || '')}" placeholder="/path/to/nllb-ct2-int8" ${translationEngine === 'custom' ? '' : 'disabled'}>
+          <div class="field"><label for="translation-path">Model folder</label>
+            <div class="path-row">
+              <input id="translation-path" type="text" value="${esc(state.settings?.translation?.custom_path || '')}" placeholder="Choose a CTranslate2 folder" ${translationEngine === 'custom' ? '' : 'disabled'}>
+              <button class="btn small" type="button" data-action="choose-model-folder">${icon('folder', 12)} Choose</button>
+            </div>
           </div>
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
-          <p class="small muted">NLLB-200 600M int8 is about 630 MB and is CC-BY-NC-4.0, non-commercial. Apple Translation is preferred. A custom folder must be a CTranslate2 model with model.bin, config.json and sentencepiece.bpe.model.</p>
+          <p class="small muted">DuckSuite ships no translation model and downloads none. Point it at a CTranslate2 folder you obtained yourself: it needs model.bin, config.json and sentencepiece.bpe.model. The folder is copied into DuckSuite.</p>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button>${model.file ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(model.file)}">Show</button>` : ''}</strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
           ${state.engine?.fill?.ready ? '' : `<p class="small muted">AI fill ships inside the app. If the file is missing, reinstall DuckSuite (or run the dev build) to restore it.</p>`}
@@ -3933,6 +3961,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'import-full') beginImport('full');
     else if (action === 'settings') await openSettings();
     else if (action === 'save-translation') await saveTranslationSettings();
+    else if (action === 'choose-model-folder') chooseModelFolder();
     else if (action === 'search') openSearch();
     else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; state.timelineTime = sourceToTimeline(state.previewTime); navigate(projectPath('edit')); }
     else if (action === 'search-project') { const id = target.dataset.project || ''; closeModal(); if (id) { await openProject(id); navigate(`project/${id}/${state.check?.state === 'done' ? 'edit' : 'check'}`); } }

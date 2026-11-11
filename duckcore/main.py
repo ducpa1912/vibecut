@@ -458,6 +458,20 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return app_settings.snapshot(data_root)
 
+    @app.get("/api/translation/model")
+    def translation_model_status(_: None = Depends(require_token)) -> dict:
+        from duckcore import app_settings, nllb
+
+        settings = app_settings.load(data_root)
+        path = nllb.model_dir(
+            data_root, custom_path=str(settings.get("translation_model_path") or ""),
+        )
+        required = ("model.bin", "config.json", "sentencepiece.bpe.model")
+        if path is None:
+            return {"ready": False, "path": "", "missing": list(required)}
+        missing = [name for name in required if not (path / name).is_file()]
+        return {"ready": not missing, "path": str(path), "missing": missing}
+
     @app.post("/api/models/{model_id}/verify")
     def verify_model(model_id: str, _: None = Depends(require_token)) -> dict:
         return app_settings.verify_model(data_root, model_id)

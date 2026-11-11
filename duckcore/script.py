@@ -154,11 +154,11 @@ def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -
                 data_root=Path(data_root),
                 custom_path=str(settings.get("translation_model_path") or ""),
             )
-            engine = "nllb-custom" if choice == "custom" or settings.get("translation_model_path") else "nllb"
+            engine = "custom-model"
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             detail = str(exc).strip()
             if apple_error:
-                detail = f"Apple Translation: {apple_error} Local model: {detail}"
+                detail = f"Apple Translation: {apple_error} Your model: {detail}"
             raise ValueError(detail) from exc
     for cue, value in zip(cues, values):
         cue["text"] = value

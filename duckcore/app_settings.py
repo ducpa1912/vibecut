@@ -92,8 +92,10 @@ def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
         current["online_endpoint"] = endpoint[:500]
     if "translation_engine" in payload:
         engine = str(payload["translation_engine"] or "auto").strip().lower()
-        if engine not in {"auto", "nllb", "custom"}:
-            raise ValueError("Translation engine must be auto, nllb or custom.")
+        if engine == "nllb":  # legacy setting from the removed pack
+            engine = "auto"
+        if engine not in {"auto", "custom"}:
+            raise ValueError("Translation engine must be auto or custom.")
         current["translation_engine"] = engine
     if "translation_model_path" in payload:
         current["translation_model_path"] = str(payload["translation_model_path"] or "").strip()[:2000]

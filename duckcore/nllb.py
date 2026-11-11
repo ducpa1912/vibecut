@@ -1,4 +1,4 @@
-"""Local NLLB translation through CTranslate2.
+"""Local translation through a user-supplied CTranslate2 model.
 
 The model is data, not code: the optional pack contains a converted int8
 CTranslate2 NLLB-200 600M model and its SentencePiece vocabulary. Apple
@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from duckcore import app_settings, packs
+from duckcore import app_settings
 
 LANGUAGE_CODES = {
     "en": "eng_Latn",
@@ -42,10 +42,6 @@ def model_dir(data_root: Path, *, custom_path: str = "") -> Path | None:
         if (path / "model.bin").is_file():
             return path
         return None
-    if engine in {"auto", "nllb"}:
-        installed = packs.installed_path(data_root, "translation-nllb")
-        if installed is not None:
-            return installed
     return None
 
 
@@ -93,8 +89,7 @@ def translate_lines(
     path = model_dir(data_root, custom_path=custom_path)
     if path is None:
         raise ValueError(
-            "NLLB is not installed. Download the translation pack in Settings, "
-            "or choose a custom CTranslate2 model folder."
+            "No translation model is set. Choose a CTranslate2 model folder in Settings."
         )
     if not lines:
         return []

@@ -1,4 +1,4 @@
-"""NLLB translation model wiring."""
+"""User-supplied translation model wiring."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from duckcore import nllb
 
 def test_nllb_missing_model_is_actionable(tmp_path: Path) -> None:
     assert nllb.model_dir(tmp_path) is None
-    with pytest.raises(ValueError, match="Download the translation pack"):
+    with pytest.raises(ValueError, match="Choose a CTranslate2 model folder"):
         nllb.translate_lines(
             ["Hello"], source="en", target="vi", data_root=tmp_path,
         )
@@ -36,3 +36,10 @@ def test_nllb_language_codes_cover_targets() -> None:
         "zh": "zho_Hans",
         "ja": "jpn_Jpan",
     }
+
+
+def test_no_translation_pack_is_offered() -> None:
+    """DuckSuite ships and hosts no translation weights; the user supplies them."""
+    from duckcore import packs
+
+    assert all(pack["id"] != "translation-nllb" for pack in packs.PACKS)

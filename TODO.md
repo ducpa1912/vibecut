@@ -42,6 +42,18 @@ a review carry the review file instead.
 - [ ] **Portrait Preview width.** The player is framed now but still leaves ~300 px paper each side.
   Proposal: scene strip in a 300 px column beside the player.
 
+## P1 — bring your own model and key (REQ-20261111-02)
+
+- [x] REQ-20261111-02 · remove the `translation-nllb` pack and every download affordance
+- [x] REQ-20261111-02 · custom CTranslate2 folder: choose, copy into app data, validate model.bin/config.json/sentencepiece
+- [x] REQ-20261111-02 · Settings copy names no model and offers no link
+- [ ] REQ-20261111-02 · BYOK store: macOS Keychain, never settings.json; redact in logs and errors
+- [ ] REQ-20261111-02 · STT keys: OpenAI, Groq, Deepgram, OpenRouter
+- [ ] REQ-20261111-02 · rewrite keys: OpenAI, Anthropic, OpenRouter, local Ollama
+- [ ] REQ-20261111-02 · voice keys: ElevenLabs, OpenAI TTS
+- [ ] REQ-20261111-02 · fill endpoints: user-supplied HTTP service, no key shipped
+- [ ] REQ-20261111-02 · per-task switch and privacy banner before any upload
+
 ## P2 — performance and cost
 
 - [ ] **Cold render cost.** `VERSION` 12 invalidates every stored fill. A 25 s slice ran 42 min and was
