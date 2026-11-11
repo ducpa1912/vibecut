@@ -28,6 +28,7 @@ mkdir -p "$ROOT/build/pyinstaller-spec"
   --collect-submodules uvicorn \
   --collect-submodules kokoro_onnx \
   --collect-data kokoro_onnx \
+  --collect-all torch \
   --collect-submodules ctranslate2 \
   --collect-data sentencepiece \
   --hidden-import duckcore.store \
