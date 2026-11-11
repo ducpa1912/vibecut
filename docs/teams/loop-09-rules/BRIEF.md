@@ -39,7 +39,8 @@ Same as loop 7's brief. Write `docs/teams/loop-09-rules/review.md`.
 
 ## Final report (this is the only message the Senior PO reads)
 
-After loop 9, reply once with one report for loops 7, 8 and 9:
+Loop 7 is closed by the Senior PO (commit `8d1a9c8`); do not reopen it. The same read rules as
+loop 8's "State on restart" apply. After loop 9, reply once with one report for loops 8 and 9:
 
 - Per loop: verdict, each acceptance item pass/fail with its measured number, commits.
 - The final render path, wall-clock against estimate, frames checked and frames with text.

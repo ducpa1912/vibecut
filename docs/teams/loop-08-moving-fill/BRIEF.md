@@ -3,6 +3,26 @@
 Senior PO brief, 2026-11-11. Start only after loop 7 is committed and its review is written.
 Run with your own PO, researcher, engineer and tester. Do not report between loops.
 
+## State on restart (2026-11-12) — read this first
+
+The Senior PO stopped this loop once, reviewed loop 7 and rebuilt it (commit `8d1a9c8`). Read
+`docs/teams/loop-07-ink-check/review.md`, revision 2, before any code. What changed under you:
+
+- `duckcore/ink.py` and `duckcore/inkcheck.py` are rewritten. The fill hole is each letter's
+  strokes grown 6 px, only on the frames that letter is on screen (`TextMasks(strokes=, base=)`,
+  `prepare_span(..., strokes=)`). `span_key` holds `ink_rect` and `ink_key`.
+- `textfill.VERSION` is 17. 155 tests pass. A cold render of the review project takes 698 s.
+- No fill is carried across a frame where something crosses the text (`_picture_moved`,
+  `crossed`). Do not undo this.
+- Your unfinished custom-fill work from the first start is on local branch `loop8-wip` (commit
+  `f87730e`). It predates all of the above. Do not merge or rebase it. Read its diff, then write
+  the slot again by hand on `ducksuite`, on top of the new `prepare_span`.
+- Never read or search `old_memory.md`, `old_todo.md`, `old_plan.md`. Never read
+  `docs/reports/SESSION.html` or `docs/reports/ducksuite-product-progress.html`; only insert a row
+  with a script that prints nothing.
+- Also open in `TODO.md` and in scope here if cheap: the render estimate does not count the extra
+  fills at crossings. Measure it against a real cold render and fix the estimate, or record the gap.
+
 ## Why
 
 34 of 42 clean layers on the review project are `moving`. LaMa fills one frame at a time and
