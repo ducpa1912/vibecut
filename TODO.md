@@ -9,16 +9,7 @@ review carry the review file. Items marked `PLAN` came from the 11 Nov code and 
 **Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
 render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
 
-## Loop 1 — show the render cost (next)
-
-- [ ] PLAN · endpoint that returns `textfill.estimate_summary` for an edit (it has no caller today)
-- [ ] PLAN · Render screen shows fill seconds, layer count and estimated time before Start render
-- [ ] PLAN · Clean all dialog shows the same estimate beside the fill · blur · off counts
-- [ ] PLAN · estimate says "measured on this Mac" or "estimate" depending on `fill_rates.json`
-- [ ] PLAN · warn before Start render when free disk is under `SAVED_MIN_FREE` (10 GiB; this Mac has 13 GB)
-- [ ] PLAN · tests: estimate with a measured rate, with none, and with no fill layers
-
-## Loop 2 — prove the title fix on a short span
+## Loop 2 — prove the title fix on a short span (next)
 
 - [ ] **Re-run Check on `prj_e95348a97316`.** Its `check.json` predates the first-frame fix.
   Accept: a `title` tracklet at 0.0–0.25 s, y ≈ 0.321.
@@ -58,6 +49,8 @@ render takes hours on this Mac, and any fill change in loop 3 would make it cold
 - [ ] PLAN · delete the unused `online_enabled` / `online_endpoint` settings
 - [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): code stays for after v1; add
   a test that none is reachable in a v1 build
+- [ ] PLAN · render queue lists "Done" jobs whose file is gone (two on the review project after the
+  disk cleanup); Play should not be offered for a missing file
 - [ ] **Model pack manager polish.** LaMa, Whisper and Kokoro are wired. No in-app "verify all" or
   storage cleanup yet.
 
@@ -130,6 +123,15 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — loop 1, show the render cost (`docs/teams/loop-01-render-cost/review.md`)
+- [x] PLAN · `GET …/render/estimate` returns the fill estimate for an edit; `textfill.estimate_summary` has a caller
+- [x] PLAN · Render screen shows fill seconds, layer count and estimated time above Start render
+- [x] PLAN · Clean all dialog shows the estimate; the toast after Clean all carries the new one
+- [x] PLAN · estimate says "measured on this Mac" or "first guess" from `fill_rates.json`
+- [x] PLAN · warning when free disk is under `SAVED_MIN_FREE` (10 GiB)
+- [x] PLAN · 5 tests: measured rate, seed rate, no fill layers, low disk, route
+- [x] Review project reads: up to 2 h 45 min for 60 s of fill in 40 layers, measured rate
 
 ### 11 Nov — final documentation pass
 - [x] REQ-20261111-05 · `PLAN.md`: one build order, nine loops, measured state, document map

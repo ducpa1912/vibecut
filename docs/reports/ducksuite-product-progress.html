@@ -144,6 +144,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 1</strong><span>11 Nov · render cost</span></div>
+      <div class="timeline-body">
+        <strong>The AI fill time is on screen before a render starts.</strong>
+        <ul class="clean">
+          <li>New <span class="mono">GET …/render/estimate</span>: the same clips and fill layers the render walks, costed with the rate measured on this Mac, or a labelled first guess.</li>
+          <li>Render screen and Clean all dialog show it. Review project: up to 2 h 45 min for 60 s of fill in 40 layers.</li>
+          <li>A warning appears when free disk is under 10 GB, where a stopped render can no longer resume mid-clip.</li>
+          <li>Not tested: the toast after a confirmed Clean all (loop 2), and the accuracy of the figure (loop 4 records real time beside it).</li>
+        </ul>
+        <span class="mono">88 tests</span> · no fill output change, <span class="mono">VERSION</span> stays 12 · review: <span class="mono">docs/teams/loop-01-render-cost/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-05</strong><span>11 Nov · final docs</span></div>
       <div class="timeline-body">
         <strong>Planning closed: one build order, and the product record now matches the build.</strong>

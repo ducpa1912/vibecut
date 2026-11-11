@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "duck-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "PATH=/opt/homebrew/bin:$PATH DUCK_DATA=\"$HOME/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite\" DUCK_PORT=8805 DUCK_TOKEN=dev-local-loop-token scripts/serve-duck.sh"],
+      "port": 8805
+    }
+  ]
+}

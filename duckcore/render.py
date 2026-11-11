@@ -246,6 +246,48 @@ def render_frame(
     return output
 
 
+def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
+    """What a render of this edit will cost in AI fill, without running anything.
+
+    Walks the same clips and fill layers as :func:`render_edit`, so the figure
+    is for the spans the render will ask for, and a span already filled counts
+    as done.
+    """
+    from duckcore.engine import textfill
+
+    data_root = Path(data_root)
+    cache = data_root / "projects" / str(edit.get("project_id") or "") / "fill"
+    clean = [layer for layer in edit.get("clean") or [] if isinstance(layer, dict)]
+    on = [layer for layer in clean if layer.get("enabled") is not False]
+    layers = _fill_layers(edit)
+    fps = float(meta.get("fps") or 0.0)
+    rows = []
+    if layers:
+        for clip in edit.get("clips") or []:
+            start = float(clip.get("start") or 0.0)
+            end = float(clip.get("end") or 0.0)
+            if end <= start or str(clip.get("kind")) == "media":
+                continue
+            rows.append(textfill.estimate_span(
+                meta=meta, start=start, duration=max(0.04, end - start), layers=layers,
+                method="lama", cache_dir=cache, data_root=data_root,
+            ))
+    summary = textfill.estimate_summary(rows, data_root)
+    filled_frames = sum(int(row.get("frames") or 0) for row in rows)
+    return {
+        **summary,
+        "layers": {
+            "fill": len(layers),
+            "blur": sum(1 for layer in on if layer.get("kind") == "blur"),
+            "off": len(clean) - len(on),
+            "moving_fill": sum(1 for layer in layers if layer.get("quality") == "moving"),
+        },
+        # Seconds of video that carry a fill, done or not.
+        "fill_seconds": round(filled_frames / fps, 1) if fps > 0 else 0.0,
+        "disk": textfill.saved_fill_disk(cache),
+    }
+
+
 def render_edit(
     project: dict,
     edit: dict,

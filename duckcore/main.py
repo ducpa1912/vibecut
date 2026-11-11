@@ -1734,6 +1734,24 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     ) -> dict:
         return {"render": renders.status(project_id, edit_id)}
 
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/render/estimate")
+    def render_estimate(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        from duckcore.engine import pipeline
+
+        try:
+            project = store.get(project_id)
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        try:
+            # The same probe the render uses, so a filled span is recognised.
+            meta = pipeline.probe(str(project["source_path"]))
+        except (pipeline.PipelineError, OSError):
+            meta = dict(edit.get("source") or {})
+        return {"estimate": render.estimate_edit(edit, meta, data_root)}
+
     @app.post("/api/projects/{project_id}/edits/{edit_id}/render/cancel")
     def cancel_render(
         project_id: str, edit_id: str, _: None = Depends(require_token)

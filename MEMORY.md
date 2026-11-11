@@ -69,6 +69,8 @@ into those loops, `ROADMAP.md` marked historical.
 **Founder answers, same day:** cloud render stays deferred. BYOK is planned but not v1: "v1 is
 completely local, so users can just plug-in local models." The re-Check acceptance is "no
 `auto: false` layer changed". Docs updated to say so.
+**Loop 1 (same day):** the render cost is on screen before Start render and in the Clean all dialog,
+from `GET …/render/estimate`. Review project: up to 2 h 45 min of AI fill. 88 tests.
 
 ## Session log
 

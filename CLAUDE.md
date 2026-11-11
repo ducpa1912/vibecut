@@ -6,10 +6,10 @@ repeats what matters at the start of a session.
 ## State
 
 - Branch `ducksuite`, repo root is this directory. Never merge `main`; unrelated histories.
-- 83 tests. 377 MB app bundle. macOS 26.0, Apple silicon.
+- 88 tests. 377 MB app bundle. macOS 26.0, Apple silicon.
 - App Store work is paused. Do not start signing or TestFlight.
-- Planning is closed. Next work is loop 1 in `PLAN.md`: show the render cost. No full render before
-  loop 4.
+- Planning is closed. Loop 1 (render cost on screen) is done. Next is loop 2 in `PLAN.md`. No full
+  render before loop 4.
 
 ## Commands
 

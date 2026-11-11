@@ -8,7 +8,7 @@ loops below, `AGENTS.md` is the working contract.
 
 | Fact | Value | Source |
 |---|---|---|
-| Branch / tests | `ducksuite`, 83 pass | `python3 -m pytest -q tests` |
+| Branch / tests | `ducksuite`, 88 pass | `python3 -m pytest -q tests` |
 | Bundle | 377 MB (LaMa 198, sidecar 136, ffmpeg 41) | `du -sh build/DuckSuite-Xcode.app` |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2, 13 GB free disk | `sysctl`, `sw_vers`, `df` |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips | `edits/ed_38a4c36a3aae.json` |
@@ -23,7 +23,7 @@ loops below, `AGENTS.md` is the working contract.
 
 1. **Fill is slow and weak on moving footage, and that is most of the footage.** 33 of 41 layers are
    `moving`. LaMa fills one frame at a time on the CPU. This is the product's main feature.
-2. **The cost is measured but never shown.** `textfill.estimate_summary` and `estimate_span` have no
+2. **The cost is measured but never shown.** *(Fixed in loop 1.)* `textfill.estimate_summary` and `estimate_span` had no
    caller; `fill_rates.json` is written and never read by the UI. A user can start a 4-hour render
    with no warning. This breaks ground rule 4.
 3. **The resume cache can switch itself off on this Mac.** Saved fills stop being written below
@@ -45,7 +45,7 @@ for one full render. Do not run a full render between loops 1 and 4.
 One loop = PO brief → engineer + tester → creator → PO sign-off → one commit with `MEMORY.md`,
 `TODO.md`, a report row and `docs/teams/<loop>/review.md`.
 
-### Loop 1 — show the render cost (code, no render)
+### Loop 1 — show the render cost (code, no render) — **done 2026-11-11**
 
 - Wire `estimate_summary` to the Render screen and the Clean all dialog: fill seconds, layer count,
   estimated time on this Mac, from the measured rate when one exists, the seed otherwise (labelled).

@@ -43,6 +43,8 @@ const state = {
   previewRunning: false,
   previewRun: 0,
   cleanVersion: 0,
+  renderEstimate: null,
+  renderEstimateKey: '',
   voiceName: 'Samantha',
   voiceMode: 'voice_over',
   welcomeQuery: '',
@@ -2930,6 +2932,55 @@ function previewStatusLabel(value) {
 
 /* ------------------------------------------------------------------ render */
 
+// ---- render cost: the AI fill estimate, shown before a render starts ----
+
+function renderEstimateKey() {
+  if (!state.project || !state.edit) return '';
+  const finished = state.queue.filter((item) => item.state === 'done').length;
+  return `${state.project.id}|${state.edit.id}|${state.edit.updated || 0}|${state.cleanVersion}|${finished}`;
+}
+
+async function fetchRenderEstimate() {
+  const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/render/estimate`);
+  return data.estimate;
+}
+
+function renderEstimateHtml() {
+  const estimate = state.renderEstimate;
+  if (!estimate) return `<p class="render-cost-line muted">Working out the AI fill time…</p>`;
+  if (estimate.failed) return `<p class="render-cost-line muted">AI fill time could not be worked out.</p>`;
+  const layers = estimate.layers || {};
+  const disk = estimate.disk?.low ? `<p class="render-cost-warn">${esc(estimate.disk.text)}</p>` : '';
+  if (!estimate.beats) return `<p class="render-cost-line muted">No AI fill in this render.</p>${disk}`;
+  const left = estimate.beats - estimate.beats_cached;
+  const head = left
+    ? `AI fill · up to ${esc(fmtDuration(estimate.seconds))}`
+    : 'AI fill · already done';
+  const basis = !left ? 'adds no time' : estimate.measured ? 'measured on this Mac' : 'first guess, no render measured here yet';
+  const detail = [
+    `${fmtDuration(estimate.fill_seconds)} of video in ${layers.fill} fill layer${layers.fill === 1 ? '' : 's'}`,
+    estimate.beats_cached && left ? `${estimate.beats_cached} of ${estimate.beats} clips already filled` : '',
+    basis,
+  ].filter(Boolean).join(' · ');
+  return `<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
+}
+
+function paintRenderEstimate() {
+  document.querySelectorAll('[data-render-estimate]').forEach((node) => { node.innerHTML = renderEstimateHtml(); });
+}
+
+// Asks once per edit state. The screen is patched in place, never re-rendered.
+function ensureRenderEstimate() {
+  const key = renderEstimateKey();
+  if (!key || state.renderEstimateKey === key) return;
+  state.renderEstimateKey = key;
+  state.renderEstimate = null;
+  fetchRenderEstimate()
+    .then((estimate) => { if (state.renderEstimateKey === key) state.renderEstimate = estimate; })
+    .catch(() => { if (state.renderEstimateKey === key) state.renderEstimate = { failed: true }; })
+    .finally(() => { if (state.renderEstimateKey === key) paintRenderEstimate(); });
+}
+
 function screenRender() {
   const scenes = getScenes();
   const checked = sceneReadyCount(scenes);
@@ -2961,6 +3012,7 @@ function screenRender() {
   const cleanBlur = cleanOn.length - cleanFill;
   const movingBlur = cleanOn.filter((layer) => layer.kind === 'blur' && layer.quality === 'moving').length;
   const movingFill = cleanOn.filter((layer) => layer.kind !== 'blur' && layer.quality === 'moving').length;
+  ensureRenderEstimate();
   return `<main class="screen">${storyContextBar()}
     <div class="workspace render">
       <aside class="panel">
@@ -2996,6 +3048,7 @@ function screenRender() {
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
           </div>
+          <div class="render-cost" data-render-estimate aria-live="polite">${renderEstimateHtml()}</div>
           ${activeJob ? `<div class="render-live"><div><strong>${state.queuePaused ? 'Render paused' : activeJob.state === 'queued' ? 'Render queued' : 'Rendering'} · ${renderPercent(activeJob)}%</strong><span>${esc(activeJob.title || 'Current render')}</span></div><div class="render-live-actions">${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">Resume</button>` : `<button class="btn small" type="button" data-action="pause-queue">Pause</button>`}<button class="btn small" type="button" data-action="cancel-render" data-project="${esc(activeJob.project_id || state.project?.id || '')}" data-edit="${esc(activeJob.edit_id || '')}">Cancel</button></div></div>` : `<button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>`}
           <p class="readiness-note">${activeJob ? 'A render is already running. Pause, cancel, or wait for it to finish.' : 'Proofs are optional. Start render now, or review frames later.'}</p>
           <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputLabel)}</span></span></div></div>
@@ -3520,6 +3573,7 @@ function confirmCleanAll() {
   }
   const layers = state.edit.clean?.length || 0;
   const userSet = (state.edit.clean || []).filter((layer) => layer.auto === false).length;
+  ensureRenderEstimate();
   openModal(`<dialog class="modal clean-all-modal" aria-label="Clean all scenes">
     <div class="modal-head"><h2>Clean all scenes</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body clean-all-body">
@@ -3530,6 +3584,7 @@ function confirmCleanAll() {
         <li>A line that only flashes on screen gets Blur, because a fill has nothing to rebuild from</li>
       </ul>
       <p class="small muted">Your clips, captions, story, and audio stay as they are.</p>
+      <div class="render-cost in-modal"><span class="render-cost-label">Rendering the layers as they are now</span><div data-render-estimate aria-live="polite">${renderEstimateHtml()}</div></div>
       <div class="modal-actions">
         <button class="btn" type="button" data-action="close-modal">Cancel</button>
         <button class="btn primary" type="button" data-action="clean-all-confirm">${icon('sparkle', 14)} Clean all</button>
@@ -3557,7 +3612,16 @@ async function cleanAll() {
     if (plan.fill) parts.push(`${plan.fill} fill`);
     if (plan.blur) parts.push(`${plan.blur} blur`);
     if (plan.off) parts.push(`${plan.off} off`);
-    toast(`${parts.join(' · ')}.${plan.moving ? ` ${plan.moving} sit over a moving background.` : ''}`);
+    // The new layers have a new cost; say it with the counts.
+    let cost = '';
+    try {
+      const estimate = await fetchRenderEstimate();
+      state.renderEstimateKey = renderEstimateKey();
+      state.renderEstimate = estimate;
+      paintRenderEstimate();
+      cost = estimate.text ? ` ${estimate.text}` : '';
+    } catch (_) { /* the Render screen asks again */ }
+    toast(`${parts.join(' · ')}.${plan.moving ? ` ${plan.moving} sit over a moving background.` : ''}${cost}`);
     if (state.screen === 'preview') startPreviewClean();
   } catch (error) {
     toast(`Clean failed: ${error.message}`, 'bad');

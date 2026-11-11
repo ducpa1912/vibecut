@@ -766,6 +766,21 @@ def _free_disk(path: Path) -> int:
     return SAVED_MIN_FREE
 
 
+def saved_fill_disk(path: Path | str) -> dict:
+    """Whether a long fill can keep its work: free disk against the saved-fill floor."""
+    free = _free_disk(Path(path))
+    low = free < SAVED_MIN_FREE
+    return {
+        "free_bytes": int(free),
+        "floor_bytes": SAVED_MIN_FREE,
+        "low": low,
+        "text": (
+            f"Free disk is under {SAVED_MIN_FREE // 1024 ** 3} GB. A stopped render cannot pick up "
+            "mid-clip; it fills the clip it was on again."
+        ) if low else "",
+    }
+
+
 def _saved_folders(data_root: Path | str, *others: Path) -> list[Path]:
     """Every saved-fill folder in this data folder, so the cap covers them all."""
     jobs = Path(data_root) / "jobs"
