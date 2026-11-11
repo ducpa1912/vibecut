@@ -36,7 +36,7 @@ DuckSuite only validates and loads it. Every model-backed step gets a bring-your
 **Response:** remove the NLLB pack and its download UI, finish the custom-model setting with a native
 folder picker that copies the folder into app data, keep the copy model-neutral, and write the BYOK
 plan for STT, translation, rewrite, voice, and fill.
-**Outcome:** NLLB pack and download UI removed; Settings now takes any CTranslate2 folder, copied into app data with a native picker and validated against model.bin/config.json/sentencepiece. BYOK plan written at `docs/duck/BYOK-PLAN.md`. 83 tests.
+**Outcome:** NLLB pack and download UI removed; Settings now takes any CTranslate2 folder, copied into app data with a native picker and validated against model.bin/config.json/sentencepiece. BYOK plan written at `docs/duck/BYOK-PLAN.md`. Local NLLB pack deleted (601 MB). 83 tests.
 
 ### REQ-20261111-03 · 2026-11-11
 **Request:** "added five role of team, added the plugin any local models in each step of the workflow,

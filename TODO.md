@@ -110,6 +110,10 @@ a review carry the review file instead.
 - [x] REQ-20261111-03 · BYOM/BYOK matrix for every model-backed step
 - [x] REQ-20261111-03 · slot contract: validate, copy into app data, never name or download a model
 
+### 11 Nov — disk cleanup
+- [x] deleted the local NLLB pack (601 MB); only Whisper and Kokoro remain
+- [x] deleted the two pre-fix renders and the 25 s slice (331 MB); next render is the first with the title fix
+
 ### 11 Nov — bring your own model
 - [x] REQ-20261111-02 · NLLB pack, download button and model names removed
 - [x] REQ-20261111-02 · native folder picker copies any CTranslate2 folder into app data and validates it
