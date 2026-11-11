@@ -139,7 +139,7 @@ ul.clean li { margin:6px 0; }
     <div class="card"><div class="chip done">Current</div><div class="big">82</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
     <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">11</div><p>Commits recorded in this section, from <span class="mono">7308bbb</span> to <span class="mono">7d6a70e</span>.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
-    <div class="card"><div class="chip active">Open</div><div class="big">+1.1</div><p>dB PSNR from a tighter fill hole. Moving texture is still invented, not recovered.</p></div>
+    <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>Step left: re-run Check so the 66 ms title gets a clean layer. Captions on the current render are already gone.</p></div>
   </div>
 
   <div class="timeline" style="margin-top:14px">
@@ -156,6 +156,7 @@ ul.clean li { margin:6px 0; }
           <li>End-to-end Check on the first 3 s now finds the 66 ms title as a <span class="mono">title</span> layer at 0–0.25 s.</li>
         </ul>
         <span class="mono">82 tests pass</span> · benchmark at <span class="mono">scripts/bench_fill.py</span> · real-span re-fill at 90 s and 157 s checked, no outline residue.
+        <br><span class="mono">Render review, 21:25 build:</span> 160.03 s, 1080×1920, captions gone at 2 s, 10 s and 90 s. The <span class="mono">0 s</span> title is still there because this project’s <span class="mono">check.json</span> predates the detection fix. One Check run clears it.
       </div>
     </div>
 
@@ -443,6 +444,8 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
       <tr><td>Clean all confirmation</td><td><span class="chip done">Pass</span></td><td>Modal names the layer count and the rules; 41 layers on the review project, cancel leaves them untouched.</td></tr>
       <tr><td>Render queue scope</td><td><span class="chip done">Pass</span></td><td><span class="mono">1 job</span> for the open project; other projects sit behind the All projects toggle.</td></tr>
       <tr><td>Fill hole benchmark</td><td><span class="chip done">Pass</span></td><td>10 text-free frames, ground truth: <span class="mono">22.5 → 23.6 dB</span> PSNR after the tighter hole, same run time. Second project <span class="mono">22.8 → 23.6 dB</span>.</td></tr>
+      <tr><td>Rendered output review</td><td><span class="chip done">Pass</span></td><td><span class="mono">ed_38a4c36a3aae_20261110-212525.mp4</span>: 160.03 s, 1080×1920. No burned-in caption at 2 s, 10 s or 90 s. The <span class="mono">0 s</span> title stays until Check re-runs.</td></tr>
+      <tr><td>Cold render cost</td><td><span class="chip active">Slow</span></td><td>Cache version 12 invalidates every stored fill, so the first render recomputes all of them. A 25 s slice was still running after 42 min and was stopped.</td></tr>
       <tr><td>Fill residue check</td><td><span class="chip done">Pass</span></td><td>Thick-outline run (0.11 of line height) still scores <span class="mono">25.1 dB</span> with the new hole; real re-fill at 90 s and 157 s shows no outline.</td></tr>
       <tr><td>App Store export</td><td><span class="chip blocked">Blocked</span></td><td>“No Team Found in Archive”; 0 valid signing identities.</td></tr>
     </tbody>
