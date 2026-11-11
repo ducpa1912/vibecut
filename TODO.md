@@ -1,117 +1,140 @@
 # TODO — DuckSuite
 
-Status as of 2026-11-11, after `7a40d7d`. Ordered by what blocks a good render, then quality, then
-polish. Done items stay listed so nothing is repeated by accident.
+Status as of 2026-11-11 (REQ-20261111-05). The order below is the build order in `PLAN.md`; work one
+loop at a time, top to bottom. Done items stay listed so nothing is repeated by accident.
 
-Items that came from a new request carry its id (`REQ-YYYYMMDD-NN`), matching `MEMORY.md`. Items from
-a review carry the review file instead.
+Items that came from a request carry its id (`REQ-YYYYMMDD-NN`), matching `MEMORY.md`. Items from a
+review carry the review file. Items marked `PLAN` came from the 11 Nov code and data review.
 
-## P0 — blocks a clean render on the review project
+**Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
+render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
 
-- [ ] **Re-run Check on `prj_e95348a97316`.** The project's `check.json` predates the first-frame fix,
-  so the 66 ms title at `0 s` has no clean layer and still shows in every render. Check is additive and
-  keeps the layer choices made by the user.
-- [ ] **Clean all after that Check.** The title layer should appear as `title`, `0.0–0.25 s`, quality
-  `moving`; it will default to Blur because it is shorter than 0.5 s.
-- [ ] **Render once and review.** Fills are cold after `textfill.VERSION` 12. A 160 s render can take
-  hours. Budget for it, then check 0 s, 2 s, 10 s, 90 s, 157 s, and OCR a 2 s scan for leftovers.
+## Loop 1 — show the render cost (next)
 
-## P1 — quality and honesty
+- [ ] PLAN · endpoint that returns `textfill.estimate_summary` for an edit (it has no caller today)
+- [ ] PLAN · Render screen shows fill seconds, layer count and estimated time before Start render
+- [ ] PLAN · Clean all dialog shows the same estimate beside the fill · blur · off counts
+- [ ] PLAN · estimate says "measured on this Mac" or "estimate" depending on `fill_rates.json`
+- [ ] PLAN · warn before Start render when free disk is under `SAVED_MIN_FREE` (10 GiB; this Mac has 13 GB)
+- [ ] PLAN · tests: estimate with a measured rate, with none, and with no fill layers
 
-- [ ] **Fill model for moving footage.** LaMa is per-frame and cannot rebuild a plate it never saw.
-  The tighter hole bought +1.1 dB; the next real step is a different model, not another pad tweak.
-  Candidates: STTN with better weights, ProPainter, a video diffusion inpaint, or an external render
-  service. Needs a licence decision before it ships.
-- [ ] **AI fill repair / reinstall path.** Settings shows the model path, problem text and a Reveal
-  button. There is still no in-app repair because LaMa ships inside the bundle; the honest fix is a
-  "reinstall DuckSuite" instruction, or a downloadable pack that can be re-fetched.
-- [ ] **Verify a 9:16 project at 1440×900 and 1280×800.** The preview stage was changed to hug portrait
-  media; the two review sizes were not re-measured after that change.
-- [ ] **Fill confidence per line.** `quality` is binary (steady/moving) from the mean motion. A line
-  with motion 11 and one with 31 are treated the same. Consider a third level or a score.
+## Loop 2 — prove the title fix on a short span
 
-## P1 — team and model plugins (REQ-20261111-03)
+- [ ] **Re-run Check on `prj_e95348a97316`.** Its `check.json` predates the first-frame fix.
+  Accept: a `title` tracklet at 0.0–0.25 s, y ≈ 0.321.
+- [ ] **Clean all after that Check.** Accept: the title layer is `blur` (flash under 0.5 s); counts
+  reported as fill · blur · off; no layer with `auto: false` changed. All 41 current layers are
+  `auto: true`, so they may be re-planned; "41 unchanged" is not the test.
+- [ ] **Render 0–3 s only** and look at frame 0. Not the whole video.
 
-- [x] REQ-20261111-03 · five roles in `.claude/agents/` and in `AGENTS.md`
-- [x] REQ-20261111-03 · per-step BYOM/BYOK matrix in `AGENTS.md` and `docs/duck/BYOK-PLAN.md`
+## Loop 3 — measure fill speed, then decide (REQ-20261111-04)
+
+- [ ] REQ-20261111-04 · extend `bench_fill.py` with `--device cpu|gpu` and `--model`
+- [ ] REQ-20261111-04 · measure CPU vs CoreML EP vs MPS on the same 10 frames; write `docs/duck/gpu-fill-bench.md`
+- [ ] PLAN · same bench: `fill_plan.keys` 6/s vs 3/s on a moving span (20 of 41 layers plan 6/s)
+- [ ] REQ-20261111-04 · decide packaging from the numbers: CoreML, bundle torch, or stay CPU
+- [ ] REQ-20261111-04 · add `device` to `span_key` and bump `textfill.VERSION` before any GPU fill ships
+- [ ] REQ-20261111-04 · Settings row shows the real device and the reason when GPU is unavailable
+
+## Loop 4 — one full render of the review project
+
+- [ ] **Render once and review**, with the loop 1 estimate on screen first. Check 0, 2, 10, 90, 157 s
+  and OCR a 2 s scan: no burned-in text, no outline residue, no frozen patch at a cut.
+- [ ] PLAN · record real wall-clock beside the estimate in the report row
+
+## Loop 5 — a better fill for moving footage
+
+- [ ] PLAN · researcher: licence table for video-inpaint candidates (STTN weights, ProPainter, others),
+  clause quoted, commercial use yes/no. Nothing enters the build without it.
+- [ ] **Fill model for moving footage.** LaMa is per-frame and cannot rebuild a plate it never saw;
+  33 of 41 layers in the review project are `moving`. Bench the allowed candidates on those spans.
+- [ ] **Fill confidence per line.** `quality` is binary from the mean motion; motion 11 and 31 are
+  treated the same. Consider a third level or a score.
+
+## Loop 6 — make the code match the rules
+
+- [ ] PLAN · `script.rewrite`: remove the silent Ollama fallback and the `qwen3:4b` name; Apple
+  Intelligence, else basic cleanup, stated in the UI
+- [ ] PLAN · delete the unused `online_enabled` / `online_endpoint` settings
+- [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): kept for BYOK; add a test
+  that none is reachable with zero keys
+- [ ] **Model pack manager polish.** LaMa, Whisper and Kokoro are wired. No in-app "verify all" or
+  storage cleanup yet.
+
+## Loop 7 — providers, local slots, keys (REQ-20261111-02, REQ-20261111-03)
+
+Design: `docs/duck/BYOK-PLAN.md`. In this order.
+
 - [ ] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
+- [ ] REQ-20261111-03 · Keychain store + redaction; never `settings.json`, logs or error strings
 - [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
 - [ ] REQ-20261111-03 · rewrite local slot: base URL, `/v1/models` check
 - [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
 - [ ] REQ-20261111-03 · fill local slot: custom ONNX inpaint model
-- [ ] REQ-20261111-03 · Keychain store + redaction, no key in logs or errors
 - [ ] REQ-20261111-03 · Connections UI with per-task consent; off until ticked
-- [ ] REQ-20261111-03 · write `docs/teams/<loop>/review.md` for every loop
+- [ ] REQ-20261111-02 · STT keys: OpenAI, Groq, Deepgram, OpenRouter
+- [ ] REQ-20261111-02 · rewrite keys: OpenAI, Anthropic, OpenRouter
+- [ ] REQ-20261111-02 · voice keys: ElevenLabs, OpenAI TTS
+- [ ] REQ-20261111-04 · fill endpoint, last: user URL, consent that frames leave the Mac, never default
+- [x] REQ-20261111-02 · remove the `translation-nllb` pack and every download affordance
+- [x] REQ-20261111-02 · custom CTranslate2 folder: choose, copy into app data, validate model.bin/config.json/sentencepiece
+- [x] REQ-20261111-02 · Settings copy names no model and offers no link
+- [x] REQ-20261111-03 · five roles in `.claude/agents/` and in `AGENTS.md`
+- [x] REQ-20261111-03 · per-step BYOM/BYOK matrix in `AGENTS.md` and `docs/duck/BYOK-PLAN.md`
 
-## P1 — $29 build readiness
+## Loop 8 — $29 build readiness (REQ-20261111-02)
 
-- [ ] REQ-20261111-02 · shrink the Whisper pack or make it per-language (1.61 GB today; required for `vi`)
 - [ ] REQ-20261111-02 · SHA-256 per pack file; `packs.py` currently accepts ≥98% of the expected size
 - [ ] REQ-20261111-02 · LGPL written source offer for the bundled ffmpeg, beside the licence text
-- [ ] REQ-20261111-02 · delete or prove unreachable the cloud STT paths (`groq`, `deepgram`, `openrouter`)
+- [ ] REQ-20261111-02 · shrink the Whisper pack or make it per-language (1.61 GB today; required for `vi`)
+- [ ] **AI fill repair / reinstall path.** LaMa ships inside the bundle, so the honest fix is a
+  "reinstall DuckSuite" instruction beside the existing path, problem text and Reveal button.
+- [ ] **Manual microphone test** on a clean Mac. Recording compiles, never tested by hand.
+- [ ] **Import failure copy.** Errors are technical ("ffmpeg frame read failed"). Rewrite for a creator.
 - [x] REQ-20261111-02 · decide purchase shape: $29 paid app, no StoreKit, restore by Apple ID
 - [x] REQ-20261111-02 · decide platform floor: macOS 26.0, Apple silicon
 
-## P1 — layout balance (from `docs/teams/uiux-balance-01.md`)
+## Loop 9 — layout balance (from `docs/teams/uiux-balance-01.md`)
 
 - [ ] **Render screen restructure.** Two columns: Settings (320 px) plus Start render on the left, queue
   full width on the right, finished renders as cards instead of dense rows. Today the page ends at 60%
-  height.
+  height. The loop 1 estimate lives in the left column.
 - [ ] **Edit inspector.** Add `5 of 9 layers` and a bottom fade so the clipped row reads as "more
   below". Today the fifth row is cut with no hint.
 - [ ] **Timeline empty lanes.** Collapse a lane with no cues to one 32 px `+` row. Three of five lanes
   are empty on a silent project and read as missing data.
 - [ ] **Portrait Preview width.** The player is framed now but still leaves ~300 px paper each side.
   Proposal: scene strip in a 300 px column beside the player.
+- [ ] **Verify a 9:16 project at 1440×900 and 1280×800.** The preview stage was changed to hug portrait
+  media; the two review sizes were not re-measured after that change.
 
-## P1 — bring your own model and key (REQ-20261111-02)
+## Later
 
-- [x] REQ-20261111-02 · remove the `translation-nllb` pack and every download affordance
-- [x] REQ-20261111-02 · custom CTranslate2 folder: choose, copy into app data, validate model.bin/config.json/sentencepiece
-- [x] REQ-20261111-02 · Settings copy names no model and offers no link
-- [ ] REQ-20261111-02 · BYOK store: macOS Keychain, never settings.json; redact in logs and errors
-- [ ] REQ-20261111-02 · STT keys: OpenAI, Groq, Deepgram, OpenRouter
-- [ ] REQ-20261111-02 · rewrite keys: OpenAI, Anthropic, OpenRouter, local Ollama
-- [ ] REQ-20261111-02 · voice keys: ElevenLabs, OpenAI TTS
-- [ ] REQ-20261111-02 · fill endpoints: user-supplied HTTP service, no key shipped
-- [ ] REQ-20261111-02 · per-task switch and privacy banner before any upload
-
-## P2 — LaMa GPU (REQ-20261111-04)
-
-- [ ] REQ-20261111-04 · extend `bench_fill.py` with `--device cpu|gpu` and `--model`
-- [ ] REQ-20261111-04 · measure CPU vs CoreML EP vs MPS on the same 10 frames; write `docs/duck/gpu-fill-bench.md`
-- [ ] REQ-20261111-04 · decide packaging from the numbers: CoreML, bundle torch, or stay CPU
-- [ ] REQ-20261111-04 · add `device` to `span_key` and bump `textfill.VERSION` before any GPU fill ships
-- [ ] REQ-20261111-04 · Settings row shows the real device and the reason when GPU is unavailable
-- [ ] REQ-20261111-04 · cloud fill endpoint is a BYOK slot only: user URL, consent, never default
-
-## P2 — performance and cost
-
-- [ ] **Cold render cost.** `VERSION` 12 invalidates every stored fill. A 25 s slice ran 42 min and was
-  stopped. Options: warm the cache in the background after Clean all, show a time estimate per layer,
-  or cap fill work by keyframe plan.
-- [ ] **Fill planner budget.** `fill_plan.keys` reaches 6/s. On dense captions that is the whole cost.
-  Check whether 3/s looks the same on real footage.
+- [ ] **Cold render cost, beyond the estimate.** Warm the cache in the background after Clean all, or
+  cap fill work by keyframe plan. Revisit with the loop 3 numbers.
 - [ ] **First-frame read cost.** `pipeline._first_still` adds one ffmpeg seek per Check. Cheap today;
   measure on a 10-minute source.
-
-## P2 — product
-
+- [ ] **Short flashes after the first frame.** Only the first frame gets an exact read; a title under
+  250 ms at a later cut can still fall between 4 fps samples. Measure before fixing.
 - [ ] **Timeline split and reorder.** Trim works; split, reorder and remove-silence do not.
 - [ ] **Aspect switching / auto-frame.** Source aspect only. Deliberate v1 cut.
-- [ ] **Manual microphone test** on a clean Mac. Recording compiles, never tested by hand.
-- [ ] **Model pack manager polish.** LaMa, Whisper, Kokoro, NLLB are wired; Qwen and Demucs entries are
-  removed. No in-app "verify all" or storage cleanup yet.
-- [ ] **Import failure copy.** Errors are technical ("ffmpeg frame read failed"). Rewrite for a creator.
+- [ ] **Every loop writes `docs/teams/<loop>/review.md`** (REQ-20261111-03; standing rule, starts with loop 1).
 
 ## Paused by decision
 
 - [ ] **App Store gate.** Signing identity, team, store URLs, review contact, screenshot rights, nested
   code signing. Blocked before; work intentionally stopped until the product is good.
+- [ ] **Cloud render plans** ($5 / $20). Founder decision of 2026-11-06; nothing in the build uploads.
 - [x] **Translation licence.** Resolved by shipping no weights: the user supplies a CTranslate2 folder.
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — final documentation pass
+- [x] REQ-20261111-05 · `PLAN.md`: one build order, nine loops, measured state, document map
+- [x] REQ-20261111-05 · `PRODUCT.md` matches the build: shipped / planned / deferred, known limits
+- [x] REQ-20261111-05 · `TODO.md` reordered into the loops; duplicate BYOK items merged
+- [x] REQ-20261111-05 · `ROADMAP.md` marked historical; stale NLLB lines corrected
 
 ### 11 Nov — team and model plugins
 - [x] REQ-20261111-03 · five roles: product owner, creator, engineer, tester, researcher

@@ -55,6 +55,18 @@ matrix in `AGENTS.md`, a short version in `CLAUDE.md`, and a per-step slot contr
 ship today (no torch, no `big-lama.pt`, no benchmark, device missing from the cache key), a measure
 first step, a packaging table, the wiring steps and acceptance.
 **Outcome:** plan only; no behaviour change.
+### REQ-20261111-05 · 2026-11-11
+**Request:** "Yes, too much planning so final documentation, review everything and update all the
+plan.md, product.md and todo.md and prepare to build"
+**Read as:** one last documentation pass that makes the plan, the product record and the task list
+agree with the code and with each other; after it, commits are code.
+**Response:** independent review of code and project data first (33 of 41 clean layers are on moving
+footage; the fill time estimate exists but has no caller; saved fills stop below 10 GiB free; the
+rewrite step falls back to Ollama silently). Then `PLAN.md` as the single build order in nine
+loops, `PRODUCT.md` rewritten as shipped / planned / deferred with known limits, `TODO.md` reordered
+into those loops, `ROADMAP.md` marked historical.
+**Outcome:** docs only; no behaviour change, 83 tests. Next commit is loop 1: show the render cost.
+
 ## Session log
 
 | # | Time | Request | Response |
@@ -120,7 +132,7 @@ first step, a packaging table, the wiring steps and acceptance.
 
 - Merge target is `ducksuite`. `main` has no common ancestor and lives in another worktree; it is not merged.
 - App Store and signing work is paused by the user until the product is good.
-- NLLB is optional and CC-BY-NC-4.0; do not ship it as a paid default.
+- NLLB is CC-BY-NC-4.0: not shipped, not hosted, not offered as a download. Translation takes a user-supplied CTranslate2 folder (REQ-20261111-02).
 - Proofs are optional review frames; render never waits for them.
 - Detection review overlay is an approximate preview, not final LaMa output.
 - Whisper stays because Apple Speech does not transcribe Vietnamese.

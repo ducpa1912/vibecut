@@ -1,6 +1,7 @@
 # AGENTS.md — DuckSuite
 
-Read `MEMORY.md` (what was asked and answered) and `TODO.md` (what is left) before touching code.
+Read `PLAN.md` (the build order), `MEMORY.md` (what was asked and answered) and `TODO.md` (what is
+left) before touching code. Planning is closed as of 2026-11-11: work the loops in `PLAN.md` in order.
 
 ## What this is
 
@@ -206,7 +207,7 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 
 0. Classify the request with **Request intake** above. New request: log it in `MEMORY.md` and
    plan it in `TODO.md` first.
-1. Pick one item from `TODO.md`.
+1. Pick the next open loop in `PLAN.md`; its checkboxes are in `TODO.md`.
 2. Reproduce it; write the failing test first when the bug is in Python.
 3. Fix small, in the module that owns the behaviour.
 4. `pytest`, `node --check`, then rebuild and look at the real screen at 1440×900.
@@ -219,6 +220,8 @@ changes behaviour but leaves the documents stale is not done.
 
 ## Where the evidence lives
 
+- `PLAN.md` — the one active build plan, measured state, and which documents are historical.
+- `PRODUCT.md` — what is shipped, planned and deferred; known limits.
 - `docs/reports/ducksuite-product-progress.html` — product report, newest on top, plus the session log.
 - `docs/reports/SESSION.html` — session record: requests, 18 phases, evidence, cost model, limits.
 - `docs/duck/BYOK-PLAN.md` — bring-your-own-key/model design and rollout.
@@ -233,5 +236,9 @@ changes behaviour but leaves the documents stale is not done.
 - Do not judge fill quality from one frame. Use the benchmark, then check a real span.
 - Do not trust `check.json` after a detection change; the project must be re-Checked.
 - A full render after a cache bump can take hours. Warn before starting one.
+- Do not run a full render to prove a small fix. Render the short span that shows it; the one full
+  render is loop 4 in `PLAN.md`.
+- Saved fills stop being written under 10 GiB free disk (`SAVED_MIN_FREE`). Check `df` before a long
+  render.
 - The Whisper pack is 1.61 GB and is the only transcription path for Vietnamese. Treat a first
   run as a download step, not an instant start.

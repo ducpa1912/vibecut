@@ -144,6 +144,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-05</strong><span>11 Nov · final docs</span></div>
+      <div class="timeline-body">
+        <strong>Planning closed: one build order, and the product record now matches the build.</strong>
+        <ul class="clean">
+          <li>Independent review of code and project data: 33 of 41 clean layers sit on moving footage (50 of 64 fill seconds); fill runs on the CPU only.</li>
+          <li>The fill time estimate (<span class="mono">textfill.estimate_summary</span>) has no caller, so a multi-hour render starts with no warning. Saved fills stop below 10 GiB free; this Mac has 13 GB.</li>
+          <li><span class="mono">PLAN.md</span>: nine loops. Show the cost, prove the title on a 3 s render, measure CPU/CoreML/MPS, then one full render. No full render before loop 4.</li>
+          <li><span class="mono">PRODUCT.md</span> rewritten as shipped / planned / deferred with known limits; <span class="mono">TODO.md</span> reordered into the loops; <span class="mono">ROADMAP.md</span> marked historical.</li>
+          <li>Docs only. 83 tests pass. Next commit is code: loop 1.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-04</strong><span>11 Nov · GPU plan</span></div>
       <div class="timeline-body">
         <strong>LaMa GPU is planned with its real cost.</strong>
