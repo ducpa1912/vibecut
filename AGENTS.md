@@ -35,6 +35,124 @@ desktop app. The browser is the client; rendering happens on cloud workers.
 If a doc conflicts with `HANDOFF.md`, `HANDOFF.md` wins. If `HANDOFF.md` conflicts
 with this file on engineering workflow, this file wins.
 
+## Software factory workflow
+
+This project runs as a small software factory, not an ad-hoc chat. Every request
+has an intake, a recorded decision, a plan, an implementation, a verification and
+a ship step.
+
+```
+Intake -> Classify -> Memory -> Todo -> Contract -> Build -> Verify -> Ship -> Reflect
+```
+
+### 1. Classify the request
+
+A request is **totally new** when it introduces any of:
+
+- a new user-visible capability, panel, screen, flow or acceptance criterion;
+- a new API route, table, migration, worker route, queue, storage layout or
+  third-party integration;
+- a new data flow, billing unit, privacy rule or security boundary;
+- a new engine, model or rendering mode.
+
+Examples: “transcript panel inside the video preview”, “add logo detection”,
+“add a render queue”, “add Stripe metering”.
+
+A request is **not** totally new when it is only:
+
+- spacing, colour, typography, copy, icon or layout polish;
+- rename, reorder, refactor or dependency patch with no behaviour change;
+- a bug fix inside an existing contract;
+- a small UI/UX revision that does not add a capability.
+
+If a “small” change alters the contract, data model, acceptance or user-visible
+capability, treat it as totally new.
+
+### 2. Write the request to `memory.md` first
+
+Before implementation, append one entry:
+
+```markdown
+## REQ-YYYYMMDD-NN — short title
+
+**Class:** new capability | revision | bugfix
+**Status:** planned | in-progress | done
+**Request:** the request, near-verbatim, with the user's intent.
+**Response/Decision:** what we will build, what we will not build, and why.
+**Artifacts:** planned files, docs, migrations, endpoints, tests.
+**Verification:** how acceptance will be proven.
+**Commit:** filled in when shipped.
+```
+
+For a revision or bugfix, do not create a new REQ unless it changes the contract,
+data model, acceptance or user-visible capability. Put a short “Revision” note
+under the parent REQ instead.
+
+### 3. Write the plan to `todo.md` before implementation
+
+Add a section linked to the REQ id:
+
+```markdown
+## REQ-YYYYMMDD-NN — short title
+
+- [ ] task
+- [ ] test
+- [ ] docs/contract update
+- [ ] real-media acceptance
+```
+
+Rules:
+
+- Every task is actionable and testable.
+- Include acceptance criteria, not only implementation steps.
+- Add the real-media or live-environment check when the feature needs it.
+- Move the section to **Done** only when every checkbox is complete.
+- If work is blocked, mark it under **Blocked** with the exact missing resource.
+
+### 4. Freeze the contract before code
+
+If the request changes wire shapes, data, state machines, storage keys or
+billing, update:
+
+- `docs/duckclean/contract.md`,
+- `api/openapi.yaml` when HTTP changes,
+- `api/src/schemas.ts` / `api/src/worker-contract.ts`,
+- `worker/duckclean_worker/contract.py`,
+- a migration when Postgres changes.
+
+Do not implement against an undefined contract.
+
+### 5. Build and verify
+
+- Add tests for new behavior.
+- Run `make check` before commit.
+- Run real-media acceptance when the feature touches detection, preview or
+  render.
+- No fake media, fake progress, fake success or silent fallback.
+
+### 6. Ship and reflect
+
+- Commit code, tests and the `memory.md`/`todo.md` updates together.
+- Fill the REQ commit hash.
+- Mark the todo section done.
+- If the feature changes the product story, update `SESSION.html` at the milestone
+  boundary, not on every commit.
+
+### Source-of-truth boundaries
+
+| File | Owns |
+|---|---|
+| `AGENTS.md` | How to work; this workflow |
+| `memory.md` | What was asked and what was decided |
+| `todo.md` | What remains; actionable plan and acceptance |
+| `HANDOFF.md` | Product brief and binding constraints |
+| `FREEBUFF_HANDOFF.md` | Current takeover state |
+| `docs/duckclean/contract.md` | Wire and data contract |
+| `SESSION.html` | Historical narrative at milestones |
+
+Never use memory as a task list. Never use todo as a transcript. Keep them
+linked by the REQ id.
+
 ## Stack
 
 | Layer | Choice |

@@ -199,6 +199,20 @@ Checked items are done. Unchecked items are not done.
 - [ ] Update docs when the 600-frame cap, logo model, per-range masks or render
   engines change.
 
+## Software factory workflow
+
+- [x] Define request intake and classification in `AGENTS.md`.
+- [x] Define the `REQ-YYYYMMDD-NN` memory template.
+- [x] Define the linked todo checklist template.
+- [x] Define revision/bugfix exceptions.
+- [x] Record `REQ-20261111-01` in `memory.md`.
+- [ ] Enforce the workflow on the next totally new request before code.
+- [ ] Keep memory as decision history, not a task list.
+- [ ] Keep todo as actionable plan, not a transcript.
+- [ ] Move REQ sections to Done only when every acceptance item is complete.
+- [ ] Fill the REQ commit hash at ship time.
+- [ ] Update `SESSION.html` only at milestone boundaries.
+
 ## Merge checklist
 
 - [x] Typecheck, lint, mypy, ruff, build.

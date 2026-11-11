@@ -397,3 +397,48 @@ Current product branch before this documentation commit: `duckclean` at
 - Created `todo.md` with done and pending work.
 - Created `SESSION.html` as the full self-contained session log.
 - Linked the documents from the repo.
+
+## 19. REQ-20261111-01 — software factory workflow
+
+**Class:** new capability (process)
+**Status:** done for the workflow definition; enforced from the next new request
+**Request**
+
+> update the direction in agent.md that each time there is a new request that is
+> totally new (not things like revise the ui/ux, but detailed like i want the
+> transcript panel inside the video preview panel), and your response to that
+> request need to be write in to memory.md and what you plan to do into todo.md,
+> this to create a software factory system or a systemactic agent coding workflow
+
+**Response / decision**
+
+- Added a Software Factory Workflow to `AGENTS.md`:
+  - Intake → Classify → Memory → Todo → Contract → Build → Verify → Ship →
+    Reflect.
+  - Defined **totally new** vs revision/bugfix.
+  - Required a `REQ-YYYYMMDD-NN` entry in `memory.md` before work.
+  - Required a linked checklist in `todo.md` before work.
+  - Required contract updates before code when wire/data/state changes.
+  - Required tests, `make check`, real-media acceptance where relevant.
+  - Required code + memory + todo in the same commit.
+- The example “transcript panel inside the video preview” is a new capability,
+  not a UI polish revision.
+- Revisions that only change spacing, colour, copy, layout or dependency patch
+  do not create a new REQ unless they alter contract, data, acceptance or a
+  user-visible capability.
+
+**Artifacts**
+
+- `AGENTS.md` — workflow, classification, templates, source-of-truth boundaries.
+- `memory.md` — this entry.
+- `todo.md` — workflow enforcement checklist.
+
+**Verification**
+
+- The next totally new request must produce a REQ entry in `memory.md` and a
+  linked todo section before implementation.
+- UI-only revisions remain lightweight.
+
+**Commit**
+
+This documentation commit; see `git log --oneline -1`.
