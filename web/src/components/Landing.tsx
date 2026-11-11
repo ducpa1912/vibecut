@@ -1,4 +1,4 @@
-import { useClerk } from '@clerk/clerk-react';
+import { useClerk } from '@clerk/react';
 
 export function Landing() {
   const { openSignIn } = useClerk();

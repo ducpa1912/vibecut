@@ -97,9 +97,8 @@ variable.**
 DuckClean is **React + Vite**. Vite is the bundler, not a framework; Clerk's
 React SDK works in a Vite SPA, and Next.js is not required.
 
-- This repo currently uses `@clerk/clerk-react` (the Clerk Core 2 package).
-- Current Clerk React docs use `@clerk/react`. Moving to it is a dependency and
-  import swap, not an architecture change.
+- This repo uses the current `@clerk/react` package with Vite.
+- The deprecated `@clerk/clerk-react` package is not used.
 - Clerk also ships SDKs for Next.js, React Router, Astro, TanStack React Start,
   Vue, Nuxt, Expo, Electron, Android and iOS. DuckClean uses only the React one.
 

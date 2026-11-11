@@ -1,11 +1,4 @@
-import {
-  ClerkProvider,
-  SignedIn,
-  SignedOut,
-  UserButton,
-  useAuth,
-  useUser,
-} from '@clerk/clerk-react';
+import { ClerkProvider, Show, UserButton, useAuth, useUser } from '@clerk/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Api,
@@ -31,12 +24,12 @@ export function App() {
 
   return (
     <ClerkProvider publishableKey={publishableKey}>
-      <SignedOut>
+      <Show when="signed-out">
         <Landing />
-      </SignedOut>
-      <SignedIn>
+      </Show>
+      <Show when="signed-in">
         <Workspace />
-      </SignedIn>
+      </Show>
     </ClerkProvider>
   );
 }
