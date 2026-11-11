@@ -118,6 +118,12 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 
 ## Done
 
+### 11 Nov — user-set layers are findable (`REQ-20261111-08`)
+- [x] Clean Focus `All` / `Yours N` filter, scene and strip badges
+- [x] `YOURS` badge on layer rows in Clean and Edit
+- [x] `plan_summary.mine`; Clean all toast says how many settings were kept
+- [x] Filtered rows keep the real scene index; selecting one opens the right scene
+
 ### 11 Nov — GPU default, CPU pack (`docs/teams/loop-05-gpu-default/review.md`)
 - [x] REQ-20261111-07 · GPU shipped as the default; CPU optional download, SHA-256 verified
 - [x] REQ-20261111-07 · model seeding into `models/fill`; packs and the bundle share one folder

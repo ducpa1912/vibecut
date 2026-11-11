@@ -36,6 +36,7 @@ const state = {
   selectedLayerId: '',
   proofTab: 'scenes',
   inspectorTab: 'clean',
+  cleanFilter: 'all',
   previewTime: 0,
   timelineTime: 0,
   previewCache: new Map(),
@@ -557,6 +558,14 @@ function layerState(layer) {
 
 // AI fill only looks clean while the picture under the line holds still. Check
 // measures that per line, so a layer can say when Fill is a gamble.
+function isMine(layer) {
+  return Boolean(layer) && layer.auto === false;
+}
+
+function mineLayers(layers) {
+  return (layers || []).filter(isMine);
+}
+
 function layerRisk(layer) {
   return Boolean(layer && layer.enabled !== false && layer.kind === 'fill' && layer.quality === 'moving');
 }
@@ -1569,6 +1578,7 @@ function layerListMarkup(active, layers, emptyText = 'No text detected in this s
     ${layers.length ? visible.map((item, index) => `<button class="layer-row${item.id === active?.id ? ' is-active' : ''}${item.enabled === false ? ' is-off' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
       <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
       <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
+      ${isMine(item) ? '<span class="layer-flag is-mine" title="You set this layer; Clean all keeps it">yours</span>' : ''}
       ${item.quality === 'moving' && item.enabled !== false ? `<span class="layer-flag" title="Background moves behind this line">moves</span>` : ''}
       <span class="layer-kind">${esc(layerState(item))}</span>
     </button>`).join('') : `<p class="small muted">${esc(emptyText)}</p>`}
@@ -2366,26 +2376,38 @@ function inspectorVoice() {
 /* ------------------------------------------------------------------ clean */
 
 function screenClean() {
-  const scenes = getScenes();
+  const allScenes = getScenes();
+  const mineTotal = mineLayers(state.edit?.clean || []).length;
+  const scenes = state.cleanFilter === 'mine'
+    ? allScenes.filter((item) => mineLayers(sceneLayers(item)).length)
+    : allScenes;
   const scene = currentScene();
   if (!scene) return emptyEditor();
   const layers = sceneLayers(scene);
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
-  const checked = sceneCleanCount(scenes);
+  const checked = sceneCleanCount(allScenes);
   const detectPct = Math.round(stagePct('text') * 100);
   return `<main class="screen">
     <div class="workspace clean">
       <aside class="panel">
-        <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} shown / ${scenes.length} total</span></div>
+        <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} shown / ${allScenes.length} total</span></div>
+        <div class="clean-filter">
+          <div class="segmented" style="grid-template-columns:1fr 1fr">
+            <button class="${state.cleanFilter === 'all' ? 'is-active' : ''}" type="button" data-action="clean-filter" data-filter="all">All ${allScenes.length}</button>
+            <button class="${state.cleanFilter === 'mine' ? 'is-active' : ''}" type="button" data-action="clean-filter" data-filter="mine" ${mineTotal ? '' : 'disabled'}>Yours ${mineTotal}</button>
+          </div>
+        </div>
         <div class="clean-scene-list">
-          ${scenes.map((item, index) => {
+          ${scenes.length ? '' : '<p class="small muted clean-empty">No layers you set. Clean all keeps your Fill, Blur or Off choices.</p>'}
+          ${scenes.map((item) => {
+            const at = allScenes.indexOf(item);
             const status = cleanState(item);
             const hasProof = state.previewCache.has(item.id);
             const cleaning = state.previewStatus.get(item.id) === 'cleaning';
             const failed = state.previewStatus.get(item.id) === 'failed';
-            return `<button class="clean-scene${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
+            return `<button class="clean-scene${at === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${at}">
               <img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt="">
-              <span><span class="clean-scene-title">${esc(truncate(sceneTitle(item, index), 30))}</span><span class="clean-scene-sub">${fmtTime(item.start)} – ${fmtTime(item.end)}</span></span>
+              <span><span class="clean-scene-title">${esc(truncate(sceneTitle(item, at), 30))}${mineLayers(sceneLayers(item)).length ? ' <span class="chip amber yours-chip">Yours</span>' : ''}</span><span class="clean-scene-sub">${fmtTime(item.start)} – ${fmtTime(item.end)}</span></span>
               <span class="chip ${failed ? 'red' : cleaning ? 'amber' : status === 'Layered' ? 'green' : ''}">${failed ? 'Failed' : cleaning ? 'Cleaning' : hasProof ? 'Proof' : status === 'Layered' ? 'Layered' : status}</span>
             </button>`;
           }).join('')}
@@ -2397,13 +2419,14 @@ function screenClean() {
           ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
         </section>
         <section class="panel clean-scene-strip">
-          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered</span>${sceneStripControls('clean-scenes')}</div>
+          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${allScenes.length} layered</span>${sceneStripControls('clean-scenes')}</div>
           <div class="scene-strip" id="clean-scenes">
-            ${scenes.map((item, index) => {
+            ${scenes.map((item) => {
+              const at = allScenes.indexOf(item);
               const status = cleanState(item);
-              return `<button class="scene-tile${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
-                <span class="thumb"><img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt=""><span class="tc">${pad(index + 1)}</span></span>
-                <span class="scene-label">${state.previewCache.has(item.id) ? 'Proof' : status === 'Layered' ? 'Layered' : status}</span>
+              return `<button class="scene-tile${at === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${at}">
+                <span class="thumb"><img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt=""><span class="tc">${pad(at + 1)}</span></span>
+                <span class="scene-label">${mineLayers(sceneLayers(item)).length ? 'Yours' : state.previewCache.has(item.id) ? 'Proof' : status === 'Layered' ? 'Layered' : status}</span>
               </button>`;
             }).join('')}
           </div>
@@ -2411,7 +2434,7 @@ function screenClean() {
       </section>
 
       <aside class="panel inspector">
-        <div class="panel-head"><h2>Clean</h2><span class="meta">${checked}/${scenes.length} layered</span></div>
+        <div class="panel-head"><h2>Clean</h2><span class="meta">${checked}/${allScenes.length} layered</span></div>
         <div class="inspector-body">
           <div class="field"><div class="toggle-row"><span class="small muted">Text detect</span><strong class="mono small">${detectPct}%</strong></div><div class="progress"><span style="width:${detectPct}%"></span></div></div>
           <div class="proof-pair">
@@ -4073,6 +4096,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'save-translation') await saveTranslationSettings();
     else if (action === 'choose-model-folder') chooseModelFolder();
     else if (action === 'fill-device') await setFillDevice(target.dataset.device || 'cpu');
+    else if (action === 'clean-filter') { state.cleanFilter = target.dataset.filter === 'mine' ? 'mine' : 'all'; render(); }
     else if (action === 'search') openSearch();
     else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; state.timelineTime = sourceToTimeline(state.previewTime); navigate(projectPath('edit')); }
     else if (action === 'search-project') { const id = target.dataset.project || ''; closeModal(); if (id) { await openProject(id); navigate(`project/${id}/${state.check?.state === 'done' ? 'edit' : 'check'}`); } }

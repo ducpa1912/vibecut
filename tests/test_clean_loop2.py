@@ -202,9 +202,9 @@ def test_plan_summary_counts_fill_blur_and_off() -> None:
     edit = {"clean": [
         {"kind": "fill", "enabled": True, "quality": "steady"},
         {"kind": "blur", "enabled": True, "quality": "moving"},
-        {"kind": "fill", "enabled": False, "quality": "moving"},
+        {"kind": "fill", "enabled": False, "quality": "moving", "auto": False},
     ]}
-    assert clean.plan_summary(edit) == {"fill": 1, "blur": 1, "off": 1, "moving": 2}
+    assert clean.plan_summary(edit) == {"fill": 1, "blur": 1, "off": 1, "moving": 2, "mine": 1}
 
 
 def test_top_display_type_reads_as_a_title() -> None:

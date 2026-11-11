@@ -669,6 +669,12 @@ svg { display: block; flex: 0 0 auto; }
 
 /* ---------------------------------------------------------------- clean focus */
 
+.clean-filter { padding: 0 10px 8px; }
+.clean-filter .segmented { grid-template-columns: 1fr 1fr; }
+.clean-filter .segmented button { height: 26px; font-size: 10px; }
+.yours-chip { font-size: 8px; height: 15px; padding: 0 5px; margin-left: 3px; vertical-align: middle; }
+.clean-empty { padding: 14px 12px; }
+.layer-flag.is-mine { background: #e8f0f3; color: #3f6578; }
 .clean-scene-list { display: grid; gap: 2px; max-height: calc(100vh - 190px); overflow: auto; }
 .clean-scene {
   display: grid; grid-template-columns: 54px minmax(0,1fr) 54px; gap: 9px; align-items: center;

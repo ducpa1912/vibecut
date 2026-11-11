@@ -103,6 +103,15 @@ folder, 101 tests, local cleanup of ~992 MB.
 **Outcome:** GPU default, CPU downloadable, Kokoro downloadable; final bundle rendered a 1 s clip in
 9.4 s on MPS with an OCR-clean frame.
 
+### REQ-20261111-08 · 2026-11-11
+**Request:** "i choose clean all and it said 42, but 1 is blur since i set it myself. I cannot find it on
+the timeline or on the scenes. Really hard to track"
+**Read as:** a layer the user changed must be findable in one click, not hunted through 42 layers.
+**Response:** Clean Focus gets an `All` / `Yours N` filter; scenes, strip tiles and layer rows carry a
+Yours badge; the post-Clean-all toast counts kept layers; filtered rows keep the real scene index.
+**Outcome:** the one user-set layer was found at Scene 01 · Title 01, 0.0–0.32 s, kind fill, auto
+false, text 人吃啥咪吃啥. 101 tests.
+
 ## Session log
 
 | # | Time | Request | Response |

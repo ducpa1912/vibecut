@@ -214,7 +214,7 @@ def merge_layers(existing: list[dict], fresh: list[dict]) -> list[dict]:
 
 def plan_summary(edit: dict) -> dict:
     """Counts of what Clean will do, for an honest message after a re-plan."""
-    fill = blur = off = moving = 0
+    fill = blur = off = moving = mine = 0
     for layer in edit.get("clean") or []:
         if layer.get("enabled") is False:
             off += 1
@@ -224,7 +224,9 @@ def plan_summary(edit: dict) -> dict:
             fill += 1
         if layer.get("quality") == "moving":
             moving += 1
-    return {"fill": fill, "blur": blur, "off": off, "moving": moving}
+        if layer.get("auto") is False:
+            mine += 1
+    return {"fill": fill, "blur": blur, "off": off, "moving": moving, "mine": mine}
 
 
 def patch_layer(edit: dict, layer_id: str, action: str) -> dict:
