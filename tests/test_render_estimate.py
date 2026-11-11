@@ -122,3 +122,25 @@ def test_estimate_route_answers_for_a_saved_edit(tmp_path) -> None:
     assert estimate["layers"]["fill"] == 1
     assert estimate["frames"] == 60
     assert missing.status_code == 404
+
+
+def test_one_slow_fill_does_not_hold_the_rate_up(tmp_path) -> None:
+    """Loop 3: a 35 s rate from a starved run made a 3 min clip read as 19 min."""
+    (tmp_path / textfill.RATES_FILE).write_text(
+        json.dumps({"lama_run": {"seconds": 35.0, "runs": 61}}), encoding="utf-8",
+    )
+    textfill.record_rate(tmp_path, "lama", 30, 180.0)   # 6 s a unit
+    textfill.record_rate(tmp_path, "lama", 30, 186.0)   # 6.2 s a unit
+    rate = textfill.fill_rate(tmp_path, "lama")
+
+    assert rate["measured"] is True
+    assert rate["seconds"] == 6.2
+    stored = json.loads((tmp_path / textfill.RATES_FILE).read_text(encoding="utf-8"))
+    assert stored["lama_run"]["runs"] == 63
+    assert len(stored["lama_run"]["recent"]) == 3
+
+
+def test_a_single_slow_fill_is_outvoted(tmp_path) -> None:
+    for seconds in (180.0, 186.0, 900.0, 183.0):
+        textfill.record_rate(tmp_path, "lama", 30, seconds)
+    assert textfill.fill_rate(tmp_path, "lama")["seconds"] == 6.2

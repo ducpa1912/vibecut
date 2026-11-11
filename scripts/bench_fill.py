@@ -11,6 +11,14 @@ Usage::
 
     python3 scripts/bench_fill.py --project prj_... --frames 10
     python3 scripts/bench_fill.py --project prj_... --variants baseline,wide,upscale
+    python3 scripts/bench_fill.py --project prj_... --device coreml
+    python3 scripts/bench_fill.py --project prj_... --device gpu --model ~/models/big-lama.pt
+
+``--device`` picks where LaMa runs: ``cpu`` (ONNX Runtime, the shipped path),
+``coreml`` (ONNX Runtime CoreML provider, same file) or ``gpu`` (PyTorch on MPS,
+needs torch and ``big-lama.pt``). Run one device per process so load time and
+peak memory are that device's own. The first fill is a warm-up and is timed
+apart from the rest.
 
 Nothing is written under the project; output goes to ``--out``.
 """
@@ -54,10 +62,34 @@ def _ffmpeg() -> str:
     return str(bundled)
 
 
-def _model_path(data_root: Path) -> Path:
+DEVICES = ("cpu", "coreml", "gpu")
+
+
+def _make_filler(device: str, model: Path):
+    """The filler for a device. Each has the same ``fill(area, mask)``."""
+    if device == "gpu":
+        from duckcore.engine.textfill.torch_fill import LamaGpuFiller
+
+        return LamaGpuFiller(model)
+    # lama._providers reads this when the session is made.
+    os.environ["VIBECUT_FILL_LAMA_PROVIDER"] = "coreml" if device == "coreml" else "cpu"
+    return LamaFiller(model)
+
+
+def _peak_mb() -> float:
+    import resource
+
+    # macOS reports bytes. Memory the GPU holds outside the process is not in it.
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2, 1)
+
+
+def _model_path(data_root: Path, device: str = "cpu") -> Path:
+    name = "big-lama.pt" if device == "gpu" else "lama_fp32.onnx"
     override = os.environ.get("DUCK_FILL_MODELS")
     if override:
-        return Path(override) / "lama_fp32.onnx"
+        return Path(override) / name
+    if device == "gpu":
+        return data_root / "models/fill" / name
     bundled = ROOT / "build/DuckSuite-Xcode.app/Contents/Resources/base-models/lama_fp32.onnx"
     if bundled.is_file():
         return bundled
@@ -194,7 +226,7 @@ def _apply(masks_module, variant: dict) -> None:
 
 def run(
     data_root: Path, project: str, count: int, variants: list[str], out: Path,
-    stroke: float = 0.055,
+    stroke: float = 0.055, device: str = "cpu", model: Path | None = None,
 ) -> dict:
     project_dir = data_root / "projects" / project
     check = json.loads((project_dir / "check.json").read_text())
@@ -213,7 +245,13 @@ def run(
     if not times:
         raise SystemExit("No text-free frames found.")
 
-    filler = LamaFiller(_model_path(data_root))
+    model = Path(model).expanduser() if model else _model_path(data_root, device)
+    if not model.is_file():
+        raise SystemExit(f"Model file not found: {model}")
+    started_load = time.perf_counter()
+    filler = _make_filler(device, model)
+    load_seconds = round(time.perf_counter() - started_load, 2)
+    first_seconds = None
     temp = Path(tempfile.mkdtemp(prefix="fillbench-"))
     out.mkdir(parents=True, exist_ok=True)
     results: dict[str, list[dict]] = {name: [] for name in variants}
@@ -253,6 +291,8 @@ def run(
             started = time.perf_counter()
             filled = _fill(filler, work, local_n, float(variant.get("UPSCALE", 1.0)))
             elapsed = time.perf_counter() - started
+            if first_seconds is None:
+                first_seconds = round(elapsed, 2)
             frame_out = dirty_full.copy()
             frame_out[y0:y1, x0:x1][local_n] = filled[local_n]
             # Score one fixed region for every variant: the baseline hole. A
@@ -279,9 +319,20 @@ def run(
             "seconds": round(float(np.mean([r["seconds"] for r in rows])), 2),
             "frames": len(rows),
         }
+    # The very first fill pays for warm-up; the rest say what a render pays.
+    steady = [r["seconds"] for rows in results.values() for r in rows][1:]
+    summary["_run"] = {
+        "device": device,
+        "provider": getattr(filler, "provider", device),
+        "model": model.name,
+        "load_seconds": load_seconds,
+        "first_fill_seconds": first_seconds,
+        "steady_fill_seconds": round(float(np.mean(steady)), 2) if steady else None,
+        "peak_rss_mb": _peak_mb(),
+    }
     (out / "results.json").write_text(json.dumps({"summary": summary, "rows": results}, indent=1))
     for name, rows in sheets.items():
-        _sheet(rows, out / f"sheet-{name}.jpg")
+        _sheet(rows, out / f"sheet-{name}-{device}.jpg")
     return summary
 
 
@@ -317,6 +368,10 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("/tmp/fillbench"))
     parser.add_argument("--stroke", type=float, default=0.055,
                         help="synthetic outline width as a share of box height")
+    parser.add_argument("--device", choices=DEVICES, default="cpu",
+                        help="where LaMa runs; one device per process")
+    parser.add_argument("--model", type=Path, default=None,
+                        help="model file; default is the shipped one for the device")
     args = parser.parse_args()
     variants = [name.strip() for name in args.variants.split(",") if name.strip()]
     unknown = [name for name in variants if name not in VARIANTS]
@@ -324,6 +379,7 @@ def main() -> int:
         raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
     summary = run(
         args.data_root, args.project, args.frames, variants, args.out, args.stroke,
+        args.device, args.model,
     )
     print(json.dumps(summary, indent=1))
     return 0

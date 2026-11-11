@@ -57,7 +57,7 @@ The "in the build" column follows the Done list in `TODO.md` and the code read o
 
 ### Known limits, stated plainly
 
-- **AI fill is slow.** LaMa runs per frame on the CPU. On an M1 with 8 GB, a 160 s video with 64 s of text can take hours on a cold cache. The app does not yet show that estimate before a render starts.
+- **AI fill is slow, and uneven.** LaMa runs on the CPU. On an M1 with 8 GB the review project (160 s, 60 s of text) needs about 28 min of fill, and the same job ran up to 4.6× longer when the Mac was busy. The app shows its estimate before a render starts. A GPU path measured 4.6× faster but is not in the build.
 - **AI fill is weak on moving footage.** It cannot rebuild a background it never saw. In the review project 33 of 41 text lines sit on moving footage. Those lines carry a `moves` badge.
 - **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe Vietnamese.
 - **Apple Intelligence must be enabled** for rewrite; without it the rewrite is a basic cleanup.

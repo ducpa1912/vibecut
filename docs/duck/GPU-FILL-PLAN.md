@@ -1,6 +1,11 @@
 # LaMa GPU plan
 
-Status: plan. Fill runs on the CPU today. The GPU path exists in code but cannot run in a shipped
+Status: **measured 2026-11-11, see `gpu-fill-bench.md`.** MPS is 4.6× faster than CPU on a real span;
+CoreML EP is 32× slower and is closed; torch is 587 MB here, not 2–3 GB; the cache key already
+separates devices. Packaging decision is open. The text below is the plan as written before the
+measurement.
+
+Fill runs on the CPU today. The GPU path exists in code but cannot run in a shipped
 build. This file records what is there, what to measure, and the order to change it.
 
 ## Today

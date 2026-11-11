@@ -79,6 +79,8 @@ FRAME_SECONDS = 0.08
 # how much a video moves. Earlier figures were per frame and stay out of this.
 RATE_KEYS = {"lama": "lama_run"}
 RATE_MIN_FRAMES = 60
+# How many finished fills the stored rate is the middle of.
+RATE_RECENT = 3
 RATES_FILE = "fill_rates.json"
 
 Progress = Callable[[float, str], None]
@@ -232,9 +234,17 @@ def record_rate(
     method = _rate_key(method, device)
     previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
     old = previous.get("seconds")
+    # The middle of the last few fills. One fill made while the Mac was short of
+    # memory used to sit in a running average for many renders and made every
+    # estimate several times too long.
+    recent = [float(value) for value in previous.get("recent") or [] if float(value) > 0]
+    if not recent and old:
+        recent = [float(old)]
+    recent = [*recent, rate][-RATE_RECENT:]
     stored[method] = {
-        "seconds": round(rate if not old else float(old) * 0.5 + rate * 0.5, 4),
+        "seconds": round(sorted(recent)[len(recent) // 2], 4),
         "runs": int(previous.get("runs") or 0) + 1,
+        "recent": [round(value, 4) for value in recent],
     }
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
