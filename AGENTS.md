@@ -96,7 +96,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 82 pass; 1 skips when node is not on PATH
+python3 -m pytest -q tests      # 83 pass; 1 skips when node is not on PATH
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth
@@ -120,6 +120,14 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 - The commit signing key needs a passphrase. Use `git -c commit.gpgsign=false commit`.
 - The sidecar handshake times out after 12 s. If the app window is blank, check for an orphan
   `Resources/duckcore/duckcore` process and kill it before relaunching.
+
+## Platform
+
+- The app is macOS 26.0, Apple silicon only. FoundationModels (26.0) and SpeechAnalyzer
+  (`anyAppleOS 26`) set the floor; Translation alone would allow 15.0. The target and
+  `LSMinimumSystemVersion` are 26.0. Lowering it is a feature change, not a flag.
+- The bundle is ~377 MB: LaMa 198 MB, sidecar 136 MB, ffmpeg/ffprobe 41 MB. LaMa cannot move to a
+  download without shipping an app whose main feature is missing.
 
 ## Invariants
 
@@ -156,6 +164,7 @@ changes behaviour but leaves the documents stale is not done.
 
 - `docs/reports/ducksuite-product-progress.html` — product report, newest on top, plus the session log.
 - `docs/reports/SESSION.html` — session record: requests, 18 phases, evidence, cost model, limits.
+- `docs/duck/BYOK-PLAN.md` — bring-your-own-key/model design and rollout.
 - `docs/teams/uiux-balance-01.md` — layout balance review and proposals.
 - `scripts/bench_fill.py` — fill quality benchmark with ground truth.
 - `tests/` — behaviour contract. `tests/test_clean_loop2.py` covers layer planning and the fill hole.
@@ -166,3 +175,5 @@ changes behaviour but leaves the documents stale is not done.
 - Do not judge fill quality from one frame. Use the benchmark, then check a real span.
 - Do not trust `check.json` after a detection change; the project must be re-Checked.
 - A full render after a cache bump can take hours. Warn before starting one.
+- The Whisper pack is 1.61 GB and is the only transcription path for Vietnamese. Treat a first
+  run as a download step, not an instant start.

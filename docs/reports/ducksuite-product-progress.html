@@ -125,19 +125,19 @@ ul.clean li { margin:6px 0; }
     <span class="pill"><span class="dot"></span><strong>Editor core</strong> ready</span>
     <span class="pill"><span class="dot amber"></span><strong>App Store</strong> paused by decision</span>
     <span class="pill"><span class="dot amber"></span><strong>AI fill</strong> measured limit</span>
-    <span class="pill"><span class="dot"></span><strong>82</strong> tests passing</span>
+    <span class="pill"><span class="dot"></span><strong>83</strong> tests passing</span>
     <span class="pill"><strong>1.0</strong> · build 1</span>
     <span class="pill">2026-11-11</span>
-    <span class="pill"><span class="dot"></span>latest <strong class="mono">ff1f960</strong></span>
+    <span class="pill"><span class="dot"></span>latest <strong class="mono">8683a7b</strong></span>
   </div>
 </header>
 
 <section class="section" id="latest">
-  <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Twenty-one commits since the 9 Nov snapshot. Newest first.</p></div>
+  <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Twenty-five commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">
-    <div class="card"><div class="chip done">Current</div><div class="big">82</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
-    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">21</div><p>Commits since 9 Nov, from <span class="mono">7308bbb</span> to <span class="mono">ff1f960</span>.</p></div>
+    <div class="card"><div class="chip done">Current</div><div class="big">83</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
+    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">25</div><p>Commits since 9 Nov, from <span class="mono">7308bbb</span> to <span class="mono">8683a7b</span>.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
     <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>Step left: re-run Check so the 66 ms title gets a clean layer. Captions on the current render are already gone.</p></div>
   </div>
@@ -300,7 +300,7 @@ ul.clean li { margin:6px 0; }
 
   <div class="grid g3" style="margin-top:14px">
     <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
-    <div class="card"><h3>What improved for the build</h3><p>Twenty-one commits, 82 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
+    <div class="card"><h3>What improved for the build</h3><p>Twenty-five commits, 83 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
     <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
   </div>
 
@@ -394,6 +394,14 @@ ul.clean li { margin:6px 0; }
       <tr><td class="mono">11-11 08:35</td><td>took too long status report in @caveman</td><td>Status: 4 loops done, all pushed. Render check found one defect left: the 0 s title, because Check was never re-run. Loops - Loop 1 70840e8 — ground-truth fill benchmark. Paints caption on text-free frames, runs real fill path, scores PSNR/…</td></tr>
       <tr><td class="mono">11-11 08:37</td><td>what, why do you keep checking vibecut, you&#x27;re working on ducksuite, update the progress html, and why a simple html need a server?</td><td>My mistake on the noise. Facts: - Remote is git@github.com:ducpa1912/vibecut.git . Repo name is vibecut. Product branch is ducksuite . main sits in a second worktree at ../vibecut . I only inspected it to confirm a merge would be safe. Noth…</td></tr>
       <tr><td class="mono">11-11 08:40</td><td>you&#x27;re halluciation, yes your internal browser might reject file:// but file browser can open html just fine. Ok now i asked to reivew the unbalance ux/ui, did you finish it, did you propose any fix?</td><td>Fair. HTML opens in Finder/Chrome directly; no server needed. My capture tool wanted an origin, that is all. Answer: no. The balance review was not finished and I had proposed no fixes. Now done. Review → docs/teams/uiux-balance-01.md , six…</td></tr>
+      <tr><td class="mono">11-11 09:29</td><td>review this conversation session log, to fully update the html without any information left out, include my intitial request &amp; how you response, then also write the agent.md (direction for any coding agent to work with this project ducksuit…</td><td>Done. Read the actual session DB ( session_message , session ses_e7cbc45… ) instead of reconstructing from memory, so the log is quoted, not invented. 1. docs/reports/ducksuite-product-progress.html - New section Session log — every request…</td></tr>
+      <tr><td class="mono">11-11 09:39</td><td>update the direction in agent.md that each time there is a new request that is totally new (not things like revise the ui/ux, but detailed like i want the transcript panel inside the video preview panel), and your response to that request n…</td><td>Done. AGENTS.md now defines the factory loop. 7c017ae pushed. New section: Request intake — the factory loop - Classify first: new = capability, screen, data flow or behaviour that does not exist yet. Example: &quot;put the transcript panel insi…</td></tr>
+      <tr><td class="mono">11-11 09:42</td><td>create a SESSION.html Self-contained visual session log: initial request, all 18 phases, decisions, architecture, detection evidence, cost model, M1/M2 fixes, commits, limits and next work. It is the universal truth of what is discuss, not…</td><td>Done: SESSION.html shipped and pushed ( bea26bb ), branch fast-forwarded to origin. - docs/reports/SESSION.html — self-contained dark-themed log: initial request quoted, 18 phases, decisions table, architecture diagram, detection evidence,…</td></tr>
+      <tr><td class="mono">11-11 09:51</td><td>Not sure about this: &quot;script/voice/captions, render 1080p. Local only: no DuckSuite account, no upload, no telemetry, no downloaded executable code. App Store work is PAUSED by decision; do not start it.&quot; If i sold it via apple app store there is sti…</td><td>Yes. Apple ID is required. A DuckSuite login is not. What actually happens - App Store purchase, subscription and restore are handled by StoreKit against the user&#x27;s Apple ID at the system level. You get a signed transaction; no account scre…</td></tr>
+      <tr><td class="mono">11-11 09:53</td><td>wait sell $29 once they should be able to restore purchase, right?</td><td>Yes. Restore is automatic, and it is the App Store that does it, not your app. - $29 paid app. The purchase belongs to the Apple ID. On a new Mac the App Store shows the app as already purchased and lets them download it again. No in-app &quot;R…</td></tr>
+      <tr><td class="mono">11-11 09:55</td><td>ok, then review if my ducksuite app do it, $29 app, everything with apple intelligence, apple say, apple translation, and with minimal &amp; optional models download, also need ffmpeg and several other things sidecar &amp; bundle or download option…</td><td>Audited the actual bundle. Verdict: the shape is right, three things break the $29 build. Bundle today: 377 MB Piece In app Size Licence Needed? --- --- --- --- --- LaMa lama_fp32.onnx bundled 198 MB Apache-2.0 Yes — it is the clean feature…</td></tr>
+      <tr><td class="mono">11-11 10:00</td><td>i do not plan to ship NLLB 600M int8 but can they be put optional in my setting? also on macOS 26.0, research to see the minimum os an apple sillicon chip can run this app with all feature is</td><td>NLLB as an optional download: no. CC-BY-NC-4.0 forbids commercial use. A paid app that offers the download is commercial use, even when the file comes from Hugging Face and even when it is optional. The licence covers the weights, and you w…</td></tr>
+      <tr><td class="mono">11-11 10:06</td><td>ok, then build the setting for user to bring their own model in (not explicit say any model). So they can download NLLB and use, but we do not provide any download, just the ability to plug it in. Also plan for BYOK for all the task in the…</td><td>Built. NLLB is out; the app now takes any model you point it at. NLLB answer, final: optional download is still not legal. A paid app offering the download is distribution. So the app ships nothing and links nothing. The user downloads what…</td></tr>
     </tbody>
   </table>
   <p class="muted" style="font-size:11px; margin-top:8px">Full, untrimmed requests and replies: <span class="mono">MEMORY.md</span>. Work still open: <span class="mono">TODO.md</span>.</p>
@@ -412,7 +420,7 @@ ul.clean li { margin:6px 0; }
       <h3>What this build is</h3>
       <p>A one-project Mac editor for talking-head footage. Import once, check scenes and speech, clean burned-in text, edit the script, generate or record voice, build a dub with optional music, preview proofs, and render 1080p H.264 offline.</p>
       <div class="rule"></div>
-      <p><strong>Product promise kept:</strong> no account, no upload, no telemetry, no downloaded executable code, one-time $29 purchase.</p>
+      <p><strong>Product promise kept:</strong> no DuckSuite account, no upload, no telemetry, no downloaded executable code, one-time $29 purchase.</p>
     </div>
     <div class="card">
       <h3>What changed the release conversation</h3>
@@ -535,7 +543,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 <section class="section" id="evidence">
   <div class="section-head"><h2>Verification evidence</h2><p>What was actually run. No “looks fine” claims.</p></div>
   <div class="grid g4">
-    <div class="card"><div class="big">82</div><p>Python tests pass on the current build; 52 on the 9 Nov snapshot below.</p></div>
+    <div class="card"><div class="big">83</div><p>Python tests pass on the current build; 52 on the 9 Nov snapshot below.</p></div>
     <div class="card"><div class="big">10</div><p>Latest UI screens captured from the running build.</p></div>
     <div class="card"><div class="big">3</div><p>Append integrity loops: UI, data, job API.</p></div>
     <div class="card"><div class="big">1</div><p>Signed distribution attempt: blocked at team selection.</p></div>
@@ -592,6 +600,15 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
       </div>
     </div>
   </div>
+  <div class="callout" style="margin-top:14px">
+    <strong>$29 paid app: restore is free, no login screen</strong>
+    <p>The purchase belongs to the buyer's Apple ID. The App Store itself restores the download on a new Mac; the app needs no account, no entitlement server and no “Restore” button. There is no StoreKit code in the current build. A free-then-paid model would change that: Apple requires a visible Restore Purchases control for a non-consumable in-app purchase.</p>
+  </div>
+  <div class="callout" style="margin-top:10px">
+    <strong>Platform floor: macOS 26.0, Apple silicon</strong>
+    <p>Rewrite uses FoundationModels (SDK: macOS 26.0), transcription uses SpeechAnalyzer (<span class="mono">@available(anyAppleOS 26, *)</span>), translation uses the Translation framework (macOS 15.0). The app target and <span class="mono">LSMinimumSystemVersion</span> are 26.0, so nothing older launches. Lowering it means replacing the speech API and dropping rewrite.</p>
+  </div>
+
   <div class="callout red" style="margin-top:14px">
     <strong>Actual export result</strong>
     <p class="mono" style="color:#7d2b20">$ xcodebuild -exportArchive -archivePath build/DuckSuite.xcarchive -exportPath /tmp/ducksuite-export-final -exportOptionsPlist /tmp/export-options.plist<br><br>error: exportArchive No Team Found in Archive<br>** EXPORT FAILED **</p>
@@ -668,7 +685,7 @@ GET  /api/projects/{id}/append/job         active job for reload recovery</div>
 
 <footer class="footer">
   <span>DuckSuite · Product progress and revised Phase 1 plan · 2026-11-10</span>
-  <span>82 tests · unsigned archive pass · App Store upload blocked · fill quality measured and improved</span>
+  <span>83 tests · unsigned archive pass · App Store upload blocked · fill quality measured and improved</span>
 </footer>
 
 </div>

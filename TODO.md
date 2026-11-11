@@ -30,6 +30,15 @@ a review carry the review file instead.
 - [ ] **Fill confidence per line.** `quality` is binary (steady/moving) from the mean motion. A line
   with motion 11 and one with 31 are treated the same. Consider a third level or a score.
 
+## P1 — $29 build readiness
+
+- [ ] REQ-20261111-02 · shrink the Whisper pack or make it per-language (1.61 GB today; required for `vi`)
+- [ ] REQ-20261111-02 · SHA-256 per pack file; `packs.py` currently accepts ≥98% of the expected size
+- [ ] REQ-20261111-02 · LGPL written source offer for the bundled ffmpeg, beside the licence text
+- [ ] REQ-20261111-02 · delete or prove unreachable the cloud STT paths (`groq`, `deepgram`, `openrouter`)
+- [x] REQ-20261111-02 · decide purchase shape: $29 paid app, no StoreKit, restore by Apple ID
+- [x] REQ-20261111-02 · decide platform floor: macOS 26.0, Apple silicon
+
 ## P1 — layout balance (from `docs/teams/uiux-balance-01.md`)
 
 - [ ] **Render screen restructure.** Two columns: Settings (320 px) plus Start render on the left, queue
@@ -77,10 +86,17 @@ a review carry the review file instead.
 
 - [ ] **App Store gate.** Signing identity, team, store URLs, review contact, screenshot rights, nested
   code signing. Blocked before; work intentionally stopped until the product is good.
-- [ ] **NLLB commercial licence.** CC-BY-NC-4.0. Keep it optional, or replace it before a paid build.
+- [x] **Translation licence.** Resolved by shipping no weights: the user supplies a CTranslate2 folder.
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — bring your own model
+- [x] REQ-20261111-02 · NLLB pack, download button and model names removed
+- [x] REQ-20261111-02 · native folder picker copies any CTranslate2 folder into app data and validates it
+- [x] REQ-20261111-02 · `GET /api/translation/model` reports ready/missing; legacy `nllb` setting migrates
+- [x] REQ-20261111-02 · BYOK plan at `docs/duck/BYOK-PLAN.md`
+- [x] REQ-20261111-02 · $29 restore and macOS 26 floor researched from the installed SDK
 
 ### 11 Nov — request intake
 - [x] REQ-20261111-01 · classify new request vs revision; log new ones in `MEMORY.md`

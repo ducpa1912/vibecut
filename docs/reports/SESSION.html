@@ -78,10 +78,10 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
   <p class="sub">DuckSuite, 6–11 November 2026. 132 requests, 18 phases, one branch. This file records the session itself: the words, the decisions, the evidence and the commits. The product-owner narrative lives in <span class="mono">docs/reports/ducksuite-product-progress.html</span>; when the two disagree, this one wins.</p>
   <div class="meta">
     <span class="pill"><span class="dot"></span><b>branch</b> ducksuite</span>
-    <span class="pill"><b>HEAD</b> <span class="mono">7c017ae</span></span>
-    <span class="pill"><span class="dot"></span><b>82</b> tests</span>
+    <span class="pill"><b>HEAD</b> <span class="mono">8683a7b</span></span>
+    <span class="pill"><span class="dot"></span><b>83</b> tests</span>
     <span class="pill"><b>18</b> phases</span>
-    <span class="pill"><b>132</b> requests</span>
+    <span class="pill"><b>138</b> requests</span>
     <span class="pill"><span class="dot amber"></span><b>App Store</b> paused</span>
   </div>
 </header>
@@ -309,6 +309,7 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
         <li><strong>Fixed:</strong> true first-frame read, title classification, motion flag, flash → blur, Clean-all confirm, queue scope, one import, layout balance.</li>
         <li><strong>Measured:</strong> ground-truth fill benchmark; tighter hole gives +1.1 dB PSNR at the same run time.</li>
         <li><strong>Docs:</strong> report, MEMORY, TODO, AGENTS, and the request-intake factory loop.</li>
+        <li><strong>After the log window:</strong> translation weights removed entirely; Settings takes any CTranslate2 folder; BYOK plan written; $29 restore and the macOS 26 floor confirmed from the SDK.</li>
       </ul>
     </div>
   </details>
@@ -326,6 +327,8 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
       <tr><td><b>Proofs optional</b></td><td>Review frames never gate a render.</td><td><span class="tag done">Held</span></td><td>10 Nov</td></tr>
       <tr><td><b>Whisper stays</b></td><td>Apple Speech does not transcribe Vietnamese; Whisper is the fallback.</td><td><span class="tag done">Held</span></td><td>9 Nov</td></tr>
       <tr><td><b>Fill default, blur explicit</b></td><td>No silent fallback. Moving lines are flagged; only a flash under 0.5 s defaults to blur.</td><td><span class="tag done">Held</span></td><td>10 Nov</td></tr>
+      <tr><td><b>Purchase</b></td><td>$29 paid app. Restore is automatic through the buyer's Apple ID; no in-app account and no StoreKit code.</td><td><span class="tag done">Decided</span></td><td>11 Nov</td></tr>
+      <tr><td><b>Platform</b></td><td>macOS 26.0, Apple silicon. Lowering it costs the new speech API and rewrite.</td><td><span class="tag done">Decided</span></td><td>11 Nov</td></tr>
       <tr><td><b>Request intake</b></td><td>New request → MEMORY entry + TODO plan before code; revision attaches to the request that made the thing.</td><td><span class="tag done">In force</span></td><td>11 Nov</td></tr>
     </tbody>
   </table>
@@ -441,7 +444,9 @@ Flow   Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Wel
 
 <section id="commits">
   <div class="head"><h2>Commits</h2><p>21 since the 9 Nov snapshot; the branch is the record.</p></div>
-  <div class="code">7c017ae docs(workflow): make request intake a factory loop
+  <div class="code">8683a7b feat(translation): take a user-supplied model, ship none
+bea26bb docs(session): add the visual session log
+7c017ae docs(workflow): make request intake a factory loop
 7a40d7d docs(report): date and count the current build
 ff1f960 docs: record the session, the rules and the open work
 b31b8bf fix(ui): stop scene titles covering their thumbnails
@@ -468,6 +473,33 @@ c83dfed feat(story): carry edits into stories and extend with beats
   fc37d1a · cec4b24 · a26e40a · c970e45 · 415e964 · cbc55fd · b438d2a · 9ca0515</div>
 </section>
 
+<section id="bundle">
+  <div class="head"><h2>Bundle and platform</h2><p>What ships, what downloads, and the floor it runs on. Measured on <span class="mono">8683a7b</span>.</p></div>
+  <div class="grid g4">
+    <div class="card"><div class="big">377 MB</div><p>Whole app bundle.</p></div>
+    <div class="card"><div class="big">198 MB</div><p>LaMa, bundled. Clean is the product; it cannot be a download.</p></div>
+    <div class="card"><div class="big">136 MB</div><p>Python sidecar, including 31 MB of onnxruntime.</p></div>
+    <div class="card"><div class="big">41 MB</div><p>LGPL ffmpeg + ffprobe, plus 0.8 MB dav1d.</p></div>
+  </div>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:30%">Piece</th><th style="width:14%">Where</th><th style="width:12%">Size</th><th style="width:18%">Licence</th><th style="width:26%">Note</th></tr></thead>
+    <tbody>
+      <tr><td>LaMa fill</td><td>bundled</td><td>198 MB</td><td>Apache-2.0</td><td>Required for Clean</td></tr>
+      <tr><td>Python sidecar</td><td>bundled</td><td>136 MB</td><td>PSF/MIT</td><td>onnxruntime inside</td></tr>
+      <tr><td>ffmpeg / ffprobe / dav1d</td><td>bundled</td><td>41 MB</td><td>LGPL-2.1 / BSD-2</td><td>Written source offer still missing</td></tr>
+      <tr><td>Swift helpers</td><td>bundled</td><td>0.6 MB</td><td>your code</td><td>Vision, Speech, Translation, Rewrite</td></tr>
+      <tr><td>Kokoro voices</td><td>download</td><td>325 MB</td><td>Apache-2.0</td><td>Optional; <span class="mono">say</span> is the default</td></tr>
+      <tr><td>Whisper large-v3-turbo</td><td>download</td><td>1.61 GB</td><td>MIT</td><td>Effectively required for Vietnamese</td></tr>
+      <tr><td>Translation model</td><td>user-supplied</td><td>varies</td><td>user's</td><td>No weights shipped or hosted; copied into app data</td></tr>
+    </tbody>
+  </table>
+  <div class="grid g3" style="margin-top:12px">
+    <div class="card"><h3>Platform floor</h3><p>macOS 26.0 on M1 or later. FoundationModels is macOS 26.0, SpeechAnalyzer is <span class="mono">anyAppleOS 26</span>, Translation is 15.0. Target is 26.0.</p></div>
+    <div class="card"><h3>Purchase model</h3><p>$29 paid app. Restore is handled by the App Store against the buyer's Apple ID. No DuckSuite account, no entitlement server, no StoreKit code.</p></div>
+    <div class="card"><h3>BYOM / BYOK</h3><p>Translation takes any CTranslate2 folder. Keys are planned, not shipped: <span class="mono">docs/duck/BYOK-PLAN.md</span>.</p></div>
+  </div>
+</section>
+
 <section id="limits">
   <div class="head"><h2>Limits</h2><p>What this session did not solve.</p></div>
   <div class="grid g2">
@@ -491,7 +523,9 @@ c83dfed feat(story): carry edits into stories and extend with beats
       <tr><td><b>4</b></td><td>Fill model for moving footage</td><td>Benchmark beats 23.6 dB or the licence decision is made</td></tr>
       <tr><td><b>5</b></td><td>Layout: render restructure, inspector fade, empty lanes, portrait strip</td><td>No screen ends above 85% of a 900 px window</td></tr>
       <tr><td><b>6</b></td><td>Cold render cost</td><td>A 160 s render has a visible estimate and a warm-cache path</td></tr>
-      <tr><td><b>7</b></td><td>9:16 preview at 1440 and 1280</td><td>Both sizes measured after the portrait change</td></tr>
+      <tr><td><b>7</b></td><td>Shrink the Whisper pack or make it per-language</td><td>Vietnamese works without a 1.61 GB first run</td></tr>
+      <tr><td><b>8</b></td><td>Pack checksums and the LGPL source offer</td><td>Every download verified; ffmpeg offer present</td></tr>
+      <tr><td><b>9</b></td><td>9:16 preview at 1440 and 1280</td><td>Both sizes measured after the portrait change</td></tr>
       <tr><td><b>—</b></td><td>App Store, NLLB licence, <span class="mono">main</span> merge</td><td>Paused by decision. Do not start.</td></tr>
     </tbody>
   </table>
@@ -511,7 +545,7 @@ c83dfed feat(story): carry edits into stories and extend with beats
 
 <footer>
   <span>DuckSuite · session log · 6–11 Nov 2026</span>
-  <span>HEAD 7c017ae · 82 tests · branch ducksuite</span>
+  <span>HEAD 8683a7b · 83 tests · branch ducksuite</span>
 </footer>
 
 </div>

@@ -15,7 +15,7 @@ DuckSuite does the local work on this Mac:
 - trim, reframe, edit, render 1080p at 24/30 fps
 - export MP4, SRT and a cover
 
-No account. No telemetry. No upload unless the user chooses optional cloud render.
+No DuckSuite account. No telemetry. Footage stays on the Mac: there is no upload path. Optional model packs download data only, and a translation model is supplied by the user, never by DuckSuite. App Store purchase and restore use the buyer's Apple ID; the app itself has no login.
 
 ## Status
 
