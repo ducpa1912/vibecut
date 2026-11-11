@@ -77,3 +77,11 @@ def test_caption_file_is_opt_in() -> None:
     assert captions.wants_srt(None) is False
     assert captions.wants_srt({"cues": [{"text": "x"}]}) is False
     assert captions.wants_srt({"cues": [{"text": "x"}], "srt": True}) is True
+
+
+def test_a_gpu_error_never_names_the_cpu_file(tmp_path: Path) -> None:
+    from duckcore.engine import textfill
+
+    problem = textfill.device_problem("lama", tmp_path, "gpu") or ""
+    assert "big-lama.pt" in problem or "PyTorch" in problem
+    assert "lama_fp32.onnx" not in problem

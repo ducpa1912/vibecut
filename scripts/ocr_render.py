@@ -80,11 +80,13 @@ def _tracklets(project: Path) -> list[dict]:
         text = str(item.get("text_sample") or "")
         if not text:
             continue
+        box = item.get("box") or {}
         for span in item.get("ranges") or []:
             out.append({
                 "id": item.get("id"),
                 "kind": item.get("kind"),
                 "text": text,
+                "large": bool(item.get("large")) or float(box.get("h") or 0.0) >= 0.09,
                 "start": float(span.get("start") or 0.0),
                 "end": float(span.get("end") or 0.0),
                 "y": float((item.get("box") or {}).get("y") or 0.0),
@@ -129,6 +131,10 @@ def run(render: Path, project: Path, start: float, end: float, out: Path) -> dic
                     best = None
                     score = 0.0
                     for track in tracks:
+                        # Display-size print in the scene, such as a bowl mark,
+                        # is not a removed subtitle; report it apart.
+                        if track.get("large"):
+                            continue
                         if not (track["start"] - TIME_SLACK <= at <= track["end"] + TIME_SLACK):
                             continue
                         ratio = _same(text, track["text"])

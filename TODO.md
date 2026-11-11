@@ -24,13 +24,13 @@ render takes hours on this Mac, and any fill change in loop 3 would make it cold
 - [x] range ends refined at source frame rate (`detect.refine_tracklet_edges`), never widened
 - [x] mask frame membership uses the frame start, not its centre; `textfill.VERSION` 13
 - [x] tests: last frame inside a range gets a hole; 108 pass
-- [ ] re-Check and re-render to prove zero leaks
+- [x] re-Check and re-render: 0 leaks in 4,800 frames (final render 19:15)
 
-## Loop 4 — one full render of the review project
+## Loop 4 — one full render of the review project — **done 2026-11-11**
 
-- [ ] **Render once and review**, with the loop 1 estimate on screen first. Check 0, 2, 10, 90, 157 s
+- [x] **Render once and review**, with the loop 1 estimate on screen first. Check 0, 2, 10, 90, 157 s
   and OCR a 2 s scan: no burned-in text, no outline residue, no frozen patch at a cut.
-- [ ] PLAN · record real wall-clock beside the estimate in the report row
+- [x] PLAN · record real wall-clock beside the estimate: 76 s vs 333.8 s
 
 ## Loop 5 — a better fill for moving footage
 

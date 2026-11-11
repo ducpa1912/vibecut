@@ -118,7 +118,7 @@ false, text 人吃啥咪吃啥. 101 tests.
 estimate, one fill default and an opt-in caption file.
 **Response:** internal loops: edge refinement plus an every-frame OCR leak tool; queue claim and
 engine-named errors; whole-render estimate; single GPU default; `.srt` opt-in.
-**Outcome:** in progress; final verdicts in `docs/teams/loop-06-full-render/review.md`.
+**Outcome:** pass on F1-F5 and acceptance 1-7. Final render 19:15: 0 leaks in 4,800 frames, 76 s vs 333.8 s estimate; fill/blur 72.46/0.57 -> 70.13/0.60 s; title 0.317 -> 0.067 s; 109 tests.
 
 ## Session log
 

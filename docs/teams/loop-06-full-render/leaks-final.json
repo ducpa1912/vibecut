@@ -1,0 +1,1198 @@
+{
+ "render": "/Users/happynghia/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite/projects/prj_e95348a97316/renders/ed_38a4c36a3aae_20261111-191517.mp4",
+ "range": [
+  0.0,
+  160.033
+ ],
+ "frames": 4800,
+ "frames_with_text": 237,
+ "leaks": [],
+ "leak_frames": [],
+ "scene_text": [
+  {
+   "time": 100.567,
+   "text": "ANES",
+   "confidence": 0.3
+  },
+  {
+   "time": 101.333,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 101.367,
+   "text": "AS\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 101.8,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.0,
+   "text": "NS\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.2,
+   "text": "N 5\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.233,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.367,
+   "text": "SES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.4,
+   "text": "ANES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.433,
+   "text": "SNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.5,
+   "text": "2 \u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.533,
+   "text": "SNES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 102.767,
+   "text": "SNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 103.533,
+   "text": "SNES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 103.933,
+   "text": "SNES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.133,
+   "text": "N5S\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.167,
+   "text": "NES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.2,
+   "text": "\u52a0 S\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.333,
+   "text": "N S\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.5,
+   "text": "2NES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.667,
+   "text": "\u81ea55\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.733,
+   "text": "N s\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 104.9,
+   "text": "N S",
+   "confidence": 0.3
+  },
+  {
+   "time": 105.767,
+   "text": "24S\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 105.933,
+   "text": "NE\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 106.267,
+   "text": "2 \u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 106.3,
+   "text": "2 \u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 106.333,
+   "text": "N5S\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 109.467,
+   "text": "AINNS",
+   "confidence": 0.3
+  },
+  {
+   "time": 109.6,
+   "text": "SME",
+   "confidence": 0.3
+  },
+  {
+   "time": 109.733,
+   "text": "oucS",
+   "confidence": 0.3
+  },
+  {
+   "time": 109.8,
+   "text": "SNK.S",
+   "confidence": 0.3
+  },
+  {
+   "time": 109.9,
+   "text": "ouS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 110.1,
+   "text": "oS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 110.267,
+   "text": "S.",
+   "confidence": 0.3
+  },
+  {
+   "time": 110.367,
+   "text": "3.",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.233,
+   "text": "IES\u3002",
+   "confidence": 0.5
+  },
+  {
+   "time": 114.267,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.3,
+   "text": "IES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.333,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.367,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.4,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.433,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.467,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.5,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.533,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.567,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.6,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.633,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.667,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.7,
+   "text": "NES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 114.733,
+   "text": "NES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 114.767,
+   "text": "NES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 114.8,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.833,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.867,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.9,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.933,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 114.967,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.0,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.033,
+   "text": "ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 115.067,
+   "text": "ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 115.1,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.133,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.167,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.2,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.233,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.267,
+   "text": "ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 115.3,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.333,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.367,
+   "text": "ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 115.4,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.433,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.467,
+   "text": "EES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.5,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.533,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.567,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.6,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.633,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.667,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.7,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.733,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.767,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.8,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.833,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.867,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.9,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.933,
+   "text": "ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 115.967,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.0,
+   "text": "IES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.033,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.067,
+   "text": "IES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.1,
+   "text": "NES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 116.133,
+   "text": "NES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 116.167,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.2,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.233,
+   "text": "11ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.267,
+   "text": "2ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.3,
+   "text": "DES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.333,
+   "text": "DES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.367,
+   "text": "D1ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.4,
+   "text": "DES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.433,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.467,
+   "text": "DES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.5,
+   "text": "01ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.533,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.567,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.6,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.633,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.667,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.7,
+   "text": "01ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.733,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.767,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.8,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.833,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.867,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.9,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.933,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 116.967,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.0,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.033,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.067,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.1,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.133,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.167,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.2,
+   "text": "1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.233,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.267,
+   "text": "DIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.3,
+   "text": "DIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.333,
+   "text": "DIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.367,
+   "text": "2D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.4,
+   "text": "D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.433,
+   "text": "ADIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.467,
+   "text": "AIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.5,
+   "text": "201ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.533,
+   "text": "AD1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.567,
+   "text": "A01ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.6,
+   "text": "AD1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.633,
+   "text": "A1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.667,
+   "text": "ADIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.7,
+   "text": "AD1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.733,
+   "text": "AD1ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.767,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.8,
+   "text": "4D1ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.833,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.867,
+   "text": "4D1ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.9,
+   "text": "AD1ES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.933,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 117.967,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.0,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.033,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.067,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.1,
+   "text": "4D1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.133,
+   "text": "NDIES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 118.167,
+   "text": "N01ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.2,
+   "text": "ND1ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 118.233,
+   "text": "ND1ES\u00ae",
+   "confidence": 0.5
+  },
+  {
+   "time": 118.267,
+   "text": "ND1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.3,
+   "text": "ND1ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.333,
+   "text": "201ES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.4,
+   "text": "CNES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 118.467,
+   "text": "A0NES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 119.1,
+   "text": "NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 119.133,
+   "text": "AANIES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 119.4,
+   "text": "C NNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 119.433,
+   "text": "C NNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 119.533,
+   "text": "N S\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 120.0,
+   "text": "S ANES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 121.767,
+   "text": "CNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 123.567,
+   "text": "S NNES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 123.633,
+   "text": "S NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 123.767,
+   "text": "S mNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 124.133,
+   "text": "4NEE\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 124.167,
+   "text": "S NNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 124.333,
+   "text": "S ANNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 124.433,
+   "text": "NANNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 125.5,
+   "text": "S NES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 126.167,
+   "text": "S DNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 126.733,
+   "text": "8",
+   "confidence": 0.3
+  },
+  {
+   "time": 126.8,
+   "text": "SANDNES",
+   "confidence": 0.3
+  },
+  {
+   "time": 126.9,
+   "text": "SNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 127.067,
+   "text": "SAANNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 127.1,
+   "text": "NANES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 128.967,
+   "text": "NANNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 129.033,
+   "text": "SANNIS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 129.067,
+   "text": "TANES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 129.167,
+   "text": "NES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 130.0,
+   "text": "\u2022",
+   "confidence": 0.3
+  },
+  {
+   "time": 131.567,
+   "text": "-",
+   "confidence": 0.3
+  },
+  {
+   "time": 132.267,
+   "text": "S NWS\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 133.3,
+   "text": "SANNES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 134.1,
+   "text": "\u2022",
+   "confidence": 0.3
+  },
+  {
+   "time": 134.133,
+   "text": "\u2022",
+   "confidence": 0.3
+  },
+  {
+   "time": 134.633,
+   "text": "\u2022",
+   "confidence": 0.3
+  },
+  {
+   "time": 149.967,
+   "text": "Sess tADiEs\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.0,
+   "text": "Sess cAmDvese",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.033,
+   "text": "Sess LADvES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.067,
+   "text": "Sass LADvEs\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.1,
+   "text": "Soess LANDIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.167,
+   "text": "Sess LADvES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.2,
+   "text": "Sexs LADVES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.3,
+   "text": "Sass LANDvES.",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.333,
+   "text": "Sess LAwoiEE.",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.367,
+   "text": "Sess LADiSo",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.4,
+   "text": "SRss LADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.433,
+   "text": "Sss tADs\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.467,
+   "text": "Sess LADiS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.5,
+   "text": "SRs LADES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.533,
+   "text": "Sess LADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.567,
+   "text": "Sass LAoIS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.6,
+   "text": "Sess LAnDiES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.667,
+   "text": "NRss EANDVES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.7,
+   "text": "Ness EADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.733,
+   "text": "Sass TAMDIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.833,
+   "text": "SRss LADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.867,
+   "text": "SRss TANDIS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.933,
+   "text": "SRs LADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 150.967,
+   "text": "SRss LAOIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 151.0,
+   "text": "SRs TANDIS\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 151.033,
+   "text": "Sess LADIS\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 151.1,
+   "text": "Sess tADvESo",
+   "confidence": 0.3
+  },
+  {
+   "time": 151.133,
+   "text": "Sess tAoiEso",
+   "confidence": 0.3
+  },
+  {
+   "time": 151.5,
+   "text": "NRRS EANDVES\u00ae",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.633,
+   "text": "'S,",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.667,
+   "text": "SEs LADVES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.7,
+   "text": "Nass LADiSe",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.733,
+   "text": "Sas LADES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.767,
+   "text": "2s LADIES\u3002",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.8,
+   "text": "P2s tANDNES.",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.833,
+   "text": "ass taoEs.",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.867,
+   "text": "Seas toDlEs.",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.933,
+   "text": "Sass tAovs.",
+   "confidence": 0.3
+  },
+  {
+   "time": 153.967,
+   "text": "Dass LADis.",
+   "confidence": 0.3
+  },
+  {
+   "time": 154.2,
+   "text": "DIES",
+   "confidence": 0.3
+  },
+  {
+   "time": 154.267,
+   "text": "Bss toiesn",
+   "confidence": 0.3
+  },
+  {
+   "time": 154.333,
+   "text": "CE& CAONES",
+   "confidence": 0.3
+  },
+  {
+   "time": 154.367,
+   "text": "KscwaEs",
+   "confidence": 0.3
+  }
+ ]
+}

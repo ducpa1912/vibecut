@@ -1114,7 +1114,7 @@ def refine_tracklet_edges(
     job_dir: Path,
     *,
     fps: float = 30.0,
-    window: float = 0.2,
+    window: float = 0.4,
 ) -> int:
     """Trim each line's start and end to the frames that really show it.
 
@@ -1133,6 +1133,13 @@ def refine_tracklet_edges(
     if os.environ.get("DUCK_EDGE_REFINE", "1").strip().lower() in {"0", "off", "false", "no"}:
         return 0
     if not tracklets or not vision.available() or not Path(source).is_file():
+        import sys
+
+        print(
+            f"edge refine skipped: tracklets={len(tracklets or [])} "
+            f"vision={vision.available()} source={Path(source).is_file()}",
+            file=sys.stderr,
+        )
         return 0
     ffmpeg = media.ffmpeg()
     changed = 0
@@ -1150,8 +1157,10 @@ def refine_tracklet_edges(
             # Only the end is refined: the start already reaches a full reading
             # back, and narrowing it on a missed OCR frame would show text.
             for edge, at in (("end", end),):
+                # A short card can sit far inside the padded edge (a 66 ms
+                # title ended at 0.317 s), so look further back than forward.
                 lo = max(0.0, at - window)
-                hi = at + window
+                hi = at + 0.15
                 temp = Path(tempfile.mkdtemp(prefix="edge-", dir=job_dir))
                 try:
                     subprocess.run(
@@ -1171,13 +1180,17 @@ def refine_tracklet_edges(
                             if float(line.get("confidence") or 0.0) < 0.3:
                                 continue
                             value = _normalized_text(line.get("text"))
-                            if any(value and (value in word or word in value) for word in words):
+                            if any(
+                                value and (value in word or word in value
+                                           or SequenceMatcher(None, value, word).ratio() >= 0.6)
+                                for word in words
+                            ):
                                 hit.append(lo + frame_index / fps)
                                 break
                     if not hit:
                         continue
                     if edge == "end":
-                        new = min(end + window, max(hit) + 1.0 / fps)
+                        new = min(end + 0.15, max(hit) + 1.0 / fps)
                         if new < end - 0.001 or new > end + 0.001:
                             span["end"] = round(new, 3)
                             changed += 1
@@ -1880,14 +1893,18 @@ def build_report(
     truncated = len(all_tracklets) > MAX_TRACKLETS
     tracklets = all_tracklets[:MAX_TRACKLETS]
     try:
+        import tempfile
+
         refine_tracklet_edges(
             tracklets,
             str((job.get("source") or {}).get("path") or ""),
-            Path(job_dir),
+            Path(tempfile.gettempdir()),
             fps=float((job.get("source") or {}).get("fps") or 30.0),
         )
-    except Exception:  # noqa: BLE001 - a refinement miss never fails a Check
-        pass
+    except Exception as exc:  # noqa: BLE001 - a refinement miss never fails a Check
+        import sys
+
+        print(f"edge refine skipped: {exc!r}", file=sys.stderr)
 
     requested = normalize_attestation(attestation)
     existing, source_of_attestation = _job_attestation(job)
