@@ -1078,6 +1078,7 @@ def read_text_samples(
     progress: Callable[[float, str], None] | None = None,
     start: float = 0.0,
     end: float | None = None,
+    times: list[float] | None = None,
 ) -> dict:
     """Run the timed text pass and return OCR lines with geometry.
 
@@ -1103,6 +1104,28 @@ def read_text_samples(
     )
     if not frames:
         return {"frames": [], "vision": False, "fps": fps, "duration": duration}
+    # Moments the even cadence cannot land on: frame 0, after a cut, a line
+    # that appears and goes inside one sample window.
+    extra: list[dict] = []
+    for index, at in enumerate(sorted({round(float(item), 3) for item in times or []})):
+        if at < 0 or at >= duration:
+            continue
+        name = f"extra_{index:04d}.jpg"
+        target = directory / name
+        _first_still(path, target, at)
+        if not target.is_file():
+            continue
+        extra.append({
+            "index": len(frames) + index,
+            "file": name,
+            "t": round(at, 3),
+            "start": round(at, 3),
+            "end": round(min(duration, at + 1.0 / max(0.5, float(fps))), 3),
+            "ocr_available": True,
+            "extra": True,
+        })
+    if extra:
+        frames = sorted([*frames, *extra], key=lambda item: float(item.get("start") or 0.0))
     available = vision.available()
     records: dict = {}
     if available:
@@ -1138,8 +1161,12 @@ def read_text_samples(
         "frames": samples,
         "motion": motion,
         "vision": bool(available and records),
-        "fps": round(len(samples) / duration, 4) if duration else fps,
+        "fps": (
+            round(len([item for item in samples if not item.get("extra")]) / duration, 4)
+            if duration else fps
+        ),
         "duration": round(duration, 3),
+        "extra": len(extra),
     }
 
 

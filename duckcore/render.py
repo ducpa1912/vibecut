@@ -158,6 +158,56 @@ def proof_window(start: float, duration: float, when: float, size: float = 0.6) 
     return first, last
 
 
+def _check_output(output: Path, edit: dict, meta: dict, *, source: str,
+                  inks: dict, fps: float, data_root: Path) -> dict:
+    from duckcore import inkcheck
+
+    started = time.monotonic()
+    report = inkcheck.check(output, edit, meta, source=source, fps=fps, inks=inks)
+    report["seconds"] = round(time.monotonic() - started, 1)
+    remember_check_time(data_root, int(report.get("layers") or 0), report["seconds"])
+    return report
+
+
+def _widen_edit(edit: dict, hits: list[dict]) -> dict | None:
+    """One wider range per hit layer, so a second pass can fill the leak."""
+    changed = False
+    copy = dict(edit)
+    clean = []
+    for layer in edit.get("clean") or []:
+        if not isinstance(layer, dict):
+            clean.append(layer)
+            continue
+        mine = [item for item in hits if str(item.get("layer")) == str(layer.get("id"))]
+        if not mine:
+            clean.append(layer)
+            continue
+        ranges = [dict(item) for item in layer.get("ranges") or []]
+        for hit in mine:
+            at = float(hit.get("time") or 0.0)
+            near = min(
+                ranges,
+                key=lambda item: abs(float(item.get("start") or 0.0) - at)
+                + abs(float(item.get("end") or 0.0) - at),
+                default=None,
+            )
+            if near is None:
+                ranges = [{"start": round(max(0.0, at - 0.2), 3), "end": round(at + 0.2, 3)}]
+                changed = True
+                continue
+            start = min(float(near.get("start") or 0.0), at - 0.2)
+            end = max(float(near.get("end") or 0.0), at + 0.2)
+            if start < float(near.get("start") or 0.0) - 0.001 or end > float(near.get("end") or 0.0) + 0.001:
+                near["start"] = round(max(0.0, start), 3)
+                near["end"] = round(end, 3)
+                changed = True
+        clean.append({**layer, "ranges": ranges})
+    if not changed:
+        return None
+    copy["clean"] = clean
+    return copy
+
+
 def render_frame(
     project: dict,
     edit: dict,
@@ -282,6 +332,36 @@ def remember_render_time(data_root: Path, duration: float, seconds: float) -> No
     temporary.replace(path)
 
 
+CHECK_RATE_SAMPLES = 3
+
+
+def remember_check_time(data_root: Path, layers: int, seconds: float) -> None:
+    if layers <= 0 or seconds <= 0:
+        return
+    path = Path(data_root) / RENDER_RATES_FILE
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        stored = {}
+    checks = [float(value) for value in stored.get("checks") or [] if float(value) > 0]
+    checks = [*checks, round(float(seconds) / float(layers), 4)][-CHECK_RATE_SAMPLES:]
+    stored["checks"] = checks
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(stored, indent=1), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _check_rate(data_root: Path) -> float | None:
+    try:
+        stored = json.loads((Path(data_root) / RENDER_RATES_FILE).read_text(encoding="utf-8"))
+        checks = sorted(float(value) for value in stored.get("checks") or [] if float(value) > 0)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not checks:
+        return None
+    return checks[len(checks) // 2]
+
+
 def _render_ratio(data_root: Path) -> float | None:
     ratios = sorted(_render_rates(data_root))
     if not ratios:
@@ -325,12 +405,23 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
         if str(clip.get("kind")) != "media"
     )
     ratio = _render_ratio(data_root)
-    total = round(timeline * ratio, 1) if ratio and timeline > 0 else None
+    check_layers = len([
+        layer for layer in on if layer.get("kind") in {"fill", "blur"}
+    ])
+    check_seconds = round(check_layers * (_check_rate(data_root) or 2.2), 1)
+    total = round(timeline * ratio + check_seconds, 1) if ratio and timeline > 0 else None
+    if total is not None and not int(summary.get("beats_cached") or 0):
+        # A cold render pays for every fill, so a warm whole-render ratio would
+        # hide most of the wait. Take the fill estimate plus encoding instead.
+        total = max(total, round(float(summary.get("seconds") or 0.0) + check_seconds
+                                 + timeline * 0.25, 1))
     return {
         **summary,
         "total_seconds": total,
         "total_measured": bool(total),
         "timeline_seconds": round(timeline, 1),
+        "check_layers": check_layers,
+        "check_seconds": check_seconds,
         "layers": {
             "fill": len(layers),
             "blur": sum(1 for layer in on if layer.get("kind") == "blur"),
@@ -350,6 +441,8 @@ def render_edit(
     *,
     progress: Callable[[float, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    check: bool = True,
+    _retry: bool = True,
 ) -> Path:
     from duckcore.engine import pipeline, textfill
 
@@ -375,6 +468,18 @@ def render_edit(
         raise RenderError("This edit has no clips.")
 
     layers = _fill_layers(edit)
+    inks: dict = {}
+    if check:
+        # The ink is the line's own hole and the post-render check's reference.
+        from duckcore import inkcheck
+
+        inks = inkcheck.build_inks(edit, meta, source=source, fps=float(meta.get("fps") or 30.0))
+        prepared = []
+        for layer in layers:
+            built = inks.get(str(layer.get("id")))
+            box = built.box(int(meta.get("width") or 0), int(meta.get("height") or 0)) if built else None
+            prepared.append({**layer, **({"ink_box": box} if box else {})})
+        layers = prepared
     segments: list[Path] = []
     ffmpeg = media.ffmpeg()
     try:
@@ -514,6 +619,24 @@ def render_edit(
             max(0.0, float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0))
             for clip in clips
         )
+        if check:
+            report = _check_output(
+                output, edit, meta, source=source, inks=inks,
+                fps=float(meta.get("fps") or 30.0), data_root=Path(data_root),
+            )
+            output.with_suffix(".check.json").write_text(
+                json.dumps(report, indent=1), encoding="utf-8",
+            )
+            if report.get("hits") and _retry:
+                widened = _widen_edit(edit, report["hits"])
+                if widened is not None and progress:
+                    progress(0.98, "Refilling the leftover text")
+                if widened is not None:
+                    return render_edit(
+                        project, widened, data_root,
+                        progress=progress, cancel_event=cancel_event,
+                        check=True, _retry=False,
+                    )
         remember_render_time(Path(data_root), rendered, time.monotonic() - started)
         return output
     except Exception:
@@ -811,6 +934,14 @@ class RenderQueue:
                 connection.execute("ALTER TABLE render_queue ADD COLUMN elapsed_seconds REAL DEFAULT 0")
             if "worker_pid" not in columns:
                 connection.execute("ALTER TABLE render_queue ADD COLUMN worker_pid INTEGER DEFAULT 0")
+            for name, kind in (
+                ("checked_frames", "INTEGER DEFAULT 0"),
+                ("check_hits", "INTEGER DEFAULT 0"),
+                ("check_times", "TEXT DEFAULT ''"),
+                ("check_flicker", "TEXT DEFAULT ''"),
+            ):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE render_queue ADD COLUMN {name} {kind}")
             # Requeue only work whose worker is gone. A second core starting
             # while a render runs must not put that job back in the queue.
             rows = connection.execute(
@@ -1008,7 +1139,8 @@ class RenderQueue:
         if "message" in values:
             values["message"] = _clean_message(values["message"])
         allowed = {"state", "stage", "progress", "message", "output",
-                   "estimate_seconds", "elapsed_seconds", "worker_pid"}
+                   "estimate_seconds", "elapsed_seconds", "worker_pid",
+                   "checked_frames", "check_hits", "check_times", "check_flicker"}
         fields = [key for key in values if key in allowed]
         if not fields:
             return
@@ -1062,13 +1194,24 @@ class RenderQueue:
                 if event.is_set():
                     self._update(
                         item["id"], state="cancelled", stage="Cancelled",
-                        progress=1.0, message="Render cancelled",
+                        progress=1.0, message="Render cancelled", worker_pid=0,
                     )
                 else:
+                    report = {}
+                    try:
+                        sidecar = output.with_suffix(".check.json")
+                        if sidecar.is_file():
+                            report = json.loads(sidecar.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        report = {}
                     self._update(
                         item["id"], state="done", stage="Done",
                         progress=1.0, message="Render complete", output=str(output),
                         elapsed_seconds=round(time.time() - item["created"], 1),
+                        checked_frames=int(report.get("frames") or 0),
+                        check_hits=len(report.get("hits") or []),
+                        check_times=json.dumps(report.get("times") or []),
+                        check_flicker=json.dumps(report.get("flicker") or {}),
                         worker_pid=0,
                     )
             except Exception as exc:  # noqa: BLE001

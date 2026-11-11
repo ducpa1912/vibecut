@@ -63,7 +63,7 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     allows: every spare pixel is texture the model has to invent. Blur keeps
     the wider margin, because it only has to hide the text, not rebuild it.
     """
-    box = layer.get("box") or {}
+    box = layer.get("ink_box") or layer.get("box") or {}
     x = float(box.get("x", 0.0)) * width
     y = float(box.get("y", 0.0)) * height
     w = float(box.get("w", 0.0)) * width
@@ -216,14 +216,16 @@ def frame_keys(
     """
     timed = [(layer, layer_windows(layer)) for layer in layers]
     out: list[float | None] = []
+    at = frame_start(start, fps)
+    step = 1.0 / float(fps)
     for index in range(frames):
-        at = start + index / fps
         active = [
             layer for layer, windows in timed
             if windows is None or any(low <= at < high for low, high in windows)
         ]
         plans = [layer.get("fill_keys") for layer in active]
         out.append(None if not plans or any(plan is None for plan in plans) else float(max(plans)))
+        at += step
     return out
 
 
@@ -239,6 +241,19 @@ def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
     ]
 
 
+def frame_start(start: float, fps: float) -> float:
+    """The first source frame time ffmpeg returns for a seek to ``start``.
+
+    ``-ss`` lands on the first frame at or after the requested time, so the
+    decoded grid starts there. Filling with the requested time as the first
+    frame shifts every plan by up to one frame, which put a line's first frame
+    outside its own hole.
+    """
+    if fps <= 0:
+        return float(start)
+    return math.ceil(float(start) * fps - 1e-6) / float(fps)
+
+
 def frame_rects(
     layers: Iterable[dict],
     *,
@@ -252,11 +267,14 @@ def frame_rects(
     prepared = [(layer, layer_windows(layer)) for layer in layers]
     out: list[list[Rect]] = []
     step = 1.0 / float(fps)
+    # ffmpeg seeks to the first source frame at or after ``start``, so the
+    # decoded grid is anchored there, not at the requested time. Align to it:
+    # a frame that belongs to the next line must not take this line's hole.
+    at = frame_start(start, fps)
     for index in range(int(frames)):
         # A frame holds the picture at its own start time. Using the centre here
         # dropped the last frame of a line whose range ended inside that frame,
         # and the subtitle stayed on screen for one frame.
-        at = float(start) + index * step
         rects = [
             rect
             for layer, windows in prepared
@@ -264,6 +282,7 @@ def frame_rects(
             for rect in layer_rects_at(layer, at, width, height)
         ]
         out.append(rects)
+        at += step
     return out
 
 

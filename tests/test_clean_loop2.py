@@ -292,13 +292,34 @@ def test_one_reading_is_a_flash_and_two_readings_are_not() -> None:
 
 def test_the_last_frame_inside_a_range_gets_a_hole() -> None:
     """A range that ends mid-frame must cover the frame that starts before it."""
-    start, fps = 4.75, 30.0
-    end = 7.317  # frame 77 starts at 7.3167 and still shows the line
+    # 4.7 s is on the 30 fps grid, so the decoded grid starts there too.
+    start, fps = 4.7, 30.0
+    end = 7.317  # frame 78 starts at 7.3 and still shows the line
     layer = {
         "box": {"x": 0.3, "y": 0.48, "w": 0.4, "h": 0.04},
         "ranges": [{"start": 5.75, "end": end}],
         "track": [],
     }
     table = masks.frame_rects([layer], start=start, fps=fps, frames=80, width=1080, height=1920)
-    assert table[77], "the frame at 7.3167 starts before the range end and must be filled"
-    assert not table[78], "the next frame starts after the range end"
+    assert table[78], "the frame at 7.3 starts before the range end and must be filled"
+    assert not table[79], "the next frame starts after the range end"
+
+
+def test_a_cut_between_frames_does_not_hand_the_next_line_the_wrong_hole() -> None:
+    """Loop 7: 93.733 s leaked one frame because the hole was planned 0.008 s off."""
+    fps = 30.0
+    early = {
+        "id": "early", "box": {"x": 0.269, "y": 0.48, "w": 0.444, "h": 0.035},
+        "ranges": [{"start": 92.133, "end": 93.733}], "track": [],
+    }
+    late = {
+        "id": "late", "box": {"x": 0.228, "y": 0.48, "w": 0.542, "h": 0.035},
+        "ranges": [{"start": 93.733, "end": 95.6}], "track": [],
+    }
+    table = masks.frame_rects(
+        [early, late], start=93.625, fps=fps, frames=6, width=1080, height=1920,
+    )
+    # The seek lands on 93.6333, so the frame that shows the new line is index 3.
+    assert len(table[3]) == 1
+    rect = table[3][0]
+    assert rect[0] <= int(0.228 * 1080) + 2, "the new line's own hole must cover its first frame"

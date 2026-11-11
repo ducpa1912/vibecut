@@ -38,7 +38,7 @@ DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
-VERSION = 13
+VERSION = 15
 MODEL_FILES = {"lama": "lama_fp32.onnx"}
 # The file an engine reads on the GPU.
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}
@@ -513,6 +513,7 @@ def span_key(
         "layers": [
             {
                 "box": layer.get("box"),
+                "ink_box": layer.get("ink_box"),
                 "ranges": layer.get("ranges") or [],
                 "tracklet": layer.get("tracklet_id"),
                 "mask": layer.get("mask"),

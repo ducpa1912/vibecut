@@ -31,6 +31,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import time
 import wave
 from bisect import bisect_right
@@ -41,6 +42,7 @@ import numpy as np
 
 LOGGER = logging.getLogger(__name__)
 
+from .. import ink as inkmod
 from .. import textmatch
 from . import rights
 
@@ -1162,6 +1164,8 @@ def refine_tracklet_edges(
     fps: float = 30.0,
     window: float = 0.4,
     forward: float = 0.15,
+    width: int = 0,
+    height: int = 0,
 ) -> int:
     """Move each line's end to the last frame that really shows it.
 
@@ -1171,6 +1175,7 @@ def refine_tracklet_edges(
     still there. It never widens a range past one frame.
     """
     from . import vision
+    from .textfill import mask as masks
     from duckcore import media
     import shutil
     import subprocess
@@ -1186,6 +1191,27 @@ def refine_tracklet_edges(
         return 0
     fps = max(1.0, float(fps))
     ffmpeg = media.ffmpeg()
+
+    def ink_edge(box: dict, start: float, end: float) -> tuple[float, float] | None:
+        """The line's real edges from its ink, or None when there is no ink."""
+        if width < 2 or height < 2 or end <= start:
+            return None
+        rect = masks.layer_rect({"box": box, "tracklet_id": "edge"}, width, height)
+        built = inkmod.build(source, rect, start=start, end=end, fps=fps)
+        if built is None:
+            return None
+        points = inkmod.score(source, built, start=start, end=end, fps=fps, pad=window)
+        hot = [time for time, value in points if value >= inkmod.HIT]
+        if not hot:
+            return None
+        # A line fades in over a frame or two: the frame before the first high
+        # reading still shows part of it. Reach back one frame, or that frame
+        # renders with the text and the fill never covers it.
+        return (
+            max(0.0, min(hot) - 1.0 / fps),
+            min(end + window, max(hot) + 1.0 / fps + SAMPLE_SLACK),
+        )
+
     changed = 0
     for tracklet in tracklets:
         words = textmatch.compact(tracklet.get("text_sample"))
@@ -1194,6 +1220,14 @@ def refine_tracklet_edges(
         for span in tracklet.get("ranges") or []:
             end = float(span.get("end") or 0.0)
             if end <= 0.0:
+                continue
+            edge = ink_edge(tracklet.get("box") or {}, float(span.get("start") or 0.0), end)
+            if edge is not None:
+                start, new_end = edge
+                if abs(start - float(span.get("start") or 0.0)) > 0.001 or abs(new_end - end) > 0.001:
+                    span["start"] = round(start, 3)
+                    span["end"] = round(new_end, 3)
+                    changed += 1
                 continue
             # A short card can sit far inside the padded edge (a 66 ms title
             # ended at 0.317 s), so look further back than forward.
@@ -1915,6 +1949,8 @@ def build_report(
             str((job.get("source") or {}).get("path") or ""),
             Path(tempfile.gettempdir()),
             fps=float((job.get("source") or {}).get("fps") or 30.0),
+            width=int((job.get("source") or {}).get("width") or 0),
+            height=int((job.get("source") or {}).get("height") or 0),
         )
     except Exception as exc:  # noqa: BLE001 - a refinement miss never fails a Check
         import sys
@@ -2200,6 +2236,64 @@ def _sampler_payload(value: Any) -> tuple[list[dict], bool, int, float | None]:
     return frames, bool(frames), len(frames), None
 
 
+def _accepts(function, name: str) -> bool:
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(
+        item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+
+
+def _extra_text_times(
+    path: str,
+    scenes: list[dict],
+    duration: float,
+    *,
+    fps: float,
+    window: tuple[float, float],
+    cadence: float,
+    limit: int = 180,
+) -> list[float]:
+    """Moments the 4 fps pass can miss: frame 0, after every cut, and onsets.
+
+    A line that appears and disappears inside one 0.25 s window is read only
+    if a reading lands on it. These extra stills are cheap next to a render.
+    """
+    first, last = window
+    wanted: list[float] = []
+    if first <= 0.001:
+        wanted.append(0.0)
+    step = 1.0 / max(1.0, float(fps))
+    for scene in scenes:
+        at = _number(scene.get("start"), 0.0)
+        if first <= at + step < last:
+            wanted.append(round(at + step, 3))
+    if os.environ.get("DUCK_ONSET_SCAN", "1").strip().lower() not in {"0", "off", "false", "no"}:
+        try:
+            wanted.extend(inkmod.onset_moments(path))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    grid = max(0.05, 1.0 / max(0.1, float(cadence)))
+    out: list[float] = []
+    for at in sorted(wanted):
+        if at < first or at >= last:
+            continue
+        # A reading the timed pass already takes needs no second look. It
+        # reads the frame at each grid time, not a window, so only a moment
+        # on top of one of those frames is covered.
+        phase = (at - first) % grid
+        if min(phase, grid - phase) < 0.06:
+            continue
+        if out and at - out[-1] < 0.2:
+            continue
+        out.append(round(at, 3))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _accepts_progress(function) -> bool:
     try:
         parameters = inspect.signature(function).parameters
@@ -2270,6 +2364,18 @@ def run_check(
         if scoped:
             kwargs["start"] = window_start
             kwargs["end"] = window_end
+        if _accepts(sampler, "times"):
+            extra = _extra_text_times(
+                path, scenes, duration,
+                fps=_number(source.get("fps"), 30.0),
+                window=(window_start, window_end),
+                cadence=fps,
+            )
+            if extra:
+                kwargs["times"] = extra
+                if progress:
+                    progress(0.05, f"Sampling text at {fps:g} frames a second "
+                                   f"+ {len(extra)} cut and onset frames")
         if progress and _accepts_progress(sampler):
             # Frame-level progress maps into Check's 5-65% sampling band.
             kwargs["progress"] = lambda fraction, message: progress(
@@ -2293,6 +2399,7 @@ def run_check(
             "frames": count,
             "vision": vision,
             "fps": used_fps or fps,
+            "extra": len(kwargs.get("times") or []),
         }
         if progress:
             progress(0.65, f"Read text on {count} frames")
@@ -2325,6 +2432,7 @@ def run_check(
         "vision": bool(sampled.get("vision")),
         "sampled_pass": bool(sampled.get("ran")),
         "sample_fps": round(_number(sampled.get("fps"), fps), 3),
+        "extra_frames": int(sampled.get("extra") or 0),
         "sampler_error": sampled_error,
         "audio_error": audio_error,
         "music": bool(music.get("available")),
