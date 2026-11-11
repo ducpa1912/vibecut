@@ -23,6 +23,9 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - A line over a moving background is flagged `moves`, never silently switched to blur. Only a flash
   under 0.6 s read once defaults to blur.
 - Do not hide a limit: measure it and say it in the UI.
+- Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence, so LaMa stays
+  and the `moves` warning stays. A user fill model folder (ONNX or TorchScript) replaces LaMa when set.
+- Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
 - Model packs live in app data, never in a Hugging Face cache.
 
@@ -30,7 +33,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 155 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 169 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
