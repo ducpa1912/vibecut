@@ -38,7 +38,7 @@ DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
-VERSION = 15
+VERSION = 17
 MODEL_FILES = {"lama": "lama_fp32.onnx"}
 # The file an engine reads on the GPU.
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}
@@ -63,6 +63,10 @@ LAMA_RUN_RULE = 3
 LAMA_CUT_LIMIT = 30.0
 # Pixels around the text that the motion check reads.
 LAMA_RING_PX = 24
+# Something crossed the text: this share of the picture beside it changed by
+# more than this many levels. No fill from another frame is used across that.
+LAMA_CROSS_LEVEL = 48
+LAMA_CROSS_SHARE = 0.10
 # Cost of one LaMa run per pixel it reads, as a share of a 512 square, and of
 # reading, pasting and writing one frame.
 LAMA_FRAME_UNITS = 0.02
@@ -513,7 +517,8 @@ def span_key(
         "layers": [
             {
                 "box": layer.get("box"),
-                "ink_box": layer.get("ink_box"),
+                "ink_rect": layer.get("ink_rect"),
+                "ink_key": layer.get("ink_key"),
                 "ranges": layer.get("ranges") or [],
                 "tracklet": layer.get("tracklet_id"),
                 "mask": layer.get("mask"),
@@ -944,12 +949,21 @@ def _ring_around(rects, spot, ring: int = LAMA_RING_PX) -> np.ndarray:
 
 
 def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limit: float = LAMA_MOTION_LIMIT) -> bool:
-    """Whether the picture around the text changed too much to blend across."""
+    """Whether the picture around the text changed too much to blend across.
+
+    Two ways to change: all of it a little (the camera moves), or part of it a
+    lot (a hand or chopsticks cross the text). The mean alone misses the second:
+    a fill made on the empty plate was then pasted over the hand as a pale block.
+    """
     around = ~hole[::4, ::4]
     if not around.any():
         return False
     change = np.abs(first[::4, ::4].astype(np.int16) - second[::4, ::4].astype(np.int16))
-    return float(change[around].mean()) > limit
+    near = change[around]
+    if float(near.mean()) > limit:
+        return True
+    worst = near.max(axis=-1) if near.ndim == 2 else near
+    return float((worst > LAMA_CROSS_LEVEL).mean()) > LAMA_CROSS_SHARE
 
 
 def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None, follow=False):
@@ -971,6 +985,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
     and a shot that keeps breaking it is tried less often.
     """
     failed_still = False
+    crossed = False
     follow_fails = 0
     follow_wait = 0
     source = enumerate(frames)
@@ -1115,6 +1130,11 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             failed_still = waiting[2] == rects and shown < max(run_step, 2)
             continue
         failed_still = False
+        if crossed:
+            # The last run ended because the picture changed: its fill shows
+            # what is no longer there, so nothing of it is blended in or kept.
+            last_fills = {}
+        crossed = False
         run = [first]
         run_holes = [holes]
         while len(run) < run_step:
@@ -1130,6 +1150,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             )
             if item[2] != rects or moved:
                 waiting = item
+                crossed = moved
                 break
             found = {spot: hole_on(item[0], rects, spot) for spot in spots}
             if not any(hole.any() for hole in found.values()):
@@ -1376,8 +1397,13 @@ def prepare_span(
     on_replay: Callable[[int], None] | None = None,
     device: str = DEFAULT_DEVICE,
     follow_motion: bool = False,
+    strokes: dict | None = None,
 ) -> dict | None:
     """Write (or reuse) a filled clip of ``[start, start + duration]``.
+
+    ``strokes`` maps a layer's ``ink_rect`` to its glyph holes and their source
+    frames (see ``masks.TextMasks``); the layer's ``ink_key`` names them in the
+    clip's key.
 
     Returns ``{"path", "key", "cached", "method"}``, or None when no fill
     layer touches the span. ``on_replay`` gets the frames done before the model
@@ -1436,7 +1462,10 @@ def prepare_span(
                 ]
                 for row, exact in zip(masks.frame_rects(tight_layers, **size), exact_rows)
             ]
-            finder = masks.TextMasks(tight_rows, exact_rows, width, height)
+            finder = masks.TextMasks(
+                tight_rows, exact_rows, width, height,
+                strokes=strokes, base=int(round(masks.frame_start(start, fps) * fps)),
+            )
 
     def rects_for(index: int) -> list[masks.Rect]:
         if finder is not None:

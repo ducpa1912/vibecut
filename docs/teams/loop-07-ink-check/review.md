@@ -1,3 +1,75 @@
+# Loop 7 review — revision 2, Senior PO, 2026-11-12
+
+The founder asked for a review of loop 7 and a fix. The verdict below this section ("10 of 10") does
+not stand: the leftover-text check could report a clean render that was not clean. It is rebuilt.
+
+## What was wrong
+
+| # | Fault | Proof |
+|---|---|---|
+| 1 | The check scored 0.5 s each side of a range, then dropped every hit more than 0.04 s outside it. | `inkcheck.check`, the `continue` on `time < start - 0.04 or time > end + 0.04` |
+| 2 | A range that ended early erased its own ink: the text after it was taken for scenery. The layer was then skipped without a word and counted as checked. | `ink.build` used the 0.45 s after the range as "outside" |
+| 3 | The score was a share of the whole line: two letters left of eleven scored 0.2 and were not reported. | stated in the first review as limit 1 |
+| 4 | A real leak was written off as a false alarm: the emoji of line `cl_b22a17b451` stays for 10 frames, 19.27–19.57 s, in the 16:44 render. | `rev2-emoji-19.35s-source-vs-1644-render.jpg` |
+| 5 | Layer times are source times; the check read them as output times. An edit that trims, reorders or rescales was checked on the wrong frames. | no clip map in `inkcheck` |
+| 6 | `ink.py` found ffmpeg by itself, not through `media.ffmpeg()`. In the shipped app it reads nothing, and "0 found" follows. | `ink._ffmpeg` |
+| 7 | `crop` ran before `format`: on subsampled video an odd offset is rounded and the frames come back in another shape than asked. | `ink.read_box` |
+| 8 | The "ink hole" was the ink's bounding box, padded again by `layer_rect`, then searched per frame with the whole-box fallback. Still a rectangle. | `mask.layer_rect` with `ink_box` |
+| 9 | A hit rendered the whole video again and left the failed first file in `renders/`. | `render_edit` |
+| 10 | D8 was "not shipped, no number". The pale block when chopsticks cross the text was still there. | `rev2-crossing-0.5s-before-after.jpg`, top two rows |
+
+## What it is now
+
+- **Ink** (`duckcore/ink.py`): one window of the source around the range. Strokes are the edges that
+  hold through the middle of the range. The real first and last frame come from where they switch
+  on and off. Scenery is what is there just before **and** just after the line; the next line's
+  letters are on one side only. Each letter gets its own on-screen frames; the window doubles (to
+  8 s) until every letter has an end. Dense script is cut into letter-sized parts.
+- **Check** (`duckcore/inkcheck.py`): a letter is leftover when the source shows it, the output
+  still has its strokes, and the output equals the source around them. Measured on this project:
+  untouched text differs from the source by 9–13.4 levels, a fill by 30 or more; the limit is 20.
+  Output and source are lined up from the picture around the text, per clip, at the output's size.
+  A line that cannot be judged is listed with the reason and shown on the Render screen.
+- **Fill**: the hole is each letter's strokes grown 6 px, on the frames that letter is on screen.
+  Ranges widen to the ink and never narrow. A drawn box or a brushed layer is left as the user made
+  it. When more than 10 % of the picture beside the text changes by more than 48 levels, the run
+  ends and no fill from before is blended in. `textfill.VERSION` 17.
+- **Retry**: a hit widens that layer in a copy of the edit, the failed file is removed, one refill.
+
+## Proof
+
+| Check | Result |
+|---|---|
+| Tests | 155 pass (was 127): 15 ink, 10 check, 9 fill; `node --check` clean |
+| 16:44 render, new check | 16 hits: 7.367 s, 19.27–19.57 s (emoji, 10 frames), 91.867, 91.9, 95.6, 116.367, 156.367 s |
+| 23:54 render (the loop's "final"), new check | 0 hits, 40 of 42 lines checked |
+| New cold render `ed_38a4c36a3aae_20261112-024716.mp4` | 0 leftover in 2,964 frame checks; 40 of 42 lines checked; check took 68.4 s |
+| Lines not checked | `cl_7b144258ac` (2 frames: too short to tell text from scenery), `cl_a47d0aa1c1` (no steady strokes) |
+| Hole size | 84,652,279 → 55,138,611 pixel-frames (0.65), measured on the real hole masks, guard frames included |
+| Crossing at 0.5–0.7 s | pale block gone: `rev2-crossing-0.5s-before-after.jpg`, bottom two rows |
+| Flicker (new measure: hole against a ring outside it) | max 1.82, mean 0.93, 2 lines over 1.5, none over 2.2; the 23:54 render measures max 1.77 the same way |
+| Cold render | **698 s** (11 min 38 s). The render before the crossing rule took about 5 min 30 s |
+
+## Got worse, and why
+
+- Cold render time doubled. Where something crosses the text every frame is filled alone. The
+  estimate does not count crossings; the measured fill rate now includes them.
+- The check takes 60–70 s (was 21–37 s): it reads source and output in colour and lines them up.
+
+## Not tested
+
+- No OCR pass on the new render, by the founder's instruction.
+- The Render screen's new "not checked" count in the built app. The queue field is written; the
+  line was not looked at.
+- `follow_motion` (D9): still not wired, not measured.
+- A re-Check with the new edge rule in `detect.refine_tracklet_edges`. The review project's ranges
+  are from the old rule; the render widened them from the ink. Unit tests cover the rule only.
+- The estimate against the 698 s render: the figure before the render was not recorded.
+- A source that is not constant frame rate. Frame times assume a fixed grid from 0.
+- The bowl stripe at 150 s still bends under the removed text: a model limit, loop 8.
+
+---
+
 # Loop 7 review — catch every leftover text, and fill better
 
 Senior PO brief: `BRIEF.md` in this folder. Project: `prj_e95348a97316`, edit

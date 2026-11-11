@@ -133,6 +133,12 @@ ul.clean li { margin:6px 0; }
 </header>
 
 <section class="section" id="latest">
+  <article class="entry">
+    <h3>2026-11-12 · Loop 7 revision 2 · leftover-text check rebuilt</h3>
+    <p>Review found the check could pass a render that was not clean: hits outside a range were dropped, an early range end erased the line's ink, a line was scored as a whole, and source times were read as output times. One real leak (an emoji, 10 frames at 19.27–19.57 s in the 16:44 render) had been recorded as a false alarm.</p>
+    <p>Now: each letter has its own strokes and its own frames; a letter is leftover when the output still equals the source there. The fill hole is the strokes, not a box. No fill is reused across something crossing the text.</p>
+    <p><span class="mono">155 tests</span> · new cold render: 0 leftover in 2,964 frame checks, 40 of 42 lines checked, 2 shown as not checked · hole 84.7M → 55.1M pixel-frames · cold render 698 s (was 418 s) · <span class="mono">textfill.VERSION 17</span>.</p>
+  </article>
   <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Forty-five commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">

@@ -233,3 +233,11 @@ partly filled line under 85 % is not reported; a still scene edge inside a box c
 - "Nine commits" and "74 tests" were stale in the report; brought to 11 and 82.
 - A throwaway HTTP server was started just to screenshot the report. Not needed to read the file.
 - `vibecut` was mentioned repeatedly as a merge concern; it is the remote/worktree name, not the product branch.
+
+### REQ-20261111-11 · revision 2 · 2026-11-12
+
+Senior PO review of loop 7 found the leftover-text check could pass a render that was not clean
+(hits outside the range dropped, ink erased by an early range end, whole-line score, source times
+read as output times, ffmpeg not found in the shipped app). Rebuilt: per-letter ink with its own
+frames, check of output against source, stroke-shaped hole, no fill reused across a crossing.
+`textfill.VERSION` 17, 155 tests, cold render 698 s. Detail: `docs/teams/loop-07-ink-check/review.md`.

@@ -7,21 +7,39 @@ The full contract is `AGENTS.md`. Read it first, then `PLAN.md`, `MEMORY.md`, `T
 
 - Read: `AGENTS.md`, `PLAN.md`, `MEMORY.md`, `TODO.md`, `PRODUCT.md`, and the current loop's
   `docs/teams/<loop>/BRIEF.md` / `review.md`.
-- **Never read** `old_memory.md`, `old_todo.md`, `old_plan.md`, `docs/reports/SESSION.html`,
-  `docs/reports/ducksuite-product-progress.html`, or another loop's review. The HTML reports are the
-  human's record: append to the product report with a scripted insert, never load it into context.
-- Keep the working files small: `MEMORY.md` < ~80 lines, `TODO.md` only open work, `PLAN.md` only
-  open loops. Moving closed content into `old_*.md` is part of closing a loop.
+- **Never read or search** `old_memory.md`, `old_todo.md`, `old_plan.md`: they are outdated
+  instructions, and reading them overloads the context until the session compacts.
+- **Never read** `docs/reports/SESSION.html`, `docs/reports/ducksuite-product-progress.html`, or
+  another loop's review. The two HTML files are for the human to track the work: an agent only
+  writes to them, with a scripted insert that prints nothing.
+- `PRODUCT.md`, `TODO.md` and `MEMORY.md` hold only the latest direction of the app and the work
+  that is not finished. Keep them small: `MEMORY.md` < ~80 lines, `TODO.md` only open work,
+  `PLAN.md` only open loops. Moving closed content into `old_*.md` is part of closing a loop.
+
+## OpenCode
+
+Every prompt Claude sends or queues to OpenCode runs at **high** reasoning effort. The variant goes
+on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium; do not use it.
+
+```bash
+~/.opencode/bin/opencode run -s <session> -m 'opencode-go/deepseek-v4.1-flash#high' --auto "<prompt>"
+```
+
+- One prompt at a time for each session; queue the next one behind it, never beside it.
+- Killing the `opencode run` client does not stop the work: the background service keeps running
+  the session. To stop it: `~/.opencode/bin/opencode api POST /api/session/<session>/interrupt`.
+- Do not edit the repo while an OpenCode session is working in it.
 
 ## State
 
 - Branch `ducksuite`; repo root is this directory. Never merge `main`; unrelated histories.
-- 127 tests pass. Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
+- 155 tests pass. Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
   an optional pack.
 - App Store work is paused. Do not start signing or TestFlight.
 - Planning is closed. Open loops: 5 (moving fill), 6 (code/rules), 7 (local model slots), 8 ($29
   readiness), 9 (layout balance). Next briefs sit in `docs/teams/loop-08-*` and `loop-09-*`.
-- `textfill.VERSION` 15; the last render is clean (0 hits, 0 OCR leaks).
+- `textfill.VERSION` 17; the last render has 0 leftover text, 40 of 42 lines checked. Loop 8's
+  unfinished custom-fill work is parked on branch `loop8-wip`.
 
 ## Commands
 

@@ -1194,23 +1194,22 @@ def refine_tracklet_edges(
 
     def ink_edge(box: dict, start: float, end: float) -> tuple[float, float] | None:
         """The line's real edges from its ink, or None when there is no ink."""
+        from duckcore import inkcheck
+
         if width < 2 or height < 2 or end <= start:
             return None
-        rect = masks.layer_rect({"box": box, "tracklet_id": "edge"}, width, height)
-        built = inkmod.build(source, rect, start=start, end=end, fps=fps)
+        rect = inkcheck.search_rect({"box": box}, width, height)
+        try:
+            built = inkmod.build(source, rect, start=start, end=end, fps=fps)
+        except inkmod.InkError as exc:
+            LOGGER.warning("ink edge failed near %.3f s: %s", end, exc)
+            return None
         if built is None:
             return None
-        points = inkmod.score(source, built, start=start, end=end, fps=fps, pad=window)
-        hot = [time for time, value in points if value >= inkmod.HIT]
-        if not hot:
-            return None
-        # A line fades in over a frame or two: the frame before the first high
-        # reading still shows part of it. Reach back one frame, or that frame
-        # renders with the text and the fill never covers it.
-        return (
-            max(0.0, min(hot) - 1.0 / fps),
-            min(end + window, max(hot) + 1.0 / fps + SAMPLE_SLACK),
-        )
+        # The line's own extent, not a glyph it shares with the next line. One
+        # frame of guard each side for a fading frame under the threshold.
+        step = 1.0 / fps
+        return max(0.0, built.start - step), built.end + step
 
     changed = 0
     for tracklet in tracklets:

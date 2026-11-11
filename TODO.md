@@ -6,7 +6,9 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Queue — briefs waiting
 
-- [ ] `docs/teams/loop-08-moving-fill/BRIEF.md` — read the brief, then build it as loop 8
+- [ ] `docs/teams/loop-08-moving-fill/BRIEF.md` — read the brief, then build it as loop 8.
+  Unfinished custom-fill work from the first try is on branch `loop8-wip`; it predates
+  `textfill.VERSION` 17 and must be merged by hand.
 - [ ] `docs/teams/loop-09-rules/BRIEF.md` — read the brief after loop 8 signs off
 
 ## Loop 5 — better fill for moving footage
@@ -17,8 +19,14 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
   LaMa cannot rebuild a plate it never saw; 32 of 42 lines are `moving`.
 - [ ] Alternative without a licence: the custom ONNX fill slot (loop 7).
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
-- [ ] REQ-20261111-11 · D8 per-frame fill where the picture changes fast: no measured win yet.
 - [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
+- [ ] REQ-20261111-11 · the estimate does not count the extra fills where something crosses the
+  text: cold render 698 s. Count crossings in Check, or show the range.
+- [ ] REQ-20261111-11 · 48 filled letter-frames still show strokes in the output (differs from the
+  source by 30+, so not leftover text): look at them, decide if it is outline residue.
+- [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
+  (no steady strokes). A short OCR read of just those frames would close it.
+- [ ] REQ-20261111-11 · the Render screen's "not checked" count was not looked at in the built app.
 
 ## Loop 6 — make the code match the rules
 

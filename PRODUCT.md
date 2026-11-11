@@ -40,11 +40,13 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
   the frame after every cut and onset moments.
 - **Edit** is a three-panel desk (scenes, preview with transcript overlay, inspector) over one
   timeline, with focus modes for Script, Audio, SFX and Clean.
-- **Clean** gives one layer per text line: LaMa fill, Blur or Off. The fill hole is the line's own
-  ink, grown 6 px. A line over a moving background is flagged `moves`.
+- **Clean** gives one layer per text line: LaMa fill, Blur or Off. The fill hole is each letter's
+  own strokes, grown 6 px, for as long as that letter is on screen. A line over a moving background
+  is flagged `moves`.
 - **Preview** plays before / compare / after. Proofs are optional; render never waits for one.
 - **Render** writes one 1080p MP4 at the source aspect, 24 or 30 fps, through a local queue, then
-  scores every clean layer for leftover text and reports frames checked, hits and flicker.
+  judges every cleaned letter on every frame near its line against the source, and reports frames
+  checked, leftover found, lines it could not check, and flicker.
 
 ### Shipped, planned, deferred
 
@@ -52,7 +54,7 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 |---|---|---|---|
 | Import | One local file, picker or Finder drag; append to the same project | Creator-readable error copy (loop 8) | URL / path import |
 | Check | Scenes, transcript, Vision OCR, stories, true first frame, cut/onset stills | — | Faces, saliency, music as product features |
-| Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, post-render ink check with one refill | Better fill on moving footage (loop 5) | Model picker for the default |
+| Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, stroke-shaped hole, post-render letter check with one refill | Better fill on moving footage (loop 5) | Model picker for the default |
 | Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy), captions + SRT | Rewrite without the hidden Ollama fallback (loop 6) | Publish kit, titles, hashtags |
 | Voice | macOS voices, Kokoro pack, dub, music and SFX on one audio track | Manual microphone test (loop 8) | Voice cloning |
 | Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Grading, LUTs, keyframes |
@@ -64,11 +66,11 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 
 - **LaMa cannot rebuild a background it never saw.** Most lines sit on moving footage; those carry a
   `moves` badge and can smear.
-- **The leftover-text check reads whole lines.** A partly filled line under 85 % is not reported, and
-  a still scene edge inside a box can score as ink; a one-frame flash and scenery are
-  indistinguishable without OCR. The Render screen says both.
-- **GPU fill is fast, not instant.** Cold render on the review project: 418 s; CPU fill is 4.6× slower
-  or worse under load.
+- **The leftover-text check judges only lines that have a clean layer.** A line under 5 frames long,
+  or with no steady strokes, cannot be told from scenery: it is shown as "not checked", never as
+  clean. Text that Check did not find is not judged.
+- **GPU fill is fast, not instant.** Cold render on the review project: 698 s (11 min 38 s) for
+  160 s of video; CPU fill is 4.6× slower or worse under load.
 - **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe it.
 - **Apple Intelligence must be enabled** for rewrite; without it the rewrite is a basic cleanup.
 - **macOS 26 only.**

@@ -9,11 +9,15 @@ in `PLAN.md` in order.
 The session compacts when too much is pulled in. Read the four working documents, this contract, and
 the current loop's `BRIEF.md` and `review.md`. Nothing else.
 
-- **Never open** `old_memory.md`, `old_todo.md`, `old_plan.md`. They are frozen snapshots; `grep` them
-  only if the human asks for a specific old fact.
-- **Never read** `docs/reports/SESSION.html` or `docs/reports/ducksuite-product-progress.html` into
-  context, and never read another loop's review. They are the human's tracking record: you append to
-  the report with a scripted insert and print nothing, and you do not load them to "get up to speed".
+- **Never open, print or search** `old_memory.md`, `old_todo.md`, `old_plan.md`. They are outdated
+  instructions kept as frozen snapshots; nothing in them is a rule or a task any more. Write to them
+  only to archive closed content.
+- **Never read** `docs/reports/SESSION.html` or `docs/reports/ducksuite-product-progress.html`, and
+  never read another loop's review. The two HTML files are for the human to track the work: an agent
+  only writes to them, with a scripted insert at the known anchor that prints nothing. Do not load
+  them to "get up to speed".
+- `PRODUCT.md`, `TODO.md` and `MEMORY.md` hold only the latest direction of the app and the work
+  that is not finished. Anything done or superseded leaves them in the commit that closes it.
 - **Keep the working documents small.** `MEMORY.md` stays under ~80 lines, `TODO.md` lists only open
   work, `PLAN.md` only open loops. When a loop closes, move its request entry, done items and closed
   plan text into the matching `old_*.md` in the same commit. Archives are write-only for agents.
@@ -257,10 +261,10 @@ stay current and small. A commit that changes behaviour but leaves the documents
 
 Working documents (read these): `PLAN.md`, `MEMORY.md`, `TODO.md`, `PRODUCT.md`, this file.
 
-- `old_memory.md`, `old_todo.md`, `old_plan.md` — frozen history. **Agents do not read them.**
+- `old_memory.md`, `old_todo.md`, `old_plan.md` — outdated, frozen. **Agents do not read or search them.**
 - `docs/reports/ducksuite-product-progress.html` — the human's product report, newest on top.
   **Append only; never read into context.**
-- `docs/reports/SESSION.html` — the human's session record. **Do not read; do not edit unless asked.**
+- `docs/reports/SESSION.html` — the human's session record. **Write only, scripted insert; never read.**
 - `docs/teams/<loop>/BRIEF.md` and `review.md` — the current loop only.
 - `docs/duck/BYOK-PLAN.md` — bring-your-own-key/model design and rollout.
 - `docs/duck/GPU-FILL-PLAN.md` — LaMa on CoreML/MPS/cloud, with the packaging cost.

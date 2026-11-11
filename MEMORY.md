@@ -30,19 +30,22 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 127 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 155 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
-| Fill | `textfill.VERSION` 15, GPU; hole = the line's ink, grown 6 px |
-| Leftover-text check | 42 layers, ≈ 21–37 s after a render; `ink.HIT` 0.85 |
-| Last render | `ed_38a4c36a3aae_20261111-235452.mp4`: 0 hits in 2,936 frames, 0 OCR leaks in 4,780 |
-| Cold render | 418.2 s against a 420.8 s estimate |
+| Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
+| Leftover-text check | per letter, per frame, output against source; 40 of 42 lines checked, ≈ 60–70 s; `inkcheck.SAME` 20 (untouched text measures 9–13.4, a fill 30+) |
+| Last render | `ed_38a4c36a3aae_20261112-024716.mp4`: 0 leftover in 2,964 frame checks; 2 lines not checked, shown with the reason |
+| Cold render | 698 s (was 418 s): every frame is filled alone where something crosses the text. Estimate before this render was not recorded |
 
 ## Known limits that shape the next loops
 
-- The ink check reads whole lines: a partly filled line under 85 % is not reported, and a still
-  scene edge inside a box can score as ink.
-- A one-frame text flash and scenery are indistinguishable without OCR.
+- The leftover check judges only lines that have a clean layer and steady strokes. A line under
+  5 frames long, or with no steady strokes, is counted as "not checked", never as clean. Text that
+  Check never found has no layer and is not judged.
+- A steady shot cut at both ends of a line: scenery in the box cannot be told from text by time, so
+  the hole there is a little larger than the letters.
+- The estimate does not know where something crosses the text; the fill rate it learns includes it.
 - LaMa cannot rebuild a background it never saw; most lines sit on moving footage.
 - Vietnamese transcription needs the 1.61 GB Whisper pack. macOS 26.0, Apple silicon only.
 

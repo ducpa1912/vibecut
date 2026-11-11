@@ -63,7 +63,11 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     allows: every spare pixel is texture the model has to invent. Blur keeps
     the wider margin, because it only has to hide the text, not rebuild it.
     """
-    box = layer.get("ink_box") or layer.get("box") or {}
+    exact = layer.get("ink_rect")
+    if exact:
+        # The line's own strokes, already grown: no margin is added.
+        return tuple(int(value) for value in exact)
+    box = layer.get("box") or {}
     x = float(box.get("x", 0.0)) * width
     y = float(box.get("y", 0.0)) * height
     w = float(box.get("w", 0.0)) * width
@@ -530,7 +534,14 @@ class TextMasks:
 
     WINDOW = 2
 
-    def __init__(self, tight: list[list[Rect]], exact: list[list[Rect]], width: int, height: int):
+    def __init__(self, tight: list[list[Rect]], exact: list[list[Rect]], width: int, height: int,
+                 *, strokes: dict | None = None, base: int = 0):
+        # ``strokes`` maps a rect to [(first frame, last frame, hole)]: a line
+        # whose strokes are known is filled on exactly those pixels, on exactly
+        # those source frames, and its frames are not searched for text.
+        # ``base`` is the source frame of index 0.
+        self.strokes = strokes or {}
+        self.base = int(base)
         self.tight = tight
         self.exact = exact
         self.width = width
@@ -542,6 +553,13 @@ class TextMasks:
         rows = []
         for rect in set(self.tight[min(index, len(self.tight) - 1)]):
             x0, y0, x1, y1 = rect
+            pieces = self.strokes.get(rect)
+            if pieces is not None:
+                at = self.base + index
+                alive = [hole for first, last, hole in pieces if first <= at <= last]
+                if alive:
+                    rows.append((rect, np.logical_or.reduce(alive)))
+                continue
             # The letters' outline and shadow belong to the hole too.
             grow = max(
                 self.grow,

@@ -159,53 +159,103 @@ def proof_window(start: float, duration: float, when: float, size: float = 0.6) 
 
 
 def _check_output(output: Path, edit: dict, meta: dict, *, source: str,
-                  inks: dict, fps: float, data_root: Path) -> dict:
+                  inks: dict, fps: float, data_root: Path,
+                  size: tuple[int, int] | None = None) -> dict:
     from duckcore import inkcheck
 
     started = time.monotonic()
-    report = inkcheck.check(output, edit, meta, source=source, fps=fps, inks=inks)
+    report = inkcheck.check(output, edit, meta, source=source, inks=inks, fps=fps, size=size)
     report["seconds"] = round(time.monotonic() - started, 1)
     remember_check_time(data_root, int(report.get("layers") or 0), report["seconds"])
     return report
 
 
-def _widen_edit(edit: dict, hits: list[dict]) -> dict | None:
-    """One wider range per hit layer, so a second pass can fill the leak."""
-    changed = False
-    copy = dict(edit)
+def _merge_spans(spans: list[tuple[float, float]]) -> list[dict]:
+    out: list[list[float]] = []
+    for start, end in sorted(spans):
+        if out and start <= out[-1][1] + 1e-6:
+            out[-1][1] = max(out[-1][1], end)
+        else:
+            out.append([start, end])
+    return [{"start": round(start, 3), "end": round(end, 3)} for start, end in out]
+
+
+def _inked_layers(layers: list[dict], inks: dict, meta: dict) -> tuple[list[dict], dict]:
+    """Fill layers with their strokes as the hole, and the strokes by rect.
+
+    A scan layer whose ink is known is filled on its glyphs' own pixels, and for
+    as long as each glyph is really on screen: the range is widened to the ink,
+    never narrowed. A drawn box or a brush stroke means "remove this area" and
+    is left as the user made it.
+    """
+    import hashlib
+
+    import numpy as np
+
+    from duckcore import inkcheck
+    from duckcore.engine.textfill import mask as masks
+
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 30.0)
+    out: list[dict] = []
+    strokes: dict = {}
+    for layer in layers:
+        built = (inks.get(str(layer.get("id"))) or {}).get("inks") or []
+        found = inkcheck.layer_strokes(built) if built and masks.uses_text_mask(layer, width, height) else None
+        if found is None or not found[1]:
+            out.append(layer)
+            continue
+        rect, pieces = found
+        digest = hashlib.sha1(repr(rect).encode())
+        for first, last, hole in pieces:
+            digest.update(f"{first}:{last}:".encode())
+            digest.update(np.packbits(hole).tobytes())
+        spans = [
+            (float(item.get("start") or 0.0), float(item.get("end") or 0.0))
+            for item in layer.get("ranges") or []
+        ]
+        # One frame of guard each side: a fading frame under the threshold.
+        spans += [(max(0.0, (first - 1) / fps), (last + 2) / fps) for first, last, _hole in pieces]
+        strokes.setdefault(rect, []).extend(pieces)
+        prepared = {
+            **layer, "ink_rect": list(rect), "ink_key": digest.hexdigest()[:16],
+            "ranges": _merge_spans(spans),
+        }
+        # The strokes do not move, so the box does not follow a track.
+        prepared.pop("track", None)
+        out.append(prepared)
+    return out, strokes
+
+
+def _widen_edit(edit: dict, hits: list[dict], fps: float) -> dict | None:
+    """A copy of the edit whose layers also cover the frames that kept text."""
+    by_layer: dict[str, list[float]] = {}
+    for hit in hits:
+        by_layer.setdefault(str(hit.get("layer")), []).append(
+            float(hit.get("source_time", hit.get("time")) or 0.0)
+        )
+    if not by_layer:
+        return None
+    step = 1.0 / max(1.0, float(fps))
     clean = []
+    changed = False
     for layer in edit.get("clean") or []:
-        if not isinstance(layer, dict):
+        times = by_layer.get(str(layer.get("id"))) if isinstance(layer, dict) else None
+        if not times:
             clean.append(layer)
             continue
-        mine = [item for item in hits if str(item.get("layer")) == str(layer.get("id"))]
-        if not mine:
-            clean.append(layer)
-            continue
-        ranges = [dict(item) for item in layer.get("ranges") or []]
-        for hit in mine:
-            at = float(hit.get("time") or 0.0)
-            near = min(
-                ranges,
-                key=lambda item: abs(float(item.get("start") or 0.0) - at)
-                + abs(float(item.get("end") or 0.0) - at),
-                default=None,
-            )
-            if near is None:
-                ranges = [{"start": round(max(0.0, at - 0.2), 3), "end": round(at + 0.2, 3)}]
-                changed = True
-                continue
-            start = min(float(near.get("start") or 0.0), at - 0.2)
-            end = max(float(near.get("end") or 0.0), at + 0.2)
-            if start < float(near.get("start") or 0.0) - 0.001 or end > float(near.get("end") or 0.0) + 0.001:
-                near["start"] = round(max(0.0, start), 3)
-                near["end"] = round(end, 3)
-                changed = True
+        spans = [
+            (float(item.get("start") or 0.0), float(item.get("end") or 0.0))
+            for item in layer.get("ranges") or []
+        ]
+        spans += [(max(0.0, at - 2 * step), at + 3 * step) for at in times]
+        ranges = _merge_spans(spans)
+        changed = changed or ranges != _merge_spans(spans[:len(layer.get("ranges") or [])])
         clean.append({**layer, "ranges": ranges})
     if not changed:
         return None
-    copy["clean"] = clean
-    return copy
+    return {**edit, "clean": clean}
 
 
 def render_frame(
@@ -469,17 +519,15 @@ def render_edit(
 
     layers = _fill_layers(edit)
     inks: dict = {}
+    strokes: dict = {}
     if check:
         # The ink is the line's own hole and the post-render check's reference.
         from duckcore import inkcheck
 
-        inks = inkcheck.build_inks(edit, meta, source=source, fps=float(meta.get("fps") or 30.0))
-        prepared = []
-        for layer in layers:
-            built = inks.get(str(layer.get("id")))
-            box = built.box(int(meta.get("width") or 0), int(meta.get("height") or 0)) if built else None
-            prepared.append({**layer, **({"ink_box": box} if box else {})})
-        layers = prepared
+        if progress:
+            progress(0.0, "Reading the text strokes")
+        inks = inkcheck.build_inks(edit, meta, source=source)
+        layers, strokes = _inked_layers(layers, inks, meta)
     segments: list[Path] = []
     ffmpeg = media.ffmpeg()
     try:
@@ -540,6 +588,7 @@ def render_edit(
                     data_root=data_root,
                     ffmpeg=ffmpeg,
                     device=device,
+                    strokes=strokes,
                     cancel_event=cancel_event,
                     progress=(
                         (lambda fraction, message: progress(
@@ -620,23 +669,28 @@ def render_edit(
             for clip in clips
         )
         if check:
+            if progress:
+                progress(0.97, "Checking every cleaned line for leftover text")
             report = _check_output(
                 output, edit, meta, source=source, inks=inks,
-                fps=float(meta.get("fps") or 30.0), data_root=Path(data_root),
+                fps=float(target_fps), data_root=Path(data_root), size=(out_w, out_h),
             )
-            output.with_suffix(".check.json").write_text(
-                json.dumps(report, indent=1), encoding="utf-8",
-            )
+            sidecar = output.with_suffix(".check.json")
             if report.get("hits") and _retry:
-                widened = _widen_edit(edit, report["hits"])
-                if widened is not None and progress:
-                    progress(0.98, "Refilling the leftover text")
+                widened = _widen_edit(edit, report["hits"], float(meta.get("fps") or 30.0))
                 if widened is not None:
+                    if progress:
+                        progress(0.98, "Refilling the leftover text")
+                    # This file is the failed first pass of this same render,
+                    # not a render the user asked to keep.
+                    output.unlink(missing_ok=True)
                     return render_edit(
                         project, widened, data_root,
                         progress=progress, cancel_event=cancel_event,
                         check=True, _retry=False,
                     )
+            report["retried"] = not _retry
+            sidecar.write_text(json.dumps(report, indent=1), encoding="utf-8")
         remember_render_time(Path(data_root), rendered, time.monotonic() - started)
         return output
     except Exception:
@@ -939,6 +993,7 @@ class RenderQueue:
                 ("check_hits", "INTEGER DEFAULT 0"),
                 ("check_times", "TEXT DEFAULT ''"),
                 ("check_flicker", "TEXT DEFAULT ''"),
+                ("check_unchecked", "INTEGER DEFAULT 0"),
             ):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE render_queue ADD COLUMN {name} {kind}")
@@ -1140,7 +1195,8 @@ class RenderQueue:
             values["message"] = _clean_message(values["message"])
         allowed = {"state", "stage", "progress", "message", "output",
                    "estimate_seconds", "elapsed_seconds", "worker_pid",
-                   "checked_frames", "check_hits", "check_times", "check_flicker"}
+                   "checked_frames", "check_hits", "check_times", "check_flicker",
+                   "check_unchecked"}
         fields = [key for key in values if key in allowed]
         if not fields:
             return
@@ -1209,9 +1265,10 @@ class RenderQueue:
                         progress=1.0, message="Render complete", output=str(output),
                         elapsed_seconds=round(time.time() - item["created"], 1),
                         checked_frames=int(report.get("frames") or 0),
-                        check_hits=len(report.get("hits") or []),
+                        check_hits=len(report.get("times") or []),
                         check_times=json.dumps(report.get("times") or []),
                         check_flicker=json.dumps(report.get("flicker") or {}),
+                        check_unchecked=len(report.get("unchecked") or []),
                         worker_pid=0,
                     )
             except Exception as exc:  # noqa: BLE001
