@@ -7,8 +7,10 @@ back with the selected regions filled in. Rendering runs in the cloud, so a
 phone can complete the entire flow.
 
 `HANDOFF.md` is the binding brief. `FREEBUFF_HANDOFF.md` is the takeover brief
-for the next coding agent. `docs/duckclean/contract.md` is the frozen M0
-contract. `docs/duckclean/infrastructure.md` says exactly what Clerk, R2,
+for the next coding agent. `AGENTS.md` is the local working agreement.
+`memory.md` is the request/response history. `todo.md` is the done/not-done
+list. `SESSION.html` is the full visual session log. `docs/duckclean/contract.md`
+is the frozen M0 contract. `docs/duckclean/infrastructure.md` says exactly what Clerk, R2,
 Postgres and Hyperdrive are, what exists, and what must be created.
 `docs/duckclean/providers.md` compares current auth, storage and Postgres
 prices. `docs/duckclean/cost-model.md` is the three-scale hosting and worker

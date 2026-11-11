@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DuckClean — session log</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #14171a;
+        --panel: #1b2026;
+        --panel-2: #222930;
+        --hair: #2b333a;
+        --paper: #e9e4d9;
+        --muted: #98a1a6;
+        --vermilion: #e4552b;
+        --slate: #708ca2;
+        --amber: #c9963c;
+        --green: #4e8f6b;
+        --red: #c4453c;
+        --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(
+            1200px 700px at 70% -10%,
+            rgba(112, 140, 162, 0.14),
+            transparent 60%
+          ),
+          var(--ink);
+        color: var(--paper);
+        font: 16px/1.6 var(--sans);
+      }
+      a {
+        color: var(--slate);
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--paper);
+      }
+      .wrap {
+        width: min(100%, 72rem);
+        margin: 0 auto;
+        padding: 2rem 1.25rem 5rem;
+      }
+      header.hero {
+        border-bottom: 1px solid var(--hair);
+        padding-bottom: 1.5rem;
+        margin-bottom: 2rem;
+      }
+      .kicker {
+        color: var(--vermilion);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0.5rem 0 0.4rem;
+        font-size: clamp(2rem, 6vw, 4rem);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+      .sub {
+        max-width: 64ch;
+        color: var(--muted);
+        font-size: 1.06rem;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.25rem;
+        margin-top: 1rem;
+        color: var(--muted);
+        font: 0.8rem/1.4 var(--mono);
+      }
+      .pill {
+        border: 1px solid var(--hair);
+        border-radius: 3px;
+        padding: 0.15rem 0.45rem;
+      }
+      .pill.ok {
+        color: var(--green);
+        border-color: color-mix(in srgb, var(--green) 55%, var(--hair));
+      }
+      .pill.warn {
+        color: var(--amber);
+        border-color: color-mix(in srgb, var(--amber) 55%, var(--hair));
+      }
+      nav.toc {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        gap: 0.4rem 1.5rem;
+        margin: 1.5rem 0 2.5rem;
+        padding: 1rem 1.25rem;
+        border: 1px solid var(--hair);
+        border-radius: 6px;
+        background: var(--panel);
+      }
+      nav.toc a {
+        display: block;
+        padding: 0.15rem 0;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.88rem;
+      }
+      nav.toc a:hover {
+        color: var(--paper);
+      }
+      section {
+        margin: 3rem 0;
+        scroll-margin-top: 1rem;
+      }
+      h2 {
+        margin: 0 0 0.75rem;
+        font-size: 1.35rem;
+        letter-spacing: -0.02em;
+      }
+      h3 {
+        margin: 1.6rem 0 0.5rem;
+        font-size: 1rem;
+        color: var(--paper);
+      }
+      p,
+      li {
+        max-width: 78ch;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .small {
+        font-size: 0.85rem;
+      }
+      blockquote {
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-left: 3px solid var(--vermilion);
+        background: var(--panel);
+        color: var(--paper);
+      }
+      code,
+      pre {
+        font-family: var(--mono);
+        font-size: 0.84em;
+      }
+      code {
+        background: var(--panel-2);
+        padding: 0.08em 0.3em;
+        border-radius: 3px;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 1rem;
+        border: 1px solid var(--hair);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--paper);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        padding: 0.55rem 0.6rem;
+        border-bottom: 1px solid var(--hair);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-size: 0.7rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      tbody tr:hover {
+        background: var(--panel);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        border: 1px solid var(--hair);
+        border-radius: 6px;
+        background: var(--panel);
+        padding: 1rem;
+      }
+      .card h3 {
+        margin-top: 0;
+      }
+      .tag {
+        display: inline-block;
+        padding: 0.05rem 0.35rem;
+        border: 1px solid var(--hair);
+        border-radius: 3px;
+        font: 0.7rem/1.6 var(--mono);
+        color: var(--muted);
+      }
+      .tag.done {
+        color: var(--green);
+      }
+      .tag.next {
+        color: var(--amber);
+      }
+      .tag.blocked {
+        color: var(--red);
+      }
+      .quote {
+        border: 1px solid var(--hair);
+        border-radius: 6px;
+        padding: 1rem;
+        background: var(--panel);
+      }
+      .quote .who {
+        color: var(--vermilion);
+        font: 0.7rem/1.4 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .timeline {
+        border-left: 1px solid var(--hair);
+        margin-left: 0.4rem;
+        padding-left: 1.2rem;
+      }
+      .entry {
+        position: relative;
+        margin: 1.4rem 0;
+      }
+      .entry::before {
+        content: '';
+        position: absolute;
+        left: -1.48rem;
+        top: 0.45rem;
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--vermilion);
+      }
+      .entry .when {
+        color: var(--muted);
+        font: 0.72rem/1.4 var(--mono);
+      }
+      .entry h3 {
+        margin: 0.2rem 0 0.4rem;
+      }
+      .entry .response {
+        color: var(--muted);
+      }
+      footer {
+        margin-top: 4rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--hair);
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      @media (max-width: 640px) {
+        .wrap {
+          padding: 1.25rem 1rem 4rem;
+        }
+        th,
+        td {
+          padding: 0.45rem 0.35rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="hero">
+        <div class="kicker">DuckClean · session log</div>
+        <h1>From Classic clean to cloud M2</h1>
+        <p class="sub">
+          A complete record of the DuckClean decision, the cloud-only pivot, the two-agent
+          plan, the Freebuff M1/M2 builds, the provider/cost research, and the fixes that
+          made the branch mergeable.
+        </p>
+        <div class="meta">
+          <span class="pill">2026-11-07 → 2026-11-11</span>
+          <span class="pill">branch: duckclean</span>
+          <span class="pill">orphan, separate from classic/main</span>
+          <span class="pill ok">M1 complete</span>
+          <span class="pill ok">M2 short-source complete</span>
+          <span class="pill warn">live cloud not provisioned</span>
+        </div>
+      </header>
+
+      <nav class="toc" aria-label="Contents">
+        <a href="#initial">1. Initial request</a>
+        <a href="#flow">2. Flow and detection check</a>
+        <a href="#cloud">3. Cloud-only pivot</a>
+        <a href="#repo">4. Fresh repo, Classic cleanup, lanes</a>
+        <a href="#handoff">5. Handoff gap and branch decision</a>
+        <a href="#freebuff-m1">6. Freebuff M1 review</a>
+        <a href="#infra">7. Clerk, R2, Postgres</a>
+        <a href="#providers">8. Provider research</a>
+        <a href="#cost">9. Hosting and GPU cost</a>
+        <a href="#lama">10. LaMa CPU rule</a>
+        <a href="#env">11. Env and Vite key</a>
+        <a href="#clerk-vite">12. Clerk + Vite note</a>
+        <a href="#freebuff-m2">13. Freebuff M2 review</a>
+        <a href="#fix">14. Merge fixes</a>
+        <a href="#state">15. Current state</a>
+        <a href="#commits">16. Commits and files</a>
+        <a href="#next">17. Next work</a>
+      </nav>
+
+      <section id="initial">
+        <h2>1. Initial request — start DuckClean</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            The ui of clean is still so bad and not responsive, it's also not mobile first
+            screen or something similar. Plan for a DuckClean (the clean only function to
+            be another branch), it still need to be able to import/download the video,
+            then detect text &amp; remove it. Plan for distribution idealy using
+            cloudflares pages then the local machine can run &amp; render on their own.
+            spin out 2 sub-agents: one senior fullstack backend developer with @impeccable
+            together with a ui/ux product owner with @taste-skill to revamp the plan to
+            perfect with 3 rounds of loop, independent assess, shared note, then discuss
+            &amp; draft the plan please include the no back on point they strongly believe
+            in
+          </blockquote>
+        </div>
+        <h3>Assistant response</h3>
+        <p>
+          Stayed in Plan mode. Read-only. Loaded Impeccable for the backend/architecture
+          agent and the taste skill for the UI/product agent. Ran three rounds:
+          independent assessment, cross-critique, final reconciliation.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <h3>Product</h3>
+            <p>
+              DuckClean is clean-only: import, probe, detect, review, pre-render blur, AI
+              fill, download. No reels, no Studio, no Smart Cut.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Layout</h3>
+            <p>
+              390-first review workspace, desktop capability. Preview, playhead, timeline
+              and one primary action in the first viewport.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Distribution</h3>
+            <p>
+              Static UI on Cloudflare Pages; a local runner owns video bytes. No cloud
+              media path in the first plan.
+            </p>
+          </div>
+          <div class="card">
+            <h3>No-back points</h3>
+            <p>
+              Backend: source never leaves the machine. UI: 390 review is first-class and
+              never pretends phone capability.
+            </p>
+          </div>
+        </div>
+        <p class="small muted">
+          The local-custody no-back point was later withdrawn when the product became
+          cloud-only.
+        </p>
+      </section>
+
+      <section id="flow">
+        <h2>2. Flow, real-file detection, roadmap and plan</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            Flow: Import a local video. Probe it. Detect text. Review &amp; Edit detected
+            ranges on a timeline. Review the pre-render with bluer. Remove text with AI
+            fill. Download the cleaned full-length video. Write the roadmap and plan down.
+            But check the file output, detect is bad. Attached file:
+            <code>/Users/happynghia/Downloads/人好猫坏！.mp4</code>
+          </blockquote>
+        </div>
+        <h3>Evidence, not assumptions</h3>
+        <table>
+          <tbody>
+            <tr>
+              <th>File</th>
+              <td>1440×2560, 5.572 s, 30 fps, HEVC/AAC, 13.8 MB</td>
+            </tr>
+            <tr>
+              <th>MD5</th>
+              <td><code>57a6d164422eeb95a9517cf4727dd1b6</code></td>
+            </tr>
+            <tr>
+              <th>Default 4 fps</th>
+              <td>22 frames, Apple Vision available, 0 OCR lines, 0 tracklets</td>
+            </tr>
+            <tr>
+              <th>2 fps</th>
+              <td>11 frames, 0 OCR lines</td>
+            </tr>
+            <tr>
+              <th>Every frame</th>
+              <td>All 167 frames read with Apple Vision, 0 OCR lines</td>
+            </tr>
+            <tr>
+              <th>Full-res strips</th>
+              <td>No watermark, caption or corner text</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          <strong>Verdict:</strong> the clip is genuinely text-free. Zero detections are
+          correct. <code>text.confirmed: true</code> only means OCR ran; it does not mean
+          text was found. A real known-text clip is required for calibration.
+        </p>
+        <p>
+          Wrote <code>docs/duckclean/roadmap.md</code>, <code>plan.md</code> and
+          <code>detection-report.md</code> on branch <code>duckclean</code> at
+          <code>f5d4603</code>.
+        </p>
+      </section>
+
+      <section id="cloud">
+        <h2>3. Cloud-only pivot</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            commit &amp; merge any ahead in classic to classic lane online, the focus on
+            the duckclean tree. roadmap is wrong duckclean is cloud only with a single
+            purpose auto clean the cleanest &amp; best ai removal for text and logo or
+            burnt image on video, generate the image if needed. The render is HF worker on
+            CPU or on GPU (HF for now GPU cloud later). Commercial in render hour
+            equivelant. Need an oauth for user management, and library and other stuff,
+            render through cloud worker, and story in blob or other storage cloud. So that
+            mean they can render a clip on their phone if they want since render is cloud
+            worker. Forget non-negotiables, clean the full-length but dissect to smaller
+            beat will help detecting frame by frame &amp; render time to make sure only
+            frame with text select and render.
+          </blockquote>
+        </div>
+        <p>
+          Classic was already in sync: <code>classic</code> =
+          <code>origin/classic</code> = <code>bb3e89e</code>; <code>main</code> stayed
+          <code>510bee9</code>.
+        </p>
+        <p>Rewrote roadmap and plan around:</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Cloud</h3>
+            <p>
+              Pages SPA → Workers API → Postgres + R2 → HF CPU/GPU worker. Later dedicated
+              GPU.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Beats</h3>
+            <p>
+              Scene-bounded 1–4 s spans. Detect every frame inside a beat; render only
+              beats with targets; concat and mux source audio.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Accounts</h3>
+            <p>Clerk OAuth, per-user library, render jobs, blob storage, phone access.</p>
+          </div>
+          <div class="card">
+            <h3>Billing</h3>
+            <p>
+              Render-hour equivalent: weighted compute seconds / 3600, Stripe metered.
+            </p>
+          </div>
+        </div>
+        <p>
+          Local runner, local custody and Apple Vision as the production OCR path were
+          retired. Commit <code>dc38cec</code>.
+        </p>
+      </section>
+
+      <section id="repo">
+        <h2>4. Fresh repo, Classic cleanup, and <code>vibecut-lanes</code></h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            now prepare for duckclean on a fresh blank folder, that mean delete current
+            directory, and give a handoff prompt to another coding agent
+          </blockquote>
+        </div>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            wait not enough, the old vibecut-classic if already pushed should be deleted
+            too, also check why vibecute need separate vibecut-lanes which stored all the
+            media data &amp; job?
+          </blockquote>
+        </div>
+        <p>
+          Deleted only the old <code>vibecut-duckclean</code> worktree first, then created
+          <code>/Users/happynghia/Public/Project/Code/drop_eval/duckclean</code> with docs
+          and <code>HANDOFF.md</code>.
+        </p>
+        <p>
+          Verified Classic was pushed, then deleted the
+          <code>vibecut-classic</code> worktree. Tracked work was clean; only ignored
+          <code>.venv</code>, caches, <code>.DS_Store</code> and
+          <code>.freebuff</code> were lost.
+        </p>
+        <h3>Why <code>vibecut-lanes</code> exists</h3>
+        <p>
+          It is per-lane runtime isolation for multiple worktrees sharing one backend.
+          Each lane gets its own port, data root, jobs, settings, packs, media, recordings
+          and caches. <code>scripts/lane-env.sh</code> maps Classic 8796, Studio 8795 and
+          Voice 8797. It is not a DuckClean requirement; DuckClean uses Postgres + R2.
+        </p>
+        <table>
+          <tbody>
+            <tr>
+              <th>Classic lane</th>
+              <td>225 MB, one real source and job artifacts</td>
+            </tr>
+            <tr>
+              <th>Studio lane</th>
+              <td>484 MB, mostly LaMa/MI-GAN/STTN model files</td>
+            </tr>
+            <tr>
+              <th>Studio reset</th>
+              <td>3.9 MB</td>
+            </tr>
+            <tr>
+              <th>Total</th>
+              <td>713 MB</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="handoff">
+        <h2>5. Handoff gap and the branch decision</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            question with your handoff and the document, did other agent know which github
+            repo they're working on, and will they repurpose the code from classic?
+          </blockquote>
+        </div>
+        <p>
+          No. The handoff had no remote/branch, and its Classic reference pointed at the
+          deleted worktree. The plan still said “cut from Classic”. The intent to port
+          <code>detect.py</code>, <code>clean_source.py</code>,
+          <code>pipeline.py</code> and <code>textfill/</code> was present, but the access
+          path was broken.
+        </p>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>A new branch separate from Classic</blockquote>
+        </div>
+        <p>
+          Decision: same <code>ducpa1912/vibecut</code> repo, orphan branch
+          <code>duckclean</code>, no shared history with <code>classic</code> or
+          <code>main</code>. Classic source is extracted from <code>origin/classic</code>:
+        </p>
+        <pre>
+git fetch origin classic
+mkdir -p engine
+git archive origin/classic detect.py clean_source.py pipeline.py textfill | tar -x -C engine</pre>
+      </section>
+
+      <section id="freebuff-m1">
+        <h2>6. Freebuff M1 review and fixes</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>are you the one who work in duckclean? check</blockquote>
+        </div>
+        <p>
+          No. Freebuff was working in the same folder. Timeline: handoff at 12:36;
+          Freebuff scaffold 12:55–13:14. Two writers in one tree was flagged as a
+          collision risk.
+        </p>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>is there any problem with what they build?</blockquote>
+        </div>
+        <h3>Problems found and fixed</h3>
+        <ul>
+          <li>
+            Duplicate <code>Runtime</code> interfaces and missing test runtime fields.
+          </li>
+          <li>ESLint type-only import failure.</li>
+          <li>
+            Worker test clip hung: infinite <code>anullsrc</code> with no
+            <code>-shortest</code>/<code>-t</code>.
+          </li>
+          <li>Wrong HMAC test helper; health auth test asserted a public route.</li>
+          <li>Probe/proxy tests expected fields the contract does not have.</li>
+          <li>Ruff, Mypy and Prettier failures.</li>
+          <li>Stale repo/Classic paths in handoff, plan and port log.</li>
+        </ul>
+        <p>
+          Fixed, added a test-only local file URL seam, ran the gate, and pushed the
+          orphan branch at <code>ac1e200</code>. Deleted the old local-only
+          <code>duckclean</code> branch at <code>dc38cec</code>.
+        </p>
+      </section>
+
+      <section id="infra">
+        <h2>7. Finish M1; what Clerk, R2 and Postgres actually are</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            update the doc like above so they have the git repo and everything they need.
+            then finish m1, what is clerk, which r2, it suppose to have postgres, where is
+            it now?
+          </blockquote>
+        </div>
+        <table>
+          <tbody>
+            <tr>
+              <th>Clerk</th>
+              <td>
+                Hosted identity/OAuth. Issues the session JWT; the API verifies JWKS. Not
+                a database and stores no video.
+              </td>
+            </tr>
+            <tr>
+              <th>Postgres</th>
+              <td>
+                Metadata: users, library, beats, detections, jobs, usage. Not provisioned.
+                Only PGlite tests. Hyperdrive is a pooler, not a database.
+              </td>
+            </tr>
+            <tr>
+              <th>R2</th>
+              <td>
+                Cloudflare object storage for source, proxy, poster, masks, beat clips,
+                outputs. Bucket name <code>duckclean-media</code>; bucket not created.
+              </td>
+            </tr>
+            <tr>
+              <th>Queues</th>
+              <td>
+                <code>duckclean-jobs</code> and <code>duckclean-jobs-dlq</code>; not
+                created.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Built the M1 surface: Clerk gate, honest setup state, library, direct-to-R2
+          upload with real byte progress, probe facts, poster, signed playback,
+          error/empty/loading states. Added infrastructure runbook, env examples, R2 CORS,
+          worker Dockerfile/README. Commit <code>c139d4a</code>; worker image
+          <code>2f29f6e</code>.
+        </p>
+        <p>
+          <strong>Live M1 blockers:</strong> no Clerk app, no Postgres, no R2
+          bucket/token, no queues, no Wrangler login, no worker/API/Pages deploy.
+        </p>
+      </section>
+
+      <section id="providers">
+        <h2>8. Provider research</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            review the alternative to clerk, r2 and postgrest, find online cloud solution
+            &amp; find all the best, affordable, cheapest solution for them
+          </blockquote>
+        </div>
+        <p>
+          Clarified PostgREST is a REST layer over Postgres, not the database. Wrote
+          <code>docs/duckclean/providers.md</code>.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Cheapest now</th>
+              <th>Cheapest at scale</th>
+              <th>Avoid</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Auth</td>
+              <td>Clerk free 50k MRU</td>
+              <td>WorkOS 1M MAU free; Better Auth self-hosted; Supabase Pro</td>
+              <td>Auth0, Cognito at B2C scale</td>
+            </tr>
+            <tr>
+              <td>Storage</td>
+              <td>R2 for zero egress</td>
+              <td>B2 storage-heavy; Hetzner EU; R2 egress-heavy</td>
+              <td>S3, Supabase Storage, Wasabi for video</td>
+            </tr>
+            <tr>
+              <td>Postgres</td>
+              <td>Neon free</td>
+              <td>Neon Launch; Supabase Pro; Railway</td>
+              <td>D1/Turso rewrite for M1; RDS at small scale</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Recommendation: keep Clerk + Neon + R2 + Workers Paid for M1. Re-evaluate auth
+          at 50k–100k MRU. Keep video on R2. Commit <code>da9aae3</code>.
+        </p>
+      </section>
+
+      <section id="cost">
+        <h2>9. Hosting and GPU cost correction</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            your planning above did not consider cloud hosting which can either subside
+            the db cost &amp; hosting or increase the cost of the plan at 3 scales
+          </blockquote>
+        </div>
+        <p>
+          Corrected the missing hosting and worker lines in
+          <code>docs/duckclean/cost-model.md</code>.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Scale</th>
+              <th>Hosting + DB + storage + worker</th>
+              <th>With Clerk</th>
+              <th>With WorkOS/Supabase</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Early: 1k MAU, 50 GB, 500 GB egress</td>
+              <td>~$6–30</td>
+              <td>~$6–30</td>
+              <td>~$6–30</td>
+            </tr>
+            <tr>
+              <td>Growth: 100k MAU, 1 TB, 10 TB</td>
+              <td>~$150–210</td>
+              <td>~$1.2k</td>
+              <td>~$150–250</td>
+            </tr>
+            <tr>
+              <td>Scale: 1M MAU, 10 TB, 100 TB</td>
+              <td>~$1.4k–2.0k</td>
+              <td>~$20.4k</td>
+              <td>~$1.4k–4.3k</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          GPU minutes are the largest unknown. At 20k renders/month: 1 GPU-min/render ≈
+          $197; 5 ≈ $983; 15 ≈ $2,950. Standard LaMa uses CPU; GPU is for
+          ProPainter/generative. Commit <code>a1e37ba</code>.
+        </p>
+      </section>
+
+      <section id="lama">
+        <h2>10. LaMa must use CPU</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            why: FAIL api/.dev.vars is missing, FAIL web/.env.local is missing, FAIL
+            Wrangler is not logged in. And LaMa must use CPU not GPU for clean job
+          </blockquote>
+        </div>
+        <p>
+          The three FAILs are setup state, not code: local secrets and Vite env were never
+          created, and Wrangler was never logged in. The doctor reports them deliberately.
+        </p>
+        <p>Enforced LaMa CPU in three places:</p>
+        <ul>
+          <li>
+            <code>api/src/schemas.ts</code>:
+            <code>deviceClassForEngine('lama')</code> returns <code>cpu</code>;
+            render/preview reject LaMa + GPU.
+          </li>
+          <li>
+            <code>worker/duckclean_worker/contract.py</code>:
+            <code>SelectionGroup</code> and <code>ManualRegion</code> reject LaMa with
+            <code>gpu_standard</code> or <code>gpu_premium</code>.
+          </li>
+          <li>
+            Plan/contract/cost/roadmap/infrastructure docs: LaMa CPU;
+            ProPainter/generative GPU.
+          </li>
+        </ul>
+        <p>Commit <code>b5e85d9</code>. Tests at that point: 64 API, 27 worker.</p>
+      </section>
+
+      <section id="env">
+        <h2>11. Local env and the “Vite key”</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>build the env for me, how to get vite key?</blockquote>
+        </div>
+        <p>Created, all gitignored:</p>
+        <ul>
+          <li>
+            <code>api/.dev.vars</code> with a generated HMAC; Clerk/R2 values still
+            needed.
+          </li>
+          <li><code>web/.env.local</code> with a placeholder Clerk key.</li>
+          <li><code>worker/.env</code> with the same HMAC.</li>
+          <li><code>worker/.env.example</code> as the tracked template.</li>
+        </ul>
+        <p>
+          The “Vite key” is the Clerk publishable key. Clerk Dashboard → API keys →
+          Publishable key, <code>pk_test_…</code> for development or
+          <code>pk_live_…</code> for production. It goes in <code>web/.env.local</code> as
+          <code>VITE_CLERK_PUBLISHABLE_KEY</code>. The Frontend API URL goes in
+          <code>api/.dev.vars</code> as <code>CLERK_ISSUER</code>. Never put
+          <code>sk_…</code> in a Vite variable.
+        </p>
+        <p>
+          Doctor after env creation: 13 ok, 5 warn, 6 fail — Clerk issuer, Vite key, three
+          R2 values, Wrangler login. API/worker health warnings remain until started.
+          Commit <code>3c09dfe</code>.
+        </p>
+      </section>
+
+      <section id="clerk-vite">
+        <h2>12. Clerk is not Next-only</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>note vite clerk only next, vue and some other</blockquote>
+        </div>
+        <p>
+          Vite is the bundler, not a framework. Clerk’s React SDK works in a Vite SPA;
+          Next.js is not required. Clerk also ships SDKs for React Router, Astro, TanStack
+          React Start, Vue, Nuxt, Expo, Electron, Android and iOS.
+        </p>
+        <p>
+          The repo later moved from the deprecated <code>@clerk/clerk-react</code> to
+          <code>@clerk/react</code> 6.18.6. The current React package uses
+          <code>Show when="signed-in"</code> / <code>"signed-out"</code> instead of
+          <code>SignedIn</code>/<code>SignedOut</code>. Commit
+          <code>62d528c</code> documented the framework note; the package migration landed
+          later at <code>699b41d</code>.
+        </p>
+      </section>
+
+      <section id="freebuff-m2">
+        <h2>13. Freebuff M2 review</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            checking the progress from freebuff, is there any issue, is the code good to
+            commit and merge?
+          </blockquote>
+        </div>
+        <p>
+          Freebuff added a substantial M2 slice: route split, local PGlite/MinIO,
+          detect/dissect, components. Review found:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Issue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>P0</td>
+              <td>
+                Failed detection retry orphaned a run: new run inserted, then job conflict
+                returned 409.
+              </td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td><code>scope</code> accepted but ignored; all beats sent.</td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>
+                Engine truth false: revision hardcoded RapidOCR, run stored
+                <code>body.engine</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>
+                Old beats stayed <code>ready</code>/<code>has_target</code> after a new
+                run.
+              </td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>One static mask per moving-text cluster.</td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>
+                600-frame cap and <code>effective_fps</code> reported source fps even when
+                truncated.
+              </td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>
+                Clean setup/CI installed <code>worker[dev]</code>, not
+                <code>[dev,ocr]</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>Worker detect errors became generic 500/retry.</td>
+            </tr>
+            <tr>
+              <td>P0</td>
+              <td>Poster bytes trusted without HEAD verification.</td>
+            </tr>
+            <tr>
+              <td>P1</td>
+              <td>
+                3×3 tiling truncated to 4 tiles; multi-line grouping missing; dev-db
+                nested transactions; library detection shape mismatch.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Verdict: not mergeable without fixes.</p>
+      </section>
+
+      <section id="fix">
+        <h2>14. Merge fixes</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            fix everything so it can merge and then create a hand-over prompt so freebuff
+            understand the project better
+          </blockquote>
+        </div>
+        <ul>
+          <li>
+            <strong>Retry:</strong> <code>createOrRetryJob</code> resets a
+            failed/cancelled job; new run only after job succeeds.
+          </li>
+          <li>
+            <strong>Scope:</strong> API filters beats; worker reads selected; unread beats
+            stay pending; no false empty.
+          </li>
+          <li><strong>Engine truth:</strong> RapidOCR only; PaddleOCR rejected.</li>
+          <li>
+            <strong>Beat reset:</strong> every detection run clears old
+            <code>has_target</code>/<code>status</code>/<code>detection_run_id</code>.
+          </li>
+          <li>
+            <strong>Coverage:</strong> effective fps scales only on real truncation;
+            duplicate-frame inheritance does not lower it.
+          </li>
+          <li>
+            <strong>Masks:</strong> union of all observed glyph quads per member; mask
+            kind preserved (<code>glyph</code>/<code>region</code>).
+          </li>
+          <li><strong>Poster:</strong> HEAD-verified like the proxy.</li>
+          <li>
+            <strong>Worker errors:</strong> <code>DetectError</code> → non-retryable
+            <code>payload_invalid</code> 422.
+          </li>
+          <li><strong>Tiling:</strong> 3×3 grid allowed; <code>MAX_TILES=9</code>.</li>
+          <li>
+            <strong>Grouping:</strong> text lines close in one visual area become one
+            group with separate members.
+          </li>
+          <li>
+            <strong>Setup:</strong> <code>make setup</code> and CI install
+            <code>worker[dev,ocr]</code>.
+          </li>
+          <li>
+            <strong>Dev DB:</strong> migrations run directly, no nested transaction around
+            BEGIN/COMMIT.
+          </li>
+          <li>
+            <strong>Frontend:</strong> <code>@fontsource</code> moved to web; Clerk React
+            6; audit clean.
+          </li>
+          <li>
+            <strong>Detection UI:</strong> panel with run state, frames, coverage,
+            OCR/logo availability, warnings, groups.
+          </li>
+        </ul>
+        <p>
+          Tests: 68 API, 40 worker. Typecheck, lint, mypy, ruff, build, Prettier and
+          <code>npm audit --omit=dev</code> all pass. Commit <code>7639128</code>;
+          Clerk/audit follow-up <code>699b41d</code>.
+        </p>
+      </section>
+
+      <section id="state">
+        <h2>15. Current state</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Done</h3>
+            <p>
+              M0 contract; M1 upload/library/playback; M2 short-source
+              dissection/detection; local PGlite+MinIO; provider and cost research; env
+              and doctor; LaMa CPU; tests; CI; Clerk 6; handoff; session docs.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Not done</h3>
+            <p>
+              Live cloud resources; real phone acceptance; real
+              known-text/logo/burnt-image acceptance; M3 review timeline and pre-render;
+              M4; M5 render; M6 billing; M7 quality engines.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Known limits</h3>
+            <p>
+              600 OCR-frame cap; RapidOCR only; no logo model; one union mask per member;
+              synchronous single-slot detection; no render engine.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Blocked</h3>
+            <p>
+              Clerk, Postgres, R2, queues, Wrangler login, worker/API/Pages deploy, real
+              user media pack.
+            </p>
+          </div>
+        </div>
+        <h3>Repository</h3>
+        <pre>
+remote:  https://github.com/ducpa1912/vibecut.git
+branch:  duckclean
+history: orphan, separate from classic and main
+head:    699b41d (before this documentation commit)
+local:   /Users/happynghia/Public/Project/Code/drop_eval/duckclean</pre>
+      </section>
+
+      <section id="commits">
+        <h2>16. Commits and artifacts</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Commit</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>f5d4603</code></td>
+              <td>First cloud roadmap, plan, detection report</td>
+            </tr>
+            <tr>
+              <td><code>dc38cec</code></td>
+              <td>Cloud-only rewrite</td>
+            </tr>
+            <tr>
+              <td><code>ac1e200</code></td>
+              <td>M0 contract + M1 upload/library core</td>
+            </tr>
+            <tr>
+              <td><code>c139d4a</code></td>
+              <td>M1 web upload/library surface</td>
+            </tr>
+            <tr>
+              <td><code>2f29f6e</code></td>
+              <td>HF CPU Docker image</td>
+            </tr>
+            <tr>
+              <td><code>a1e37ba</code></td>
+              <td>Hosting/GPU cost model + M1 doctor</td>
+            </tr>
+            <tr>
+              <td><code>b5e85d9</code></td>
+              <td>LaMa CPU enforcement</td>
+            </tr>
+            <tr>
+              <td><code>3c09dfe</code></td>
+              <td>Worker env template + Clerk key docs</td>
+            </tr>
+            <tr>
+              <td><code>62d528c</code></td>
+              <td>Clerk + Vite note</td>
+            </tr>
+            <tr>
+              <td><code>7639128</code></td>
+              <td>M2 detection, local stack, merge fixes</td>
+            </tr>
+            <tr>
+              <td><code>699b41d</code></td>
+              <td>Clerk React 6 migration + audit fix</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Key files</h3>
+        <p>
+          <code>AGENTS.md</code>, <code>memory.md</code>, <code>todo.md</code>,
+          <code>FREEBUFF_HANDOFF.md</code>, <code>HANDOFF.md</code>,
+          <code>docs/duckclean/*</code>, <code>api/src/routes/*</code>,
+          <code>api/src/jobs/*</code>, <code>worker/duckclean_worker/*</code>,
+          <code>web/src/components/*</code>.
+        </p>
+      </section>
+
+      <section id="next">
+        <h2>17. Next work</h2>
+        <ol>
+          <li>
+            <strong>Provision:</strong> Wrangler login, Clerk, Neon Postgres, Hyperdrive,
+            R2 bucket/CORS/token, queues, HF worker, API, Pages.
+          </li>
+          <li><strong>Real M1:</strong> phone upload → probe → proxy → playback.</li>
+          <li>
+            <strong>Real M2:</strong> known-text clip, 0.2s flash, corner logo, two-line
+            subtitle, text over motion, first/last frame, burnt image, text-free clip.
+          </li>
+          <li>
+            <strong>M3:</strong> timeline, tight member bars, include/exclude, preview
+            tickets, blur pre-render, long-source chunking, parallel beats.
+          </li>
+          <li>
+            <strong>M4/M5:</strong> selection revision, LaMa CPU render,
+            ProPainter/generative GPU, assembly, audio mux, download.
+          </li>
+          <li><strong>M6:</strong> Stripe meter, usage ledger, estimates, quotas.</li>
+          <li>
+            <strong>M7:</strong> logo detection, per-range masks, temporal tracking,
+            generative fill.
+          </li>
+        </ol>
+        <p class="small muted">
+          Canonical sources: <a href="AGENTS.md">AGENTS.md</a>,
+          <a href="FREEBUFF_HANDOFF.md">FREEBUFF_HANDOFF.md</a>,
+          <a href="HANDOFF.md">HANDOFF.md</a>, <a href="todo.md">todo.md</a>,
+          <a href="memory.md">memory.md</a>.
+        </p>
+      </section>
+
+      <footer>
+        DuckClean session log · generated from the conversation and repository history ·
+        2026-11-11.
+      </footer>
+    </div>
+  </body>
+</html>
