@@ -133,16 +133,30 @@ ul.clean li { margin:6px 0; }
 </header>
 
 <section class="section" id="latest">
-  <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Twenty-five commits since the 9 Nov snapshot. Newest first.</p></div>
+  <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Twenty-eight commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">
     <div class="card"><div class="chip done">Current</div><div class="big">83</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
-    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">25</div><p>Commits since 9 Nov, from <span class="mono">7308bbb</span> to <span class="mono">8683a7b</span>.</p></div>
+    <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">28</div><p>Commits since 9 Nov, from <span class="mono">7308bbb</span> to this build.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
     <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>Step left: re-run Check so the 66 ms title gets a clean layer. Captions on the current render are already gone.</p></div>
   </div>
 
   <div class="timeline" style="margin-top:14px">
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-03</strong><span>11 Nov · Team and plugins</span></div>
+      <div class="timeline-body">
+        <strong>Five roles and a model slot on every step, written down.</strong>
+        <ul class="clean">
+          <li>Product owner, creator, engineer, tester, researcher, as Claude Code subagents in <span class="mono">.claude/agents/</span>.</li>
+          <li>Loop: brief → build + tests → creator use → tester pass/fail → sign-off → one commit with the documents.</li>
+          <li>Every model step takes a local default, a user-supplied model, or a key. No downloads required.</li>
+          <li>Slot contract: validate, copy into app data, never name a model in the UI, never link a download.</li>
+        </ul>
+        <span class="mono">83 tests</span> · docs and agent prompts only.
+      </div>
+    </div>
+
     <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-02</strong><span>11 Nov · Bring your own model</span></div>
       <div class="timeline-body">
@@ -300,7 +314,7 @@ ul.clean li { margin:6px 0; }
 
   <div class="grid g3" style="margin-top:14px">
     <div class="card"><h3>What improved for the user</h3><p>Review is faster and honest: one proof on Preview instead of many, render unlocked immediately, real sizes and paths, and scene rows that match the video.</p></div>
-    <div class="card"><h3>What improved for the build</h3><p>Twenty-five commits, 83 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
+    <div class="card"><h3>What improved for the build</h3><p>Twenty-eight commits, 83 tests, extracted modules with their own tests, and a clean <span class="mono">impeccable detect</span> pass. The app was rebuilt and released locally.</p></div>
     <div class="card"><h3>What did not move</h3><p>The App Store gate is unchanged and was not re-verified on 10 Nov: signing, team, store URLs, review contact, screenshot rights and nested-code signing.</p></div>
   </div>
 

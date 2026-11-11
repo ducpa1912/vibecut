@@ -2,6 +2,22 @@
 
 One team. Three sequential sessions. Each session owns one block. A finished block is reviewed by the product owner before the next block starts. Any block can be reopened later without restarting the whole programme.
 
+## Current agent roles
+
+The block sessions below are the historical record. Coding work now runs through five agents defined
+in `.claude/agents/` and in `AGENTS.md`:
+
+| Role | Owns | Gate |
+|---|---|---|
+| `product-owner` | Brief, acceptance, screen review, sign-off | Final gate before commit |
+| `creator` | Taste and flow as a real creator | Advisory, notes required |
+| `engineer` | Code, tests, invariants | Tests and syntax pass |
+| `tester` | Reproduction, failing test, build check | A fail blocks sign-off |
+| `researcher` | API availability, licences, sizes, costs | Facts cited |
+
+Loop: brief → build + tests → creator use → tester pass/fail → sign-off → one commit with `MEMORY.md`,
+`TODO.md` and the report row. The user is the final authority.
+
 ## Sessions
 
 | Session | Block | Screens | Review record |

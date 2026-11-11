@@ -78,7 +78,7 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
   <p class="sub">DuckSuite, 6–11 November 2026. 132 requests, 18 phases, one branch. This file records the session itself: the words, the decisions, the evidence and the commits. The product-owner narrative lives in <span class="mono">docs/reports/ducksuite-product-progress.html</span>; when the two disagree, this one wins.</p>
   <div class="meta">
     <span class="pill"><span class="dot"></span><b>branch</b> ducksuite</span>
-    <span class="pill"><b>HEAD</b> <span class="mono">8683a7b</span></span>
+    <span class="pill"><b>build</b> <span class="mono">8683a7b</span></span>
     <span class="pill"><span class="dot"></span><b>83</b> tests</span>
     <span class="pill"><b>18</b> phases</span>
     <span class="pill"><b>138</b> requests</span>
@@ -96,6 +96,8 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
   <a href="#cost">Cost model</a>
   <a href="#silicon">M1/M2 fixes</a>
   <a href="#commits">Commits</a>
+  <a href="#team">Team</a>
+  <a href="#plugins">Model plugins</a>
   <a href="#limits">Limits</a>
   <a href="#next">Next work</a>
   <a href="#method">Method</a>
@@ -329,6 +331,8 @@ footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display
       <tr><td><b>Fill default, blur explicit</b></td><td>No silent fallback. Moving lines are flagged; only a flash under 0.5 s defaults to blur.</td><td><span class="tag done">Held</span></td><td>10 Nov</td></tr>
       <tr><td><b>Purchase</b></td><td>$29 paid app. Restore is automatic through the buyer's Apple ID; no in-app account and no StoreKit code.</td><td><span class="tag done">Decided</span></td><td>11 Nov</td></tr>
       <tr><td><b>Platform</b></td><td>macOS 26.0, Apple silicon. Lowering it costs the new speech API and rewrite.</td><td><span class="tag done">Decided</span></td><td>11 Nov</td></tr>
+      <tr><td><b>Team</b></td><td>Five roles: product owner, creator, engineer, tester, researcher. Tester fail blocks sign-off; the user is final.</td><td><span class="tag done">In force</span></td><td>11 Nov</td></tr>
+      <tr><td><b>Plugins</b></td><td>Every model step takes a user-supplied local model or key. No downloads required; only LaMa ships.</td><td><span class="tag done">In force</span></td><td>11 Nov</td></tr>
       <tr><td><b>Request intake</b></td><td>New request → MEMORY entry + TODO plan before code; revision attaches to the request that made the thing.</td><td><span class="tag done">In force</span></td><td>11 Nov</td></tr>
     </tbody>
   </table>
@@ -444,7 +448,10 @@ Flow   Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Wel
 
 <section id="commits">
   <div class="head"><h2>Commits</h2><p>21 since the 9 Nov snapshot; the branch is the record.</p></div>
-  <div class="code">8683a7b feat(translation): take a user-supplied model, ship none
+  <div class="code">docs: team, plugins, BYOK (this commit)
+5ba44aa docs: give Claude Code a CLAUDE.md that points at the contract
+12616c5 docs: bring every document in line with the BYOM build
+8683a7b feat(translation): take a user-supplied model, ship none
 bea26bb docs(session): add the visual session log
 7c017ae docs(workflow): make request intake a factory loop
 7a40d7d docs(report): date and count the current build
@@ -500,6 +507,42 @@ c83dfed feat(story): carry edits into stories and extend with beats
   </div>
 </section>
 
+<section id="team">
+  <div class="head"><h2>Team structure</h2><p>What was used, and what a coding agent should use now.</p></div>
+  <div class="grid g3">
+    <div class="card"><h3>Historically</h3><p>One team, three block sessions: Welcome &amp; Check, Edit &amp; Clean Focus, Preview &amp; Render. Each block ran design → dev → testing loops with a product-owner review before the next block. Reviews live in <span class="mono">docs/teams/</span>.</p></div>
+    <div class="card"><h3>Interviews</h3><p>Founder and content-creator personas were spawned as users, not reviewers. They drove the usability pass on 9 Nov and the “too busy” edit-desk revision.</p></div>
+    <div class="card"><h3>Now</h3><p>Five roles as Claude Code subagents in <span class="mono">.claude/agents/</span>. The loop and the gates are in <span class="mono">AGENTS.md</span>.</p></div>
+  </div>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:20%">Role</th><th style="width:46%">Owns</th><th style="width:34%">Gate</th></tr></thead>
+    <tbody>
+      <tr><td><b>product-owner</b></td><td>Brief, acceptance criteria, screen review, sign-off</td><td>Final gate before commit</td></tr>
+      <tr><td><b>creator</b></td><td>Taste, flow and output as a real creator</td><td>Advisory; notes required</td></tr>
+      <tr><td><b>engineer</b></td><td>Code, tests, invariants</td><td>Tests and syntax pass</td></tr>
+      <tr><td><b>tester</b></td><td>Reproduction, failing test first, build and real-app check</td><td>A fail blocks sign-off</td></tr>
+      <tr><td><b>researcher</b></td><td>Apple API availability, licences, sizes, costs</td><td>Facts cited, never guessed</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:12px; margin-top:8px">Loop: brief → build + tests → creator use → tester pass/fail → PO sign-off → one commit with the three documents.</p>
+</section>
+
+<section id="plugins">
+  <div class="head"><h2>Model plugins by step</h2><p>Every step has a local default, a local-model slot and a key slot. Nothing requires a download.</p></div>
+  <table>
+    <thead><tr><th style="width:16%">Step</th><th style="width:24%">Local default</th><th style="width:30%">Model you can plug in</th><th style="width:30%">Key</th></tr></thead>
+    <tbody>
+      <tr><td>Transcribe</td><td>Apple Speech</td><td>MLX Whisper folder</td><td>OpenAI, Groq, Deepgram, OpenRouter</td></tr>
+      <tr><td>Translate</td><td>Apple Translation</td><td>CTranslate2 folder (shipped)</td><td>DeepL, OpenAI</td></tr>
+      <tr><td>Rewrite</td><td>Apple Intelligence</td><td>Local LLM URL (Ollama, llama.cpp)</td><td>OpenAI, Anthropic, OpenRouter</td></tr>
+      <tr><td>Voice</td><td><span class="mono">say</span>, Kokoro</td><td>Custom ONNX voice</td><td>ElevenLabs, OpenAI TTS</td></tr>
+      <tr><td>Clean fill</td><td>LaMa (bundled)</td><td>Custom ONNX inpaint</td><td>HTTP fill service</td></tr>
+      <tr><td>OCR / cuts</td><td>Apple Vision / ffmpeg</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:12px; margin-top:8px">Contract and rollout: <span class="mono">docs/duck/BYOK-PLAN.md</span>. Keys in the Keychain only.</p>
+</section>
+
 <section id="limits">
   <div class="head"><h2>Limits</h2><p>What this session did not solve.</p></div>
   <div class="grid g2">
@@ -545,7 +588,7 @@ c83dfed feat(story): carry edits into stories and extend with beats
 
 <footer>
   <span>DuckSuite · session log · 6–11 Nov 2026</span>
-  <span>HEAD 8683a7b · 83 tests · branch ducksuite</span>
+  <span>branch ducksuite · build 8683a7b · 83 tests</span>
 </footer>
 
 </div>

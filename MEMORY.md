@@ -38,6 +38,16 @@ folder picker that copies the folder into app data, keep the copy model-neutral,
 plan for STT, translation, rewrite, voice, and fill.
 **Outcome:** NLLB pack and download UI removed; Settings now takes any CTranslate2 folder, copied into app data with a native picker and validated against model.bin/config.json/sentencepiece. BYOK plan written at `docs/duck/BYOK-PLAN.md`. 83 tests.
 
+### REQ-20261111-03 · 2026-11-11
+**Request:** "added five role of team, added the plugin any local models in each step of the workflow,
+and also plan for the BYOK into the docs"
+**Read as:** document the five-role team as a working contract, let every model-backed step accept a
+user-supplied local model, and put the key plan in the same docs.
+**Response:** five Claude Code subagents in `.claude/agents/`, a Team section and a model-plugin
+matrix in `AGENTS.md`, a short version in `CLAUDE.md`, and a per-step slot contract in
+`docs/duck/BYOK-PLAN.md`.
+**Outcome:** docs and agent prompts only; no behaviour change, 83 tests.
+
 ## Session log
 
 | # | Time | Request | Response |

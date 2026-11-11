@@ -76,6 +76,61 @@ TODO line only when it creates new work. It still gets a commit and a report lin
 One request, one MEMORY entry, one TODO block, one commit. A second request during the same turn
 gets its own id and its own block, even when the code lands together.
 
+## Team
+
+Five roles. Claude Code loads them from `.claude/agents/` and can spawn them by name; other harnesses
+use the same prompts from this file.
+
+| Role | Owns | Gate |
+|---|---|---|
+| `product-owner` | Brief, acceptance criteria, screen review, sign-off | Final gate before commit |
+| `creator` | Taste, flow and output as a real creator | Advisory; notes are required |
+| `engineer` | Code, tests, invariants | Tests and syntax must pass |
+| `tester` | Reproduction, failing test first, build and real-app check | A fail blocks sign-off |
+| `researcher` | Apple API availability, licences, sizes, costs | Facts cited, never guessed |
+
+One loop:
+
+1. `product-owner` writes the brief: request id, what must exist, acceptance a human can see.
+2. `engineer` implements and tests. `tester` reproduces first when it is a bug.
+3. `creator` uses the real app or the real render and files three time costs and two wrong looks.
+4. `tester` reports pass/fail per acceptance check, plus anything untested.
+5. `product-owner` signs off or returns it with the findings.
+6. One commit: code + test + `MEMORY.md` + `TODO.md` + a report row.
+
+The creator is advisory, not a veto. A tester fail blocks sign-off. The user is the final authority;
+disagreement escalates to them, not to a vote. Every loop writes `docs/teams/<loop>/review.md` with
+verdict, good-to-go, revisions and bugs.
+
+## Model plugins — BYOM and BYOK on every step
+
+Every model-backed step has three sources: a local default, a user-supplied local model, or a user's
+key. No step requires a download. DuckSuite ships one model, LaMa, because Clean is the product; it
+ships no key, no translation weights and no proxy.
+
+| Step | Local default | Local model you can plug in | User key |
+|---|---|---|---|
+| Transcribe | Apple Speech | Whisper/MLX folder | OpenAI, Groq, Deepgram, OpenRouter |
+| Translate | Apple Translation | CTranslate2 folder (shipped) | DeepL, OpenAI |
+| Rewrite | Apple Intelligence | local LLM endpoint (Ollama, llama.cpp) | OpenAI, Anthropic, OpenRouter |
+| Voice | `say`, Kokoro pack | Kokoro voices, custom ONNX | ElevenLabs, OpenAI TTS |
+| Clean fill | LaMa (bundled) | custom ONNX inpaint model | user-run HTTP fill service |
+| OCR | Apple Vision | — | — |
+| Scene cuts | ffmpeg | — | — |
+
+Contract:
+
+- Registry in `duckcore/providers.py`; each provider implements `status()`, `prepare()`, `run()`, and
+  declares the task it serves, the files it needs and whether it needs a secret.
+- Settings store a path, a provider id and an enabled flag. Never a key. Keys live in the Keychain
+  through one helper, never in `settings.json`, logs or error strings.
+- A user-supplied folder is validated and copied into app data so the sandboxed core can read it.
+- The UI never names a model for a user-supplied slot, and never links to a download DuckSuite
+  provides.
+- A step with no plugin stays on its default. Every local flow works with zero keys.
+
+Design and rollout: `docs/duck/BYOK-PLAN.md`.
+
 ## Run
 
 ```bash

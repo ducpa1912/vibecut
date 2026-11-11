@@ -1,5 +1,7 @@
 # Duck Roadmap
 
+> Status 2026-11-11: App Store and signing are paused by decision. StoreKit/TestFlight rows below are the plan, not the build. $29 paid app needs no IAP. Only LaMa ships; other models are user-supplied or optional downloads. See `TODO.md`.
+
 **Status (2026-11-07):** Phase 1 DuckSuite is the only active build. VibeCut Studio is the codebase/legacy name. The old $249 VibeCut Studio plan is historical; this file supersedes it.
 
 **Clock:** agent-native. One implementation phase per day is the target. External gates — App Review, StoreKit propagation, clean-Mac signing, model quality, HF capacity, legal/license review — run in parallel and are not coding days.

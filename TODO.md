@@ -30,6 +30,19 @@ a review carry the review file instead.
 - [ ] **Fill confidence per line.** `quality` is binary (steady/moving) from the mean motion. A line
   with motion 11 and one with 31 are treated the same. Consider a third level or a score.
 
+## P1 — team and model plugins (REQ-20261111-03)
+
+- [x] REQ-20261111-03 · five roles in `.claude/agents/` and in `AGENTS.md`
+- [x] REQ-20261111-03 · per-step BYOM/BYOK matrix in `AGENTS.md` and `docs/duck/BYOK-PLAN.md`
+- [ ] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
+- [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
+- [ ] REQ-20261111-03 · rewrite local slot: base URL, `/v1/models` check
+- [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
+- [ ] REQ-20261111-03 · fill local slot: custom ONNX inpaint model
+- [ ] REQ-20261111-03 · Keychain store + redaction, no key in logs or errors
+- [ ] REQ-20261111-03 · Connections UI with per-task consent; off until ticked
+- [ ] REQ-20261111-03 · write `docs/teams/<loop>/review.md` for every loop
+
 ## P1 — $29 build readiness
 
 - [ ] REQ-20261111-02 · shrink the Whisper pack or make it per-language (1.61 GB today; required for `vi`)
@@ -90,6 +103,12 @@ a review carry the review file instead.
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — team and model plugins
+- [x] REQ-20261111-03 · five roles: product owner, creator, engineer, tester, researcher
+- [x] REQ-20261111-03 · Claude Code subagents in `.claude/agents/`
+- [x] REQ-20261111-03 · BYOM/BYOK matrix for every model-backed step
+- [x] REQ-20261111-03 · slot contract: validate, copy into app data, never name or download a model
 
 ### 11 Nov — bring your own model
 - [x] REQ-20261111-02 · NLLB pack, download button and model names removed

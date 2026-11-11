@@ -1,5 +1,7 @@
 # Product
 
+> Status 2026-11-11: App Store work is paused. The current build has no StoreKit code; the $29 paid app restores through the buyer's Apple ID with no in-app account. Translation weights are not shipped or hosted: the user supplies a CTranslate2 folder. Team and BYOK/BYOM: `AGENTS.md`, `docs/duck/BYOK-PLAN.md`.
+
 <!-- impeccable:product-schema 1 -->
 
 Recorded 2026-11-07. This file supersedes the VibeCut Studio $249 plan. VibeCut Studio is the frozen reference codebase; **DuckSuite** is the new offline macOS product. The previous plan remains in git history and is marked historical in `PRD.md` and `docs/handoff/commercial-packaging-plan.md`.

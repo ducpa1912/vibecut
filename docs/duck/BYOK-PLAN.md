@@ -1,6 +1,7 @@
 # BYOK / BYOM plan
 
-Status: plan. The translation-model half is shipped in `REQ-20261111-02`; the key half is not.
+Status: translation BYOM is shipped (`REQ-20261111-02`). The key half and the other local-model
+slots are planned.
 Rule: DuckSuite ships no key, no default cloud provider and no proxy. Local is the default; a user
 who adds a key opts that one task into their own provider.
 
@@ -15,15 +16,30 @@ who adds a key opts that one task into their own provider.
 
 ## Task matrix
 
-| Task | Local default today | With BYOM | With BYOK | Priority |
+| Task | Local default today | Local model slot (BYOM) | Key slot (BYOK) | Priority |
 |---|---|---|---|---|
-| Transcription | Apple Speech, Whisper pack | Whisper pack (any MLX model folder) | OpenAI, Groq, Deepgram, OpenRouter | P1 |
-| Translation | Apple Translation | CTranslate2 folder | DeepL, OpenAI, OpenRouter | Done / P2 |
-| Rewrite / script | Apple Intelligence | — | OpenAI, Anthropic, OpenRouter, local Ollama | P1 |
-| Voice-over | `say`, Kokoro pack | Kokoro voices | ElevenLabs, OpenAI TTS | P2 |
-| Clean / fill | LaMa (bundled) | — | HTTP fill endpoint (user-run service) | P3 |
+| Transcription | Apple Speech, Whisper pack | any MLX Whisper folder | OpenAI, Groq, Deepgram, OpenRouter | P1 |
+| Translation | Apple Translation | CTranslate2 folder (**shipped**) | DeepL, OpenAI | Done / P2 |
+| Rewrite / script | Apple Intelligence | local LLM base URL (Ollama, llama.cpp) | OpenAI, Anthropic, OpenRouter | P1 |
+| Voice-over | `say`, Kokoro pack | Kokoro voices, custom ONNX voice | ElevenLabs, OpenAI TTS | P2 |
+| Clean / fill | LaMa (bundled) | custom ONNX inpaint model | HTTP fill service the user runs | P3 |
 | OCR | Apple Vision | — | — | — |
 | Scene detect | ffmpeg | — | — | — |
+
+## Local model slots
+
+A slot is a folder or a URL the user provides. DuckSuite never downloads it and never names it.
+
+| Slot | Input | Validation | Store |
+|---|---|---|---|
+| Translation | folder | `model.bin`, `config.json`, `sentencepiece.bpe.model` | copied to `models/translation/<name>` |
+| Transcription | folder | `weights.safetensors` + `config.json` | copied to `models/speech/<name>` |
+| Rewrite | base URL | `/v1/models` answers | URL only, no copy |
+| Voice | folder | `*.onnx` + voices file | copied to `models/voice/<name>` |
+| Fill | folder or URL | ONNX input shape / `/health` | copied or URL |
+
+Rules for every slot: validate on choose, report missing items by name, keep the default when the
+slot is empty, and never ship or link a specific model.
 
 `stt.py` already contains Groq, Deepgram and OpenRouter code paths behind `cloud_stt_key()`. No UI
 exposes a key today, so they are unreachable. The BYOK work is the store, the UI and the switch.
@@ -72,13 +88,24 @@ OpenAI          [ key ••••abcd ]  [Test]  [Remove]
 ## Code seams
 
 ```
-duckcore/providers.py      registry: id, task, label, test(), call(), secret_name
+duckcore/providers.py      registry: id, task, kind (local|key), label, status(), run()
 duckcore/secrets.py        Keychain get/set/delete + redaction helper
-duckcore/engine/stt.py     cloud paths already exist; gate on secrets.get("stt.<provider>")
+duckcore/engine/stt.py     cloud paths exist; gate on secrets.get("stt.<provider>")
+duckcore/nllb.py           custom CTranslate2 folder (shipped)
 duckcore/script.py         rewrite provider beside rewrite_apple
 duckcore/voice.py          TTS provider beside say/kokoro
+duckcore/engine/textfill   custom ONNX filler beside lama
 duckcore/main.py           GET /api/providers, POST /api/providers/{id}/key, /test
-static/duck/app.js         Connections section, consent dialog
+static/duck/app.js         Connections section, model slot picker, consent dialog
+```
+
+One interface for both kinds:
+
+```python
+class Provider:
+    id: str; task: str; kind: str          # "local" | "key"
+    def status(self) -> dict: ...          # ready, detail, files missing
+    def run(self, payload: dict) -> dict: ...
 ```
 
 ## Rollout

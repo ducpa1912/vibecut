@@ -24,6 +24,19 @@ git push https://github.com/ducpa1912/vibecut.git ducksuite
 Data root: `~/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite`.
 Project under work: `prj_e95348a97316` (160 s, 1080×1920).
 
+## Team
+
+Five subagents in `.claude/agents/`: `product-owner` (brief + sign-off), `creator` (real use, advisory),
+`engineer` (code + tests), `tester` (repro + pass/fail), `researcher` (cited facts). Spawn the PO for
+the brief, the engineer and tester for the work, the creator for the result, the PO for sign-off.
+A tester fail blocks sign-off. The user is final. Every loop writes `docs/teams/<loop>/review.md`.
+
+## Models and keys
+
+Every step can take a local model or a user key; none require a download. LaMa is the only shipped
+model. Translation takes a CTranslate2 folder, user-supplied. Keys go to the Keychain, never
+`settings.json`. No step names a model in the UI. Plan: `docs/duck/BYOK-PLAN.md`.
+
 ## Hard rules
 
 1. Local only. No upload, no telemetry, no DuckSuite account.
