@@ -16,9 +16,11 @@ import numpy as np
 # OCR boxes sit tight on the glyphs. Outlines, shadows and anti-aliasing reach
 # past them, so every box grows by this share of its height on each side.
 PAD_RATIO = 0.06
+FILL_PAD_RATIO = 0.04
 # Found text often has a dark outline or shadow beyond its letters. Left outside the
 # hole, the model copies it and the text turns into a dark patch.
 TEXT_SHADOW_RATIO = 0.18
+FILL_SHADOW_RATIO = 0.10
 TEXT_SHADOW_MIN_PX = 6
 PAD_MIN_PX = 3
 # A large display title needs more context than a subtitle: its outline and
@@ -55,7 +57,12 @@ Rect = tuple[int, int, int, int]  # x0, y0, x1, y1; x1 and y1 exclusive
 
 
 def layer_rect(layer: dict, width: int, height: int) -> Rect:
-    """Padded pixel rectangle of one layer's source box, clipped to the frame."""
+    """Padded pixel rectangle of one layer's source box, clipped to the frame.
+
+    A fill replaces real pixels, so the hole is kept as small as the outline
+    allows: every spare pixel is texture the model has to invent. Blur keeps
+    the wider margin, because it only has to hide the text, not rebuild it.
+    """
     box = layer.get("box") or {}
     x = float(box.get("x", 0.0)) * width
     y = float(box.get("y", 0.0)) * height
@@ -66,11 +73,15 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
         or (h >= 0.09 * height and w >= 0.50 * width)
         or (w * h >= 0.10 * width * height)
     )
-    pad = max(PAD_MIN_PX, PAD_RATIO * h)
+    blur = str(layer.get("kind") or "fill") == "blur"
+    pad = max(PAD_MIN_PX, (PAD_RATIO if blur else FILL_PAD_RATIO) * h)
     if large:
         pad = max(pad, min(LARGE_TEXT_PAD_MAX, LARGE_TEXT_PAD_RATIO * h))
     if layer.get("tracklet_id"):
-        pad = max(pad, TEXT_SHADOW_MIN_PX, TEXT_SHADOW_RATIO * h)
+        pad = max(
+            pad, TEXT_SHADOW_MIN_PX,
+            (TEXT_SHADOW_RATIO if blur else FILL_SHADOW_RATIO) * h,
+        )
     x0 = max(0, int(math.floor(x - pad)))
     y0 = max(0, int(math.floor(y - pad)))
     x1 = min(width, int(math.ceil(x + w + pad)))

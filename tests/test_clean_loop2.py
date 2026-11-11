@@ -222,3 +222,20 @@ def test_top_display_type_reads_as_a_title() -> None:
     kind, rule = detect.classify(tracklet, 160.0)
     assert kind == "title"
     assert rule >= 0.7
+
+
+def test_fill_hole_is_tighter_than_the_blur_hole() -> None:
+    box = {"x": 0.30, "y": 0.48, "w": 0.40, "h": 0.04}
+    fill = masks.layer_rect(
+        {"box": box, "tracklet_id": "trk", "kind": "fill"}, 1080, 1920,
+    )
+    blur = masks.layer_rect(
+        {"box": box, "tracklet_id": "trk", "kind": "blur"}, 1080, 1920,
+    )
+    fill_w, fill_h = fill[2] - fill[0], fill[3] - fill[1]
+    blur_w, blur_h = blur[2] - blur[0], blur[3] - blur[1]
+    assert fill_w < blur_w and fill_h < blur_h
+    # The hole still covers the box and the smallest shadow margin.
+    assert fill[0] < int(box["x"] * 1080)
+    assert fill[1] <= int(box["y"] * 1920) - masks.TEXT_SHADOW_MIN_PX
+    assert fill_h >= int(box["h"] * 1920) + 2 * masks.TEXT_SHADOW_MIN_PX
