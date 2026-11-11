@@ -71,6 +71,9 @@ completely local, so users can just plug-in local models." The re-Check acceptan
 `auto: false` layer changed". Docs updated to say so.
 **Loop 1 (same day):** the render cost is on screen before Start render and in the Clean all dialog,
 from `GET …/render/estimate`. Review project: up to 2 h 45 min of AI fill. 88 tests.
+**Loop 2 (same day):** re-Check found the title; a 4.75 s render showed it gone but leaked subtitles
+on 3 of 142 frames at line edges. Layer ranges widened in `detect._run_range`, flash limit 0.6 s.
+Re-render: 0 of 142 frames with text. 90 tests. The loop 1 estimate reads several times too high.
 
 ## Session log
 

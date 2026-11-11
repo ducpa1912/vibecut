@@ -44,7 +44,7 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 |---|---|---|---|
 | Import | One local file, picker or Finder drag; append to the same project | Creator-readable error copy | URL / path import |
 | Check | Scenes, transcript, Vision OCR, stories; true first frame read | — | Faces, saliency, music detection as product features |
-| Clean | One layer per text line; LaMa fill or Blur or Off; `moves` flag; flash under 0.5 s defaults to Blur; Clean all confirms and reports counts | Time estimate before render (loop 1); faster fill (loop 3); better fill on moving footage (loop 5) | Model picker for the default; GPU toggle |
+| Clean | One layer per text line; LaMa fill or Blur or Off; `moves` flag; a line read once (under 0.6 s) defaults to Blur; Clean all confirms and reports counts | Time estimate before render (loop 1); faster fill (loop 3); better fill on moving footage (loop 5) | Model picker for the default; GPU toggle |
 | Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy), captions with style and SRT | Rewrite without the hidden Ollama fallback (loop 6) | Publish kit, titles, hashtags |
 | Voice | macOS voices, Kokoro pack, dub, music and SFX rows on one audio track | Manual microphone test | Voice cloning |
 | Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Colour grading, LUTs, keyframes |
@@ -161,7 +161,7 @@ DuckSuite is the local Mac essential toolkit for creators who will not upload cl
 ## Evidence on hand
 
 - 83 automated tests; a ground-truth fill benchmark (`scripts/bench_fill.py`): the tighter fill hole gained +1.1 dB PSNR on the review project and +0.8 dB on a second one.
-- One review project, 160 s, 1080×1920: captions were gone at 2 s, 10 s and 90 s in the last render; the 0 s title fix is proven on the source but not yet in a render.
+- One review project, 160 s, 1080×1920: captions were gone at 2 s, 10 s and 90 s in the last render; the 0 s title is gone in a 4.75 s render made on 2026-11-11, with 0 of 142 frames showing text.
 - Session record and request log: `docs/reports/SESSION.html`, `MEMORY.md`.
 - Not on hand: a render made with the current fill version, a measured GPU or CoreML fill, a signed app, an App Store review, a clean-Mac install, a manual microphone test, a second tester, a paying customer.
 

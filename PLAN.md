@@ -8,16 +8,16 @@ loops below, `AGENTS.md` is the working contract.
 
 | Fact | Value | Source |
 |---|---|---|
-| Branch / tests | `ducksuite`, 88 pass | `python3 -m pytest -q tests` |
+| Branch / tests | `ducksuite`, 90 pass | `python3 -m pytest -q tests` |
 | Bundle | 377 MB (LaMa 198, sidecar 136, ffmpeg 41) | `du -sh build/DuckSuite-Xcode.app` |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2, 13 GB free disk | `sysctl`, `sw_vers`, `df` |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips | `edits/ed_38a4c36a3aae.json` |
-| Clean layers | 41: 40 fill, 1 blur; **33 moving, 8 steady**; all `auto: true` | same file |
+| Clean layers | 42: 40 fill, 2 blur; **34 moving, 8 steady**; all `auto: true` (after loop 2) | same file |
 | Fill seconds | 64 s of 160 s; 50 s of that on moving footage | same file |
 | Fill engine | LaMa fp32 ONNX, CPU only | `textfill/lama.py:_providers` |
 | Cold render | 25 s slice ran 42 min and was stopped; 160 s ≈ 4–5 h | session record |
 | Fill cache | every stored fill is stale since `textfill.VERSION` 12 | `textfill/__init__.py` |
-| Renders on disk | none (pre-fix renders deleted) | `renders/` |
+| Renders on disk | one 4.75 s proof render from loop 2 | `renders/` |
 
 ## What is actually wrong
 
@@ -53,7 +53,7 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 - Accept: the Render screen for the review project shows an estimate in hours/minutes before Start;
   a test covers the endpoint with a measured rate and with none; no fill output change, no bump.
 
-### Loop 2 — prove the title fix on a short span
+### Loop 2 — prove the title fix on a short span — **done 2026-11-11**
 
 - Re-run Check on the review project, then Clean all.
 - Render 0–3 s only (short edit or trimmed range), not the whole video.
@@ -65,6 +65,8 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 
 - `bench_fill.py --device cpu|gpu --model`; CPU vs CoreML EP vs MPS on the same 10 frames.
 - Same bench: `fill_plan.keys` 6/s vs 3/s on a moving span.
+- Calibrate the estimate: loop 2 rendered clip 1 in 189 s against an estimate of 19 min. Find why
+  `fill_rates.json` was not updated and make the figure honest before loop 4.
 - Output `docs/duck/gpu-fill-bench.md`. Decide: CoreML, bundle torch, or stay CPU; 6/s or 3/s.
 - Accept: one table, measured on this Mac, peak memory under 8 GB; the decision recorded. If
   anything ships: `device` in `span_key`, `VERSION` bump, Settings shows the real device.

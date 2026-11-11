@@ -144,6 +144,20 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 2</strong><span>11 Nov · title proof</span></div>
+      <div class="timeline-body">
+        <strong>The 0 s title is gone in a real render, and a hidden 3-frame subtitle leak is fixed.</strong>
+        <ul class="clean">
+          <li>Re-Check found the title at 0 s (y 0.321). Clean all made it a Blur layer. 42 layers: fill 40 · blur 2 · off 0.</li>
+          <li>Rendered clip 1 only (0–4.75 s, 189 s) and read every one of its 142 frames. Title gone; subtitles still on 3 frames at line edges.</li>
+          <li>Cause: layer edges sat half a sample step from the reading. The first-frame fix had moved the opening lines from 0.0 s to 0.125 s. Ranges now reach a full step back and 0.067 s forward; the flash limit is 0.6 s.</li>
+          <li>Re-render (93 s): 0 of 142 frames with text.</li>
+          <li>Cost: every range is about 0.19 s longer. The loop 1 estimate said 19 min for this clip; real was 189 s, so that figure reads high and is on loop 3.</li>
+        </ul>
+        <span class="mono">90 tests</span> · only 4.75 s of 160 s rendered · review: <span class="mono">docs/teams/loop-02-title-short-span/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 1</strong><span>11 Nov · render cost</span></div>
       <div class="timeline-body">
         <strong>The AI fill time is on screen before a render starts.</strong>

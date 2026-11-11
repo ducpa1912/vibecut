@@ -239,3 +239,52 @@ def test_fill_hole_is_tighter_than_the_blur_hole() -> None:
     assert fill[0] < int(box["x"] * 1080)
     assert fill[1] <= int(box["y"] * 1920) - masks.TEXT_SHADOW_MIN_PX
     assert fill_h >= int(box["h"] * 1920) + 2 * masks.TEXT_SHADOW_MIN_PX
+
+
+def test_a_sampled_line_is_covered_on_both_sides_of_its_readings() -> None:
+    """Loop 2: a 3 s render leaked a line for two frames before its layer and one after.
+
+    A reading says the text was there at that moment. It came on some time after
+    the reading before, and the sampler can be a frame or two late, so the layer
+    reaches back a whole step and a little past the last reading.
+    """
+    from duckcore.engine import detect
+
+    run = [
+        {"start": 0.25, "end": 0.5, "source": "sample"},
+        {"start": 0.5, "end": 0.75, "source": "sample"},
+        {"start": 1.0, "end": 1.25, "source": "sample"},
+    ]
+    span = detect._run_range(run, 160.0)
+    # Seen first at 0.25 s, not at 0.0 s: it may have come on right after 0.0 s.
+    assert span["start"] == 0.0
+    # Seen last at 1.0 s, so it left before 1.25 s give or take the sampler's slack.
+    assert span["end"] == round(1.25 + detect.SAMPLE_SLACK, 3)
+
+    later = detect._run_range([{"start": 10.0, "end": 10.25, "source": "sample"}], 160.0)
+    assert later == {"start": 9.75, "end": round(10.25 + detect.SAMPLE_SLACK, 3)}
+
+    last = detect._run_range([{"start": 159.9, "end": 160.0, "source": "sample"}], 160.0)
+    assert last["end"] == 160.0
+
+
+def test_one_reading_is_a_flash_and_two_readings_are_not() -> None:
+    """The widened ranges must not turn a line read once into a fill."""
+    from duckcore.engine import detect
+
+    once = _report(4.0)
+    once["tracklets"][0]["ranges"] = [
+        detect._run_range([{"start": 107.25, "end": 107.5, "source": "sample"}], 160.0),
+    ]
+    twice = _report(4.0)
+    twice["tracklets"][0]["ranges"] = [
+        detect._run_range(
+            [
+                {"start": 107.25, "end": 107.5, "source": "sample"},
+                {"start": 107.5, "end": 107.75, "source": "sample"},
+            ],
+            160.0,
+        ),
+    ]
+    assert clean.layers_from_report(once)[0]["kind"] == "blur"
+    assert clean.layers_from_report(twice)[0]["kind"] == "fill"

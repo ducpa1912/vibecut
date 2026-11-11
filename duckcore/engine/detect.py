@@ -50,6 +50,9 @@ REPORT_FILE = "source_report.json"
 DEFAULT_SAMPLE_FPS = 4.0
 DEFAULT_MAX_FRAMES = 3600
 TRACKLET_MAX_GAP = 4.5
+# The sampler can read a frame or two late, so a line can still be on screen
+# just after the reading that no longer shows it. Two frames at 30 fps.
+SAMPLE_SLACK = 0.067
 # Each line of text is its own tracklet, so a long video has many.
 MAX_TRACKLETS = 1000
 # Two readings are one line when this much of the words match; OCR misreads a
@@ -918,14 +921,16 @@ def _run_range(run: list[dict], duration: float) -> dict:
     """The time a line is on screen, from the frames that read it.
 
     A sampled frame says the text was there at that moment, and it changed
-    somewhere between two frames, so each edge sits half a frame away.
+    somewhere between two frames. A layer that starts late shows the text, so
+    the range reaches back to the reading before, and past the last one by the
+    sampler's slack.
     """
     start = float(run[0]["start"])
     end = float(run[-1]["end"])
     if run[0].get("source") == "sample":
-        half = (float(run[0]["end"]) - float(run[0]["start"])) / 2.0
-        start = max(0.0, start - half)
-        end = max(start + 0.001, float(run[-1]["end"]))
+        step = float(run[0]["end"]) - float(run[0]["start"])
+        start = max(0.0, start - step)
+        end = max(start + 0.001, float(run[-1]["end"]) + SAMPLE_SLACK)
     if duration > 0:
         end = min(duration, end)
     return {"start": round(start, 3), "end": round(end, 3)}

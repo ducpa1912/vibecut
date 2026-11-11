@@ -9,16 +9,10 @@ review carry the review file. Items marked `PLAN` came from the 11 Nov code and 
 **Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
 render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
 
-## Loop 2 — prove the title fix on a short span (next)
+## Loop 3 — measure fill speed, then decide (REQ-20261111-04) (next)
 
-- [ ] **Re-run Check on `prj_e95348a97316`.** Its `check.json` predates the first-frame fix.
-  Accept: a `title` tracklet at 0.0–0.25 s, y ≈ 0.321.
-- [ ] **Clean all after that Check.** Accept: the title layer is `blur` (flash under 0.5 s); counts
-  reported as fill · blur · off; no layer with `auto: false` changed. All 41 current layers are
-  `auto: true`, so they may be re-planned; "41 unchanged" is not the test.
-- [ ] **Render 0–3 s only** and look at frame 0. Not the whole video.
-
-## Loop 3 — measure fill speed, then decide (REQ-20261111-04)
+- [ ] PLAN · calibrate the render estimate: clip 1 took 189 s against "up to about 19 min";
+  `fill_rates.json` was not updated by two real renders
 
 - [ ] REQ-20261111-04 · extend `bench_fill.py` with `--device cpu|gpu` and `--model`
 - [ ] REQ-20261111-04 · measure CPU vs CoreML EP vs MPS on the same 10 frames; write `docs/duck/gpu-fill-bench.md`
@@ -101,6 +95,8 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
   cap fill work by keyframe plan. Revisit with the loop 3 numbers.
 - [ ] **First-frame read cost.** `pipeline._first_still` adds one ffmpeg seek per Check. Cheap today;
   measure on a 10-minute source.
+- [ ] PLAN · title blur runs 0.0–0.317 s for a 0.066 s title; about 7 frames carry a soft patch with
+  no text under it. Consider an exact end for a first-frame-only reading.
 - [ ] **Short flashes after the first frame.** Only the first frame gets an exact read; a title under
   250 ms at a later cut can still fall between 4 fps samples. Measure before fixing.
 - [ ] **Timeline split and reorder.** Trim works; split, reorder and remove-silence do not.
@@ -123,6 +119,14 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — loop 2, title proof on a short span (`docs/teams/loop-02-title-short-span/review.md`)
+- [x] Re-Check: `title` tracklet at 0 s, y 0.321; 42 tracklets
+- [x] Clean all: title layer `blur`; fill 40 · blur 2 · off 0; no `auto: false` layer existed
+- [x] Rendered clip 1 (0–4.75 s) and OCR'd all 142 frames
+- [x] Bug found and fixed: 3 frames leaked subtitles at line edges; ranges now reach a full step back and `SAMPLE_SLACK` forward
+- [x] Flash limit 0.5 → 0.6 s so a line read once still gets Blur
+- [x] Re-render: 0 of 142 frames with text
 
 ### 11 Nov — loop 1, show the render cost (`docs/teams/loop-01-render-cost/review.md`)
 - [x] PLAN · `GET …/render/estimate` returns the fill estimate for an edit; `textfill.estimate_summary` has a caller

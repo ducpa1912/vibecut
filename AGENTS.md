@@ -153,7 +153,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 88 pass; 1 skips when node is not on PATH
+python3 -m pytest -q tests      # 90 pass; 1 skips when node is not on PATH
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth
@@ -175,6 +175,8 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
   ```
   The repo is named `vibecut`; the product branch is `ducksuite`.
 - The commit signing key needs a passphrase. Use `git -c commit.gpgsign=false commit`.
+- Outside the app the core finds no fill model. For a dev core or a script that renders, set
+  `DUCK_FILL_MODELS="$PWD/build/DuckSuite-Xcode.app/Contents/Resources/base-models"`.
 - The sidecar handshake times out after 12 s. If the app window is blank, check for an orphan
   `Resources/duckcore/duckcore` process and kill it before relaunching.
 
@@ -194,11 +196,14 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
   slow; say so.
 - Blur uses the wide shadow pad, fill uses the tight one (`layer_rect`). Do not merge them.
 - Check must read the true first frame (`pipeline._first_still`). Some titles live under 100 ms.
+- A layer's range reaches a whole sample step before its first reading and `SAMPLE_SLACK` past its
+  last (`detect._run_range`). Half a step leaked two frames of text. Prove edge changes by OCR on
+  every frame of a short render, not on spot frames.
 - Proofs are optional. Render never waits for a proof.
 - Fill runs on the CPU. The GPU path (CoreML EP, PyTorch MPS) is unshipped and unmeasured; see
   `docs/duck/GPU-FILL-PLAN.md`. `span_key` does not include `device` today; add it before enabling GPU.
 - A line over a moving background is flagged (`quality: "moving"`), not silently switched to blur.
-  Only a flash under 0.5 s defaults to blur.
+  Only a flash under 0.6 s, a line read once, defaults to blur.
 - DuckSuite ships no translation weights and hosts no translation download. The user supplies a
   CTranslate2 folder; Settings copies it into app data and validates the three files.
 - `clean.patch_layer` marks a layer `auto: false`; Clean all must keep the user's Fill/Blur/Off choice.

@@ -17,7 +17,10 @@ RISKY_KINDS = {"handle_or_logo", "watermark"}
 FILL_MOTION_LIMIT = 10.0
 # A line this short has no calm neighbours to learn from, so a fill has nothing
 # to rebuild the plate with. A flash of text is better hidden under Blur.
-FILL_SHORT_SECONDS = 0.5
+# Ranges reach a full reading back and a little forward (detect._run_range), so
+# a line read once spans about 0.57 s and a line read twice about 0.82 s. The
+# limit sits between them: one reading is a flash.
+FILL_SHORT_SECONDS = 0.6
 
 
 def _layer_id(tracklet: dict) -> str:
