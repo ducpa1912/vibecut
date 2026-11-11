@@ -1107,6 +1107,97 @@ def plan_fills(tracklets: list[dict], frames: list[dict], motion: dict | None, s
         }
 
 
+
+def refine_tracklet_edges(
+    tracklets: list[dict],
+    source: str,
+    job_dir: Path,
+    *,
+    fps: float = 30.0,
+    window: float = 0.2,
+) -> int:
+    """Trim each line's start and end to the frames that really show it.
+
+    A 4 fps read knows an edge to a quarter second, and OCR can miss a frame,
+    so a range could end before the last frame of text or start after it. Around
+    each edge this reads the source at its own frame rate and keeps the frames
+    where the tracklet's words are still there. It narrows an edge, never widens
+    it, so the patches do not grow.
+    """
+    from . import vision
+    from duckcore import media
+    import shutil
+    import subprocess
+    import tempfile
+
+    if os.environ.get("DUCK_EDGE_REFINE", "1").strip().lower() in {"0", "off", "false", "no"}:
+        return 0
+    if not tracklets or not vision.available() or not Path(source).is_file():
+        return 0
+    ffmpeg = media.ffmpeg()
+    changed = 0
+    for tracklet in tracklets:
+        text = _normalized_text(tracklet.get("text_sample"))
+        ranges = tracklet.get("ranges") or []
+        if not text or not ranges:
+            continue
+        wanted = [_normalized_text(item) for item in (tracklet.get("_texts") or [])]
+        wanted = [item for item, _t in wanted] if wanted and isinstance(wanted[0], tuple) else wanted
+        words = {text, *[w for w in wanted if w]}
+        for index, span in enumerate(ranges[:4]):
+            start = float(span.get("start") or 0.0)
+            end = float(span.get("end") or 0.0)
+            # Only the end is refined: the start already reaches a full reading
+            # back, and narrowing it on a missed OCR frame would show text.
+            for edge, at in (("end", end),):
+                lo = max(0.0, at - window)
+                hi = at + window
+                temp = Path(tempfile.mkdtemp(prefix="edge-", dir=job_dir))
+                try:
+                    subprocess.run(
+                        [ffmpeg, "-y", "-v", "error", "-ss", f"{lo:.3f}", "-to", f"{hi:.3f}",
+                         "-i", source, "-vf", f"fps={fps:.3f},scale=960:-2", "-q:v", "4",
+                         str(temp / "%04d.jpg")],
+                        check=True, capture_output=True,
+                    )
+                    files = sorted(temp.glob("*.jpg"))
+                    if not files:
+                        continue
+                    records = vision.probe_images(temp, files=files)
+                    hit: list[float] = []
+                    for frame_index, path in enumerate(files):
+                        record = records.get(path.name) or {}
+                        for line in record.get("text") or []:
+                            if float(line.get("confidence") or 0.0) < 0.3:
+                                continue
+                            value = _normalized_text(line.get("text"))
+                            if any(value and (value in word or word in value) for word in words):
+                                hit.append(lo + frame_index / fps)
+                                break
+                    if not hit:
+                        continue
+                    if edge == "end":
+                        new = min(end + window, max(hit) + 1.0 / fps)
+                        if new < end - 0.001 or new > end + 0.001:
+                            span["end"] = round(new, 3)
+                            changed += 1
+                    else:
+                        new = max(0.0, min(hit))
+                        if new > start + 0.001 or new < start - 0.001:
+                            span["start"] = round(new, 3)
+                            changed += 1
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                finally:
+                    shutil.rmtree(temp, ignore_errors=True)
+        tracklet["ranges"] = [
+            {"start": round(float(item.get("start") or 0.0), 3),
+             "end": round(float(item.get("end") or 0.0), 3)}
+            for item in ranges
+        ]
+    return changed
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -1788,6 +1879,15 @@ def build_report(
     )
     truncated = len(all_tracklets) > MAX_TRACKLETS
     tracklets = all_tracklets[:MAX_TRACKLETS]
+    try:
+        refine_tracklet_edges(
+            tracklets,
+            str((job.get("source") or {}).get("path") or ""),
+            Path(job_dir),
+            fps=float((job.get("source") or {}).get("fps") or 30.0),
+        )
+    except Exception:  # noqa: BLE001 - a refinement miss never fails a Check
+        pass
 
     requested = normalize_attestation(attestation)
     existing, source_of_attestation = _job_attestation(job)

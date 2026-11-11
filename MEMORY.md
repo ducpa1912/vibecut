@@ -112,6 +112,14 @@ Yours badge; the post-Clean-all toast counts kept layers; filtered rows keep the
 **Outcome:** the one user-set layer was found at Scene 01 · Title 01, 0.0–0.32 s, kind fill, auto
 false, text 人吃啥咪吃啥. 101 tests.
 
+### REQ-20261111-09 · 2026-11-11
+**Request:** Senior PO brief, Loop 4 (full render) — findings F1–F5, acceptance 1–7.
+**Read as:** close the full-render loop with correct detection edges, an atomic render queue, an honest
+estimate, one fill default and an opt-in caption file.
+**Response:** internal loops: edge refinement plus an every-frame OCR leak tool; queue claim and
+engine-named errors; whole-render estimate; single GPU default; `.srt` opt-in.
+**Outcome:** in progress; final verdicts in `docs/teams/loop-06-full-render/review.md`.
+
 ## Session log
 
 | # | Time | Request | Response |

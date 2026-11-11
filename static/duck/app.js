@@ -2988,7 +2988,10 @@ function renderEstimateHtml() {
     estimate.beats_cached && left ? `${estimate.beats_cached} of ${estimate.beats} clips already filled` : '',
     basis,
   ].filter(Boolean).join(' · ');
-  return `<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
+  const whole = estimate.total_seconds
+    ? `<p class="render-cost-note">Whole render ≈ ${esc(fmtDuration(estimate.total_seconds))}, measured on this Mac, fill included.</p>`
+    : `<p class="render-cost-note">Whole render time is not measured on this Mac yet.</p>`;
+  return `<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${whole}${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
 }
 
 function paintRenderEstimate() {
@@ -3073,7 +3076,11 @@ function screenRender() {
           <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
           <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
           <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
-          <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div><div class="toggle-row"><span>${state.edit?.captions?.burn ? 'Burn into render' : 'Sidecar SRT'}</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div></div>
+          <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div>
+              <div class="toggle-row"><span>Burn into video</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div>
+              <div class="toggle-row"><span>Write .srt file</span><label class="switch"><input type="checkbox" data-action="caption-srt" ${state.edit?.captions?.srt ? 'checked' : ''}><i></i></label></div>
+              <p class="small muted">${(state.edit?.captions?.cues || []).length} cue${(state.edit?.captions?.cues || []).length === 1 ? '' : 's'} from the script. Nothing is exported unless you turn one on.</p>
+            </div>
           <div class="render-setting"><div class="setting-head">${icon('voice', 14)} Voice-over</div><div class="toggle-row"><span>${state.edit?.voice ? 'Included' : 'None'}</span><label class="switch"><input type="checkbox" ${state.edit?.voice ? 'checked' : ''} disabled><i></i></label></div></div>
           <div class="media-rule"></div>
           <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputLabel)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div></div>
@@ -3115,7 +3122,7 @@ function renderQueueRow(item) {
   const active = item.state === 'running' || item.state === 'rendering' || item.state === 'queued' || item.state === 'paused';
   const duration = item.duration ? fmtDuration(item.duration) : (item.edit_id === state.edit?.id ? fmtDuration(state.edit?.end || 0) : '—');
   return `<div class="queue-item${active ? ' is-active' : ''}">
-    <div class="queue-story"><img src="${frameUrl(0.5, item.project_id)}" alt=""><div><strong title="${esc(item.project_name || 'Project')} · ${esc(item.title || 'Render')}">${esc(item.title || 'Render')}</strong><span>${esc(item.project_name || 'Project')} · ${duration} · ${item.width && item.height ? `${item.width}×${item.height}` : '1080p'} · v1</span></div></div>
+    <div class="queue-story"><img src="${frameUrl(0.5, item.project_id)}" alt=""><div><strong title="${esc(item.project_name || 'Project')} · ${esc(item.title || 'Render')}">${esc(item.title || 'Render')}</strong><span>${esc(item.project_name || 'Project')} · ${duration} · ${item.width && item.height ? `${item.width}×${item.height}` : '1080p'} · v1${item.state === 'done' && item.elapsed_seconds ? ` · est ${fmtDuration(item.estimate_seconds || 0)} · real ${fmtDuration(item.elapsed_seconds)}` : ''}</span></div></div>
     <span class="queue-cell">v1</span>
     <span class="queue-cell">${duration}</span>
     <span class="queue-cell">${item.width && item.height ? `${item.width}×${item.height}` : '1080p'}</span>
@@ -3201,6 +3208,21 @@ function openSearch() {
   input.addEventListener('input', draw);
   draw();
   input.focus();
+}
+
+async function setCaptionSrt(value) {
+  if (!state.project || !state.edit) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/captions`, {
+      method: 'PATCH',
+      body: JSON.stringify({ srt: Boolean(value) }),
+    });
+    state.edit.captions = data.captions || state.edit.captions;
+    render();
+    toast(value ? 'A .srt file will be written next to the render.' : 'No .srt file will be written.');
+  } catch (error) {
+    toast(`Caption file: ${error.message}`, 'bad');
+  }
 }
 
 async function setFillDevice(device) {

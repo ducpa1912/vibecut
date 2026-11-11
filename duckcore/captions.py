@@ -358,6 +358,11 @@ def append_appended(
     return track
 
 
+def wants_srt(track: dict | None) -> bool:
+    """A caption file is only written when the user asked for one."""
+    return bool(isinstance(track, dict) and track.get("srt"))
+
+
 def srt(track: dict) -> str:
     def stamp(value: float) -> str:
         value = max(0.0, float(value))

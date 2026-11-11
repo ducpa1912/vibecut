@@ -19,6 +19,13 @@ render takes hours on this Mac, and any fill change in loop 3 would make it cold
 - [ ] REQ-20261111-07 · real CPU-pack download and CPU fill on a clean machine
 - [ ] PLAN · repeat the MPS real-span run 3 times and on a 60 s span: variance, heat, memory
 
+### Loop 4 internal loop A — edges and the leak tool
+- [x] `scripts/ocr_render.py` OCRs every frame and matches text to Check tracklets; scene text apart
+- [x] range ends refined at source frame rate (`detect.refine_tracklet_edges`), never widened
+- [x] mask frame membership uses the frame start, not its centre; `textfill.VERSION` 13
+- [x] tests: last frame inside a range gets a hole; 108 pass
+- [ ] re-Check and re-render to prove zero leaks
+
 ## Loop 4 — one full render of the review project
 
 - [ ] **Render once and review**, with the loop 1 estimate on screen first. Check 0, 2, 10, 90, 157 s

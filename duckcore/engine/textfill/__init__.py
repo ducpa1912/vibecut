@@ -38,7 +38,7 @@ DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
-VERSION = 12
+VERSION = 13
 MODEL_FILES = {"lama": "lama_fp32.onnx"}
 # The file an engine reads on the GPU.
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}

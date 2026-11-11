@@ -95,9 +95,9 @@ def test_frame_rects_follow_track() -> None:
         {"t": 1.0, "box": {"x": 0.10, "y": 0.10, "w": 0.20, "h": 0.10}},
         {"t": 1.9, "box": {"x": 0.55, "y": 0.10, "w": 0.20, "h": 0.10}},
     ])
-    table = masks.frame_rects([layer], start=1.0, fps=2, frames=2, width=1000, height=1000)
-    assert table[0] and table[1]
-    assert table[0] != table[1]
+    table = masks.frame_rects([layer], start=1.0, fps=4, frames=4, width=1000, height=1000)
+    assert table[0] and table[3]
+    assert table[0] != table[3]
 
 
 def test_large_layer_gets_more_padding() -> None:
@@ -288,3 +288,17 @@ def test_one_reading_is_a_flash_and_two_readings_are_not() -> None:
     ]
     assert clean.layers_from_report(once)[0]["kind"] == "blur"
     assert clean.layers_from_report(twice)[0]["kind"] == "fill"
+
+
+def test_the_last_frame_inside_a_range_gets_a_hole() -> None:
+    """A range that ends mid-frame must cover the frame that starts before it."""
+    start, fps = 4.75, 30.0
+    end = 7.317  # frame 77 starts at 7.3167 and still shows the line
+    layer = {
+        "box": {"x": 0.3, "y": 0.48, "w": 0.4, "h": 0.04},
+        "ranges": [{"start": 5.75, "end": end}],
+        "track": [],
+    }
+    table = masks.frame_rects([layer], start=start, fps=fps, frames=80, width=1080, height=1920)
+    assert table[77], "the frame at 7.3167 starts before the range end and must be filled"
+    assert not table[78], "the next frame starts after the range end"

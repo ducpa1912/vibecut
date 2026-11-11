@@ -198,6 +198,19 @@ ul.clean li { margin:6px 0; }
       </div>
     </div>
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-09</strong><span>11 Nov · Loop 4 closes</span></div>
+      <div class="timeline-body">
+        <strong>The full render exposed range edges that stop one frame too early.</strong>
+        <ul class="clean">
+          <li>Mask membership now uses the frame start, not its centre; the last frame inside a range gets a hole.</li>
+          <li>Range ends are refined at the source frame rate, narrowing an edge instead of padding it.</li>
+          <li>New <span class="mono">scripts/ocr_render.py</span> reads every frame and reports leaks apart from scene text.</li>
+        </ul>
+        <span class="mono">108 tests</span> · proof render to follow.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-08</strong><span>11 Nov · Find your layers</span></div>
       <div class="timeline-body">
         <strong>Clean all says 42 layers; one was set by hand and could not be found.</strong>

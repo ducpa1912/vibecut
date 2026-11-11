@@ -56,6 +56,12 @@ def _tree_bytes(path: Path) -> int:
     return total
 
 
+def fill_device(data_root: Path | str) -> str:
+    """The fill chip the user chose. One default: GPU. The render reads this."""
+    stored = str(load(data_root).get("fill_device") or "gpu").strip().lower()
+    return "cpu" if stored == "cpu" else "gpu"
+
+
 def snapshot(data_root: Path | str) -> dict[str, Any]:
     root = Path(data_root)
     settings = load(root)

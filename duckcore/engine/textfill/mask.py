@@ -217,7 +217,7 @@ def frame_keys(
     timed = [(layer, layer_windows(layer)) for layer in layers]
     out: list[float | None] = []
     for index in range(frames):
-        at = start + (index + 0.5) / fps
+        at = start + index / fps
         active = [
             layer for layer, windows in timed
             if windows is None or any(low <= at <= high for low, high in windows)
@@ -253,8 +253,10 @@ def frame_rects(
     out: list[list[Rect]] = []
     step = 1.0 / float(fps)
     for index in range(int(frames)):
-        # Frame centre time, so a window edge between frames is not ambiguous.
-        at = float(start) + (index + 0.5) * step
+        # A frame holds the picture at its own start time. Using the centre here
+        # dropped the last frame of a line whose range ended inside that frame,
+        # and the subtitle stayed on screen for one frame.
+        at = float(start) + index * step
         rects = [
             rect
             for layer, windows in prepared

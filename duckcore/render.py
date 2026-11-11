@@ -253,8 +253,40 @@ def _fill_device(data_root: Path) -> str:
     from duckcore import app_settings
     from duckcore.engine import textfill
 
-    choice = str(app_settings.load(data_root).get("fill_device") or "cpu").lower()
-    return textfill.chosen_device("lama", choice, textfill.models_dir(data_root))
+    return textfill.chosen_device(
+        "lama", app_settings.fill_device(data_root), textfill.models_dir(data_root),
+    )
+
+
+RENDER_RATES_FILE = "render_rates.json"
+RENDER_RATE_SAMPLES = 3
+
+
+def _render_rates(data_root: Path) -> list[float]:
+    """Seconds of whole render per second of output, measured on this Mac."""
+    try:
+        stored = json.loads((Path(data_root) / RENDER_RATES_FILE).read_text(encoding="utf-8"))
+        return [float(value) for value in stored.get("ratios") or [] if float(value) > 0][-RENDER_RATE_SAMPLES:]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def remember_render_time(data_root: Path, duration: float, seconds: float) -> None:
+    if duration <= 1 or seconds <= 0:
+        return
+    path = Path(data_root) / RENDER_RATES_FILE
+    ratios = _render_rates(data_root)
+    ratios = [*ratios, round(float(seconds) / float(duration), 4)][-RENDER_RATE_SAMPLES:]
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"ratios": ratios}, indent=1), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _render_ratio(data_root: Path) -> float | None:
+    ratios = sorted(_render_rates(data_root))
+    if not ratios:
+        return None
+    return ratios[len(ratios) // 2]
 
 
 def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
@@ -286,8 +318,18 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
             ))
     summary = textfill.estimate_summary(rows, data_root)
     filled_frames = sum(int(row.get("frames") or 0) for row in rows)
+    timeline = sum(
+        max(0.0, float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0))
+        for clip in edit.get("clips") or []
+        if str(clip.get("kind")) != "media"
+    )
+    ratio = _render_ratio(data_root)
+    total = round(timeline * ratio, 1) if ratio and timeline > 0 else None
     return {
         **summary,
+        "total_seconds": total,
+        "total_measured": bool(total),
+        "timeline_seconds": round(timeline, 1),
         "layers": {
             "fill": len(layers),
             "blur": sum(1 for layer in on if layer.get("kind") == "blur"),
@@ -319,6 +361,7 @@ def render_edit(
     meta = pipeline.probe(source)
     target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
     out_w, out_h, scale = _scale_filter(meta, target_fps)
+    started = time.monotonic()
     project_id = str(project["id"])
     job_dir = Path(data_root) / "projects" / project_id
     cache = job_dir / "fill"
@@ -445,7 +488,7 @@ def render_edit(
             segment.unlink(missing_ok=True)
 
         track = edit.get("captions")
-        if isinstance(track, dict) and track.get("cues"):
+        if captions.wants_srt(track) and track.get("cues"):
             output.with_suffix(".srt").write_text(captions.srt(track), encoding="utf-8")
             if track.get("burn"):
                 if progress:
@@ -466,6 +509,11 @@ def render_edit(
 
         if progress:
             progress(1.0, "Render complete")
+        rendered = sum(
+            max(0.0, float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0))
+            for clip in clips
+        )
+        remember_render_time(Path(data_root), rendered, time.monotonic() - started)
         return output
     except Exception:
         for segment in segments:
@@ -742,6 +790,13 @@ class RenderQueue:
                 )
                 """
             )
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(render_queue)")
+            }
+            if "estimate_seconds" not in columns:
+                connection.execute("ALTER TABLE render_queue ADD COLUMN estimate_seconds REAL DEFAULT 0")
+            if "elapsed_seconds" not in columns:
+                connection.execute("ALTER TABLE render_queue ADD COLUMN elapsed_seconds REAL DEFAULT 0")
             connection.execute(
                 """
                 UPDATE render_queue
@@ -765,6 +820,8 @@ class RenderQueue:
             "output": row["output"],
             "created": row["created"],
             "updated": row["updated"],
+            "estimate_seconds": row["estimate_seconds"] if "estimate_seconds" in row.keys() else 0,
+            "elapsed_seconds": row["elapsed_seconds"] if "elapsed_seconds" in row.keys() else 0,
         }
 
     def busy_for(self, project_id: str) -> bool:
@@ -909,17 +966,38 @@ class RenderQueue:
                 )
         return self.status(project_id, edit_id)
 
-    def _next(self) -> dict | None:
+    def _claim_next(self) -> dict | None:
+        """Take one queued job and mark it running in the same transaction.
+
+        A select followed by an update let two cores on one data folder run the
+        same job, and a stale worker could fail it with its own model state.
+        """
+        now = time.time()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM render_queue WHERE state='queued' ORDER BY created ASC LIMIT 1"
             ).fetchone()
-        return self._row(row) if row else None
+            if row is None:
+                return None
+            claimed = connection.execute(
+                """
+                UPDATE render_queue
+                SET state='running', stage='Rendering', progress=0.01,
+                    message='Starting render', updated=?
+                WHERE id=? AND state='queued'
+                """,
+                (now, row["id"]),
+            )
+            if claimed.rowcount != 1:
+                return None
+        return self._row(row)
 
     def _update(self, item_id: str, **values) -> None:
         if "message" in values:
             values["message"] = _clean_message(values["message"])
-        allowed = {"state", "stage", "progress", "message", "output"}
+        allowed = {"state", "stage", "progress", "message", "output",
+                   "estimate_seconds", "elapsed_seconds"}
         fields = [key for key in values if key in allowed]
         if not fields:
             return
@@ -936,16 +1014,12 @@ class RenderQueue:
             if self.paused:
                 time.sleep(0.5)
                 continue
-            item = self._next()
+            item = self._claim_next()
             if item is None:
                 time.sleep(0.5)
                 continue
             event = threading.Event()
             self.cancel_events[item["id"]] = event
-            self._update(
-                item["id"], state="running", stage="Rendering",
-                progress=0.01, message="Starting render",
-            )
             try:
                 from duckcore import edits
                 from duckcore.store import ProjectStore
@@ -961,6 +1035,15 @@ class RenderQueue:
                         message=message,
                     )
 
+                try:
+                    from duckcore.engine import pipeline
+
+                    meta = pipeline.probe(str(project["source_path"]))
+                    guess = estimate_edit(edit, meta, self.data_root)
+                    seconds = guess.get("total_seconds") or guess.get("seconds") or 0
+                    self._update(item["id"], estimate_seconds=float(seconds))
+                except Exception:  # noqa: BLE001 - the estimate never blocks a render
+                    pass
                 output = render_edit(
                     project, edit, self.data_root,
                     progress=progress, cancel_event=event,
@@ -974,6 +1057,7 @@ class RenderQueue:
                     self._update(
                         item["id"], state="done", stage="Done",
                         progress=1.0, message="Render complete", output=str(output),
+                        elapsed_seconds=round(time.time() - item["created"], 1),
                     )
             except Exception as exc:  # noqa: BLE001
                 cancelled = event.is_set()

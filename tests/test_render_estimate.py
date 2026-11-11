@@ -49,6 +49,9 @@ def test_estimate_uses_the_seed_rate_and_says_it_is_a_guess(tmp_path) -> None:
 
 
 def test_estimate_uses_the_rate_measured_on_this_mac(tmp_path) -> None:
+    from duckcore import app_settings
+
+    app_settings.update(tmp_path, {"fill_device": "cpu"})
     edit = _edit([_layer("fill", 1.0, 3.0)])
     guess = render.estimate_edit(edit, META, tmp_path)
     (tmp_path / textfill.RATES_FILE).write_text(

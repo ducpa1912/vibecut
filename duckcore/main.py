@@ -104,6 +104,7 @@ class CuePatch(BaseModel):
 
 class CaptionsPatch(BaseModel):
     burn: bool | None = None
+    srt: bool | None = None
     style: str | None = None
     position: str | None = None
 
@@ -1280,6 +1281,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 )
             if body.burn is not None:
                 track = captions.set_burn(edit, body.burn, data_root)
+            if body.srt is not None:
+                track = edit.setdefault("captions", {})
+                track["srt"] = bool(body.srt)
+                edits.save_edit(edit, data_root)
             if track is None:
                 track = edit.get("captions")
         except KeyError as exc:
