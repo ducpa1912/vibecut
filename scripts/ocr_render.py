@@ -19,17 +19,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from difflib import SequenceMatcher
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from duckcore import textmatch  # noqa: E402
 from duckcore.engine import vision  # noqa: E402
 
 DEFAULT_DATA = (
@@ -49,28 +48,26 @@ def _ffmpeg() -> str:
     return str(ROOT / "build/DuckSuite-Xcode.app/Contents/Helpers/ffmpeg")
 
 
-def _probe_duration(path: Path) -> float:
+def _probe(path: Path) -> tuple[float, float]:
+    """Duration and frame rate of the file, read rather than assumed."""
     ffprobe = str(Path(_ffmpeg()).with_name("ffprobe"))
     if not Path(ffprobe).is_file():
         ffprobe = shutil.which("ffprobe") or ffprobe
     out = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        [ffprobe, "-v", "error",
+         "-show_entries", "format=duration:stream=avg_frame_rate",
+         "-select_streams", "v:0", "-of", "json", str(path)],
         capture_output=True, text=True, check=True,
     )
-    return float(out.stdout.strip())
-
-
-def _normal(value: str) -> str:
-    return re.sub(r"[\s\W_]+", "", str(value or "").casefold())
-
-
-def _same(left: str, right: str) -> float:
-    left, right = _normal(left), _normal(right)
-    if not left or not right:
-        return 0.0
-    if left in right or right in left:
-        return 1.0
-    return SequenceMatcher(None, left, right).ratio()
+    data = json.loads(out.stdout or "{}")
+    duration = float((data.get("format") or {}).get("duration") or 0.0)
+    rate = str(((data.get("streams") or [{}])[0]).get("avg_frame_rate") or "30/1")
+    try:
+        num, den = rate.split("/", 1)
+        fps = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        fps = 30.0
+    return duration, fps if fps > 0 else 30.0
 
 
 def _tracklets(project: Path) -> list[dict]:
@@ -96,7 +93,7 @@ def _tracklets(project: Path) -> list[dict]:
 
 
 def run(render: Path, project: Path, start: float, end: float, out: Path) -> dict:
-    duration = _probe_duration(render)
+    duration, fps = _probe(render)
     end = min(duration, end) if end > 0 else duration
     start = max(0.0, start)
     temp = Path(tempfile.mkdtemp(prefix="ocr-render-"))
@@ -105,7 +102,7 @@ def run(render: Path, project: Path, start: float, end: float, out: Path) -> dic
             [
                 _ffmpeg(), "-y", "-v", "error", "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
                 "-i", str(render),
-                "-vf", f"fps=30,scale={WIDTH}:-2", "-q:v", "4", str(temp / "%06d.jpg"),
+                "-vf", f"fps={fps:.6f},scale={WIDTH}:-2", "-q:v", "4", str(temp / "%06d.jpg"),
             ],
             check=True, capture_output=True,
         )
@@ -123,7 +120,7 @@ def run(render: Path, project: Path, start: float, end: float, out: Path) -> dic
                 if not lines:
                     continue
                 read += 1
-                at = start + (offset + index) / 30.0
+                at = start + (offset + index) / fps
                 for line in lines:
                     text = str(line.get("text") or "")
                     if float(line.get("confidence") or 0.0) < 0.3:
@@ -137,7 +134,7 @@ def run(render: Path, project: Path, start: float, end: float, out: Path) -> dic
                             continue
                         if not (track["start"] - TIME_SLACK <= at <= track["end"] + TIME_SLACK):
                             continue
-                        ratio = _same(text, track["text"])
+                        ratio = textmatch.same_text(text, track["text"])
                         if ratio > score:
                             score, best = ratio, track
                     if best is not None and score >= MATCH:

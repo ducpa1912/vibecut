@@ -120,6 +120,16 @@ estimate, one fill default and an opt-in caption file.
 engine-named errors; whole-render estimate; single GPU default; `.srt` opt-in.
 **Outcome:** pass on F1-F5 and acceptance 1-7. Final render 19:15: 0 leaks in 4,800 frames, 76 s vs 333.8 s estimate; fill/blur 72.46/0.57 -> 70.13/0.60 s; title 0.317 -> 0.067 s; 109 tests.
 
+### REQ-20261111-10 · 2026-11-11
+**Request:** "continue to improve on the code, refractor and make multiple improvement, make no mistake,
+write perfect code."
+**Read as:** one refactor pass with no behaviour change beyond proven bugs, every rule in one place.
+**Response:** `textmatch` owns OCR comparison; edge refinement split into a pure rule and a probe with
+logging; frame key windows match frame rects; the queue keeps a live worker's job on restart and
+probes once; `_row`, the settings snapshot and the estimate compute one value once; the leak tool
+reads the render's real frame rate.
+**Outcome:** 117 tests, JS clean. No render output change; no `textfill.VERSION` bump.
+
 ## Session log
 
 | # | Time | Request | Response |

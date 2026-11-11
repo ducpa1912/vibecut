@@ -220,7 +220,7 @@ def frame_keys(
         at = start + index / fps
         active = [
             layer for layer, windows in timed
-            if windows is None or any(low <= at <= high for low, high in windows)
+            if windows is None or any(low <= at < high for low, high in windows)
         ]
         plans = [layer.get("fill_keys") for layer in active]
         out.append(None if not plans or any(plan is None for plan in plans) else float(max(plans)))

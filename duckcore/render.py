@@ -304,6 +304,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
     on = [layer for layer in clean if layer.get("enabled") is not False]
     layers = _fill_layers(edit)
     fps = float(meta.get("fps") or 0.0)
+    device = _fill_device(data_root)
     rows = []
     if layers:
         for clip in edit.get("clips") or []:
@@ -314,7 +315,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
             rows.append(textfill.estimate_span(
                 meta=meta, start=start, duration=max(0.04, end - start), layers=layers,
                 method="lama", cache_dir=cache, data_root=data_root,
-                device=_fill_device(data_root),
+                device=device,
             ))
     summary = textfill.estimate_summary(rows, data_root)
     filled_frames = sum(int(row.get("frames") or 0) for row in rows)
@@ -755,6 +756,17 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
     mixed.replace(output)
 
 
+def _process_alive(pid: int) -> bool:
+    """Whether a render worker still owns its row. Same machine only."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 class RenderQueue:
     def __init__(self, data_root: Path):
         self.data_root = Path(data_root)
@@ -797,32 +809,31 @@ class RenderQueue:
                 connection.execute("ALTER TABLE render_queue ADD COLUMN estimate_seconds REAL DEFAULT 0")
             if "elapsed_seconds" not in columns:
                 connection.execute("ALTER TABLE render_queue ADD COLUMN elapsed_seconds REAL DEFAULT 0")
-            connection.execute(
-                """
-                UPDATE render_queue
-                SET state = 'queued', stage = 'Queued',
-                    message = 'Resuming after restart', updated = ?
-                WHERE state IN ('running', 'cancelling')
-                """,
-                (time.time(),),
-            )
+            if "worker_pid" not in columns:
+                connection.execute("ALTER TABLE render_queue ADD COLUMN worker_pid INTEGER DEFAULT 0")
+            # Requeue only work whose worker is gone. A second core starting
+            # while a render runs must not put that job back in the queue.
+            rows = connection.execute(
+                "SELECT id, worker_pid FROM render_queue WHERE state IN ('running', 'cancelling')"
+            ).fetchall()
+            for row in rows:
+                if _process_alive(int(row["worker_pid"] or 0)):
+                    continue
+                connection.execute(
+                    """
+                    UPDATE render_queue
+                    SET state = 'queued', stage = 'Queued',
+                        message = 'Resuming after restart', worker_pid = 0, updated = ?
+                    WHERE id = ?
+                    """,
+                    (time.time(), row["id"]),
+                )
 
     def _row(self, row: sqlite3.Row) -> dict:
-        return {
-            "id": row["id"],
-            "project_id": row["project_id"],
-            "edit_id": row["edit_id"],
-            "title": row["title"],
-            "state": row["state"],
-            "stage": row["stage"],
-            "progress": row["progress"],
-            "message": row["message"],
-            "output": row["output"],
-            "created": row["created"],
-            "updated": row["updated"],
-            "estimate_seconds": row["estimate_seconds"] if "estimate_seconds" in row.keys() else 0,
-            "elapsed_seconds": row["elapsed_seconds"] if "elapsed_seconds" in row.keys() else 0,
-        }
+        data = dict(row)
+        data["estimate_seconds"] = float(data.get("estimate_seconds") or 0.0)
+        data["elapsed_seconds"] = float(data.get("elapsed_seconds") or 0.0)
+        return data
 
     def busy_for(self, project_id: str) -> bool:
         with self._connect() as connection:
@@ -984,10 +995,10 @@ class RenderQueue:
                 """
                 UPDATE render_queue
                 SET state='running', stage='Rendering', progress=0.01,
-                    message='Starting render', updated=?
+                    message='Starting render', worker_pid=?, updated=?
                 WHERE id=? AND state='queued'
                 """,
-                (now, row["id"]),
+                (os.getpid(), now, row["id"]),
             )
             if claimed.rowcount != 1:
                 return None
@@ -997,7 +1008,7 @@ class RenderQueue:
         if "message" in values:
             values["message"] = _clean_message(values["message"])
         allowed = {"state", "stage", "progress", "message", "output",
-                   "estimate_seconds", "elapsed_seconds"}
+                   "estimate_seconds", "elapsed_seconds", "worker_pid"}
         fields = [key for key in values if key in allowed]
         if not fields:
             return
@@ -1058,6 +1069,7 @@ class RenderQueue:
                         item["id"], state="done", stage="Done",
                         progress=1.0, message="Render complete", output=str(output),
                         elapsed_seconds=round(time.time() - item["created"], 1),
+                        worker_pid=0,
                     )
             except Exception as exc:  # noqa: BLE001
                 cancelled = event.is_set()
@@ -1065,7 +1077,7 @@ class RenderQueue:
                     item["id"],
                     state="cancelled" if cancelled else "failed",
                     stage="Cancelled" if cancelled else "Failed",
-                    progress=1.0,
+                    progress=1.0, worker_pid=0,
                     message="Render cancelled" if cancelled else _clean_message(exc)[:500],
                 )
             finally:

@@ -125,6 +125,15 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 
 ## Done
 
+### 11 Nov — refactor pass (REQ-20261111-10)
+- [x] `duckcore/textmatch.py`: one comparison rule for clustering, edge refinement and the leak tool
+- [x] `refine_tracklet_edges`: pure `edge_end_from_hits`, dead start branch removed, logging not prints
+- [x] `mask.frame_keys` window end matches `frame_rects` (frame start, exclusive end)
+- [x] Queue: a live worker keeps its job on restart; claim sets `worker_pid`; one estimate probe
+- [x] `RenderQueue._row` is `dict(row)`; settings snapshot and estimate read the device once
+- [x] Leak tool probes duration and frame rate instead of assuming 30 fps
+- [x] 117 tests pass; JS clean
+
 ### 11 Nov — user-set layers are findable (`REQ-20261111-08`)
 - [x] Clean Focus `All` / `Yours N` filter, scene and strip badges
 - [x] `YOURS` badge on layer rows in Clean and Edit

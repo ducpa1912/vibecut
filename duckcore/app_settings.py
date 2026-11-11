@@ -73,9 +73,7 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
             "engine": str(settings.get("translation_engine") or "auto"),
             "custom_path": str(settings.get("translation_model_path") or ""),
         },
-        "fill": {
-            "device": "cpu" if str(settings.get("fill_device") or "gpu") == "cpu" else "gpu",
-        },
+        "fill": {"device": fill_device(root)},
         "online": {
             "enabled": bool(settings.get("online_enabled")),
             "endpoint": str(settings.get("online_endpoint") or ""),

@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 import hashlib
 import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -38,6 +39,9 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 
+LOGGER = logging.getLogger(__name__)
+
+from .. import textmatch
 from . import rights
 
 SCHEMA_VERSION = 1
@@ -233,8 +237,8 @@ def _similar(a: dict, b: dict) -> float:
 
 
 def _normalized_text(text: Any) -> str:
-    value = " ".join(str(text or "").split())
-    return value.casefold()
+    """One rule, shared with the edge check and the leak tool."""
+    return textmatch.normalize(text)
 
 
 def _observation(
@@ -1108,6 +1112,48 @@ def plan_fills(tracklets: list[dict], frames: list[dict], motion: dict | None, s
 
 
 
+def edge_end_from_hits(
+    hits: Iterable[float],
+    end: float,
+    *,
+    fps: float = 30.0,
+    forward: float = 0.15,
+) -> float:
+    """The end that a set of matching frame times supports.
+
+    Pure so the rule can be tested without OCR: the last frame where the words
+    are present, plus one frame, never more than ``forward`` past the old end.
+    """
+    times = sorted(float(value) for value in hits if float(value) >= 0.0)
+    if not times:
+        return float(end)
+    step = 1.0 / max(1.0, float(fps))
+    return min(float(end) + float(forward), times[-1] + step)
+
+
+def _probe_edges(
+    folder: Path,
+    files: list[Path],
+    *,
+    lo: float,
+    fps: float,
+    words: str,
+    vision: Any,
+) -> list[float]:
+    """Frame times in ``folder`` whose OCR matches ``words``."""
+    records = vision.probe_images(folder, files=files)
+    hits: list[float] = []
+    for index, path in enumerate(files):
+        record = records.get(path.name) or {}
+        for line in record.get("text") or []:
+            if float(line.get("confidence") or 0.0) < 0.3:
+                continue
+            if textmatch.same_text(line.get("text"), words):
+                hits.append(lo + index / fps)
+                break
+    return hits
+
+
 def refine_tracklet_edges(
     tracklets: list[dict],
     source: str,
@@ -1115,14 +1161,14 @@ def refine_tracklet_edges(
     *,
     fps: float = 30.0,
     window: float = 0.4,
+    forward: float = 0.15,
 ) -> int:
-    """Trim each line's start and end to the frames that really show it.
+    """Move each line's end to the last frame that really shows it.
 
-    A 4 fps read knows an edge to a quarter second, and OCR can miss a frame,
-    so a range could end before the last frame of text or start after it. Around
-    each edge this reads the source at its own frame rate and keeps the frames
-    where the tracklet's words are still there. It narrows an edge, never widens
-    it, so the patches do not grow.
+    A 4 fps read knows an edge to a quarter second, and OCR can miss a frame, so
+    a range could end before the last frame of text. Around each end this reads
+    the source at its own frame rate and keeps the last frame where the line is
+    still there. It never widens a range past one frame.
     """
     from . import vision
     from duckcore import media
@@ -1133,81 +1179,50 @@ def refine_tracklet_edges(
     if os.environ.get("DUCK_EDGE_REFINE", "1").strip().lower() in {"0", "off", "false", "no"}:
         return 0
     if not tracklets or not vision.available() or not Path(source).is_file():
-        import sys
-
-        print(
-            f"edge refine skipped: tracklets={len(tracklets or [])} "
-            f"vision={vision.available()} source={Path(source).is_file()}",
-            file=sys.stderr,
+        LOGGER.info(
+            "edge refine skipped: tracklets=%s vision=%s source=%s",
+            len(tracklets or []), vision.available(), Path(source).is_file(),
         )
         return 0
+    fps = max(1.0, float(fps))
     ffmpeg = media.ffmpeg()
     changed = 0
     for tracklet in tracklets:
-        text = _normalized_text(tracklet.get("text_sample"))
-        ranges = tracklet.get("ranges") or []
-        if not text or not ranges:
+        words = textmatch.compact(tracklet.get("text_sample"))
+        if not words:
             continue
-        wanted = [_normalized_text(item) for item in (tracklet.get("_texts") or [])]
-        wanted = [item for item, _t in wanted] if wanted and isinstance(wanted[0], tuple) else wanted
-        words = {text, *[w for w in wanted if w]}
-        for index, span in enumerate(ranges[:4]):
-            start = float(span.get("start") or 0.0)
+        for span in tracklet.get("ranges") or []:
             end = float(span.get("end") or 0.0)
-            # Only the end is refined: the start already reaches a full reading
-            # back, and narrowing it on a missed OCR frame would show text.
-            for edge, at in (("end", end),):
-                # A short card can sit far inside the padded edge (a 66 ms
-                # title ended at 0.317 s), so look further back than forward.
-                lo = max(0.0, at - window)
-                hi = at + 0.15
-                temp = Path(tempfile.mkdtemp(prefix="edge-", dir=job_dir))
-                try:
-                    subprocess.run(
-                        [ffmpeg, "-y", "-v", "error", "-ss", f"{lo:.3f}", "-to", f"{hi:.3f}",
-                         "-i", source, "-vf", f"fps={fps:.3f},scale=960:-2", "-q:v", "4",
-                         str(temp / "%04d.jpg")],
-                        check=True, capture_output=True,
-                    )
-                    files = sorted(temp.glob("*.jpg"))
-                    if not files:
-                        continue
-                    records = vision.probe_images(temp, files=files)
-                    hit: list[float] = []
-                    for frame_index, path in enumerate(files):
-                        record = records.get(path.name) or {}
-                        for line in record.get("text") or []:
-                            if float(line.get("confidence") or 0.0) < 0.3:
-                                continue
-                            value = _normalized_text(line.get("text"))
-                            if any(
-                                value and (value in word or word in value
-                                           or SequenceMatcher(None, value, word).ratio() >= 0.6)
-                                for word in words
-                            ):
-                                hit.append(lo + frame_index / fps)
-                                break
-                    if not hit:
-                        continue
-                    if edge == "end":
-                        new = min(end + 0.15, max(hit) + 1.0 / fps)
-                        if new < end - 0.001 or new > end + 0.001:
-                            span["end"] = round(new, 3)
-                            changed += 1
-                    else:
-                        new = max(0.0, min(hit))
-                        if new > start + 0.001 or new < start - 0.001:
-                            span["start"] = round(new, 3)
-                            changed += 1
-                except (OSError, subprocess.SubprocessError):
-                    pass
-                finally:
-                    shutil.rmtree(temp, ignore_errors=True)
-        tracklet["ranges"] = [
-            {"start": round(float(item.get("start") or 0.0), 3),
-             "end": round(float(item.get("end") or 0.0), 3)}
-            for item in ranges
-        ]
+            if end <= 0.0:
+                continue
+            # A short card can sit far inside the padded edge (a 66 ms title
+            # ended at 0.317 s), so look further back than forward.
+            lo = max(0.0, end - float(window))
+            hi = end + float(forward)
+            temp = Path(tempfile.mkdtemp(prefix="edge-", dir=job_dir))
+            try:
+                subprocess.run(
+                    [ffmpeg, "-y", "-v", "error", "-ss", f"{lo:.3f}", "-to", f"{hi:.3f}",
+                     "-i", source, "-vf", f"fps={fps:.3f},scale=960:-2", "-q:v", "4",
+                     str(temp / "%04d.jpg")],
+                    check=True, capture_output=True,
+                )
+                files = sorted(temp.glob("*.jpg"))
+                if not files:
+                    continue
+                hits = _probe_edges(
+                    temp, files, lo=lo, fps=fps, words=words, vision=vision,
+                )
+                new = edge_end_from_hits(
+                    hits, end, fps=fps, forward=float(forward),
+                )
+                if abs(new - end) > 0.001:
+                    span["end"] = round(new, 3)
+                    changed += 1
+            except (OSError, subprocess.SubprocessError) as exc:
+                LOGGER.warning("edge refine failed near %.3f s: %s", end, exc)
+            finally:
+                shutil.rmtree(temp, ignore_errors=True)
     return changed
 
 

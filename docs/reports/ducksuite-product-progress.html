@@ -198,6 +198,20 @@ ul.clean li { margin:6px 0; }
       </div>
     </div>
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-10</strong><span>11 Nov · Refactor pass</span></div>
+      <div class="timeline-body">
+        <strong>One rule for OCR comparison, one owner per queue job.</strong>
+        <ul class="clean">
+          <li>New <span class="mono">duckcore/textmatch.py</span> is used by clustering, edge refinement and the leak tool.</li>
+          <li>Edge refinement has a pure, tested end rule; the dead start branch and stderr prints are gone.</li>
+          <li>A second core no longer requeues a job whose worker is alive; the claim records the worker pid.</li>
+          <li>The leak tool reads the render's real frame rate; no more 30 fps assumption.</li>
+        </ul>
+        <span class="mono">117 tests</span> · no render output change.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-09</strong><span>11 Nov · Loop 4 closes</span></div>
       <div class="timeline-body">
         <strong>The full render exposed range edges that stop one frame too early.</strong>
