@@ -136,13 +136,30 @@ ul.clean li { margin:6px 0; }
   <div class="section-head"><h2>Latest development — 10–11 Nov 2026</h2><p>Forty-five commits since the 9 Nov snapshot. Newest first.</p></div>
 
   <div class="grid g4">
-    <div class="card"><div class="chip done">Current</div><div class="big">83</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
+    <div class="card"><div class="chip done">Current</div><div class="big">127</div><p>Tests pass on the current local build; the 9 Nov snapshot below recorded 52.</p></div>
     <div class="card"><div class="chip done">Since 9 Nov</div><div class="big">45</div><p>Commits since 9 Nov, from <span class="mono">7308bbb</span> to this build.</p></div>
     <div class="card"><div class="chip done">Checked</div><div class="big">2</div><p>Window sizes: 1440×900 and 1280×800.</p></div>
     <div class="card"><div class="chip active">Open</div><div class="big">1</div><p>Step left: re-run Check so the 66 ms title gets a clean layer. Captions on the current render are already gone.</p></div>
   </div>
 
   <div class="timeline" style="margin-top:14px">
+    <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-11</strong><span>11 Nov · Loop 7 ink check</span></div>
+      <div class="timeline-body">
+        <strong>The render is checked for leftover text from pixels, and two boundary leaks are gone.</strong>
+        <ul class="clean">
+          <li><span class="mono">duckcore/ink.py</span> builds a stroke map for every line from its source frames (edges strong on ≥80 % of the line, weak just outside it) and scores any output frame against it. No OCR.</li>
+          <li>Check now also reads frame 0, the frame after every cut and the onset scan's moments: 62 extra stills, +46 s (181 → 227 s).</li>
+          <li>The fill hole is the line's own ink, grown 6 px; total hole pixels 84,652,279 → 47,611,085 (0.562), so half the old box area is no longer invented.</li>
+          <li>After a render the app scores all 42 layers and stores frames checked, hits, times and a flicker number. A hit widens the layer and refills that span once.</li>
+          <li>Two real leaks found by eye and OCR at 4.767 s and 93.733 s: the fill plan was anchored to the requested cut while ffmpeg decodes from the next frame. The plan is now aligned to the decoded frame and reaches one frame back from the first ink reading.</li>
+          <li>Final render 23:54: 2,936 frames checked, 0 hits, 0 leaks in an every-frame OCR proof. 16:44 baseline: 5 hits, both known leaks included. Cold render 418.2 s against a 420.8 s estimate.</li>
+          <li>Limits, stated in the UI and the review: a one-frame flash and a still scene edge cannot be told apart from text without OCR, and a partly filled line under 85 % scores too low to report.</li>
+          <li>Not shipped: per-frame fill where the picture changes fast, and <span class="mono">follow_motion</span>; no measured win was recorded for either.</li>
+        </ul>
+        <span class="mono">127 tests</span> · <span class="mono">textfill.VERSION</span> 15 · review: <span class="mono">docs/teams/loop-07-ink-check/review.md</span>
+      </div>
+    </div>
     <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 3</strong><span>11 Nov · fill speed</span></div>
       <div class="timeline-body">

@@ -69,6 +69,23 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 - [x] REQ-20261111-03 · five roles in `.claude/agents/` and in `AGENTS.md`
 - [x] REQ-20261111-03 · per-step BYOM/BYOK matrix in `AGENTS.md` and `docs/duck/BYOK-PLAN.md`
 
+## Loop 7 — ink check: catch leftover text without OCR (REQ-20261111-11)
+
+Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-check/review.md`.
+
+- [x] REQ-20261111-11 · `duckcore/ink.py`: ink build/score/grow/box, onset scan; 5 tests
+- [x] REQ-20261111-11 · detection edges from ink, OCR fallback; first hot frame reached back one frame
+- [x] REQ-20261111-11 · `duckcore/inkcheck.py`: post-render score, hit list, flicker per line
+- [x] REQ-20261111-11 · ink box is the fill hole on every frame; `span_key` and `VERSION` 15
+- [x] REQ-20261111-11 · queue stores checked frames, hits, times, flicker; Render screen shows them
+- [x] REQ-20261111-11 · Check also reads frame 0, the frame after each cut, and onset moments (62 extra)
+- [x] REQ-20261111-11 · one refill retry on a hit, then keep the render and show the times
+- [x] REQ-20261111-11 · fill plan aligned to the decoded frame grid (ffmpeg lands on the next frame)
+- [x] REQ-20261111-11 · estimate carries the check cost; cold path takes fill + check + encode
+- [x] REQ-20261111-11 · tests: ink, post-render check on a real one-leak video, extra Check times
+- [ ] REQ-20261111-11 · D8 per-frame fill where the picture changes fast: not shipped, no number
+- [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: not shipped, not measured
+
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 
 - [ ] REQ-20261111-02 · SHA-256 per pack file; `packs.py` currently accepts ≥98% of the expected size

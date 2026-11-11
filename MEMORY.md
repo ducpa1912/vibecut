@@ -130,6 +130,24 @@ probes once; `_row`, the settings snapshot and the estimate compute one value on
 reads the render's real frame rate.
 **Outcome:** 117 tests, JS clean. No render output change; no `textfill.VERSION` bump.
 
+### REQ-20261111-11 · 2026-11-11
+**Request:** Senior PO brief, Loop 7 (ink check): "catch every leftover text, and fill better".
+No per-frame OCR in the app; find leaks from pixels.
+**Read as:** a per-line stroke map scored on the output, an in-app post-render check with one refill,
+and a tighter fill hole, proven on `prj_e95348a97316`.
+**Response:** `duckcore/ink.py` and `duckcore/inkcheck.py`; ink edges in detection with OCR fallback;
+ink hole in the fill; post-render check, one retry, sidecar JSON and queue columns; Check reads frame
+0, the frame after every cut and onset moments; `textfill.VERSION` 15; render screen shows frames
+checked, hits, times and flicker.
+**Outcome:** 10/10 acceptance pass. Final render 23:54 = 160.033 s, check 2,936 frames, 0 hits,
+0 OCR leaks (every frame); 16:44 baseline reports 5 hits including both known leaks (7.35, 95.567).
+Hole pixels 84,652,279 -> 47,611,085 (0.562). Flicker max 1.67 -> 1.36, above 1.5: 2 -> 0. Cold
+render 418.2 s against a 420.8 s estimate. Check 181 -> 227 s with 62 extra OCR frames. Two boundary
+leaks (4.767 s, 93.733 s) found by eye and OCR, fixed by aligning the fill to the decoded frame grid
+and reaching one frame back from the first ink reading. Not shipped: D8 per-frame fill, D9
+`follow_motion` (no measured win recorded). Known limit: the ink check scores whole lines, so a
+partly filled line under 85 % is not reported; a still scene edge inside a box can score as ink.
+
 ## Session log
 
 | # | Time | Request | Response |
