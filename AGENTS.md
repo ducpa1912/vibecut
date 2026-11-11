@@ -193,6 +193,8 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 - Blur uses the wide shadow pad, fill uses the tight one (`layer_rect`). Do not merge them.
 - Check must read the true first frame (`pipeline._first_still`). Some titles live under 100 ms.
 - Proofs are optional. Render never waits for a proof.
+- Fill runs on the CPU. The GPU path (CoreML EP, PyTorch MPS) is unshipped and unmeasured; see
+  `docs/duck/GPU-FILL-PLAN.md`. `span_key` does not include `device` today; add it before enabling GPU.
 - A line over a moving background is flagged (`quality: "moving"`), not silently switched to blur.
   Only a flash under 0.5 s defaults to blur.
 - DuckSuite ships no translation weights and hosts no translation download. The user supplies a
@@ -220,6 +222,7 @@ changes behaviour but leaves the documents stale is not done.
 - `docs/reports/ducksuite-product-progress.html` — product report, newest on top, plus the session log.
 - `docs/reports/SESSION.html` — session record: requests, 18 phases, evidence, cost model, limits.
 - `docs/duck/BYOK-PLAN.md` — bring-your-own-key/model design and rollout.
+- `docs/duck/GPU-FILL-PLAN.md` — LaMa on CoreML/MPS/cloud, with the packaging cost.
 - `docs/teams/uiux-balance-01.md` — layout balance review and proposals.
 - `scripts/bench_fill.py` — fill quality benchmark with ground truth.
 - `tests/` — behaviour contract. `tests/test_clean_loop2.py` covers layer planning and the fill hole.

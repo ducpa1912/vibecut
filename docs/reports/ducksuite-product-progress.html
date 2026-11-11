@@ -144,6 +144,20 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-04</strong><span>11 Nov · GPU plan</span></div>
+      <div class="timeline-body">
+        <strong>LaMa GPU is planned with its real cost.</strong>
+        <ul class="clean">
+          <li>CPU today: 5–7 s per fill in the benchmark. GPU code exists (PyTorch MPS) but torch and <span class="mono">big-lama.pt</span> are not shipped.</li>
+          <li>CoreML EP on the existing ONNX is the cheap test: no torch, no new model file.</li>
+          <li><span class="mono">span_key</span> does not include <span class="mono">device</span> yet; that lands before any GPU fill ships.</li>
+          <li>Plan: <span class="mono">docs/duck/GPU-FILL-PLAN.md</span>. Measure first, then decide packaging or stay CPU.</li>
+        </ul>
+        <span class="mono">83 tests</span> · plan only, no behaviour change.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-03</strong><span>11 Nov · Team and plugins</span></div>
       <div class="timeline-body">
         <strong>Five roles and a model slot on every step, written down.</strong>

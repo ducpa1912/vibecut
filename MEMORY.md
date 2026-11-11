@@ -48,6 +48,13 @@ matrix in `AGENTS.md`, a short version in `CLAUDE.md`, and a per-step slot contr
 `docs/duck/BYOK-PLAN.md`.
 **Outcome:** docs and agent prompts only; no behaviour change, 83 tests.
 
+### REQ-20261111-04 · 2026-11-11
+**Request:** "also plan for LaMa GPU, update the doc"
+**Read as:** a concrete plan for running fill on the GPU, with the packaging cost stated, not a wish.
+**Response:** `docs/duck/GPU-FILL-PLAN.md`: current CPU/CoreML/MPS/cloud paths, why the GPU cannot
+ship today (no torch, no `big-lama.pt`, no benchmark, device missing from the cache key), a measure
+first step, a packaging table, the wiring steps and acceptance.
+**Outcome:** plan only; no behaviour change.
 ## Session log
 
 | # | Time | Request | Response |

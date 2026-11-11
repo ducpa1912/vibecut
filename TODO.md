@@ -76,6 +76,15 @@ a review carry the review file instead.
 - [ ] REQ-20261111-02 · fill endpoints: user-supplied HTTP service, no key shipped
 - [ ] REQ-20261111-02 · per-task switch and privacy banner before any upload
 
+## P2 — LaMa GPU (REQ-20261111-04)
+
+- [ ] REQ-20261111-04 · extend `bench_fill.py` with `--device cpu|gpu` and `--model`
+- [ ] REQ-20261111-04 · measure CPU vs CoreML EP vs MPS on the same 10 frames; write `docs/duck/gpu-fill-bench.md`
+- [ ] REQ-20261111-04 · decide packaging from the numbers: CoreML, bundle torch, or stay CPU
+- [ ] REQ-20261111-04 · add `device` to `span_key` and bump `textfill.VERSION` before any GPU fill ships
+- [ ] REQ-20261111-04 · Settings row shows the real device and the reason when GPU is unavailable
+- [ ] REQ-20261111-04 · cloud fill endpoint is a BYOK slot only: user URL, consent, never default
+
 ## P2 — performance and cost
 
 - [ ] **Cold render cost.** `VERSION` 12 invalidates every stored fill. A 25 s slice ran 42 min and was
