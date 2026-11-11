@@ -95,6 +95,7 @@ class SettingsPatch(BaseModel):
     online_endpoint: str | None = None
     translation_engine: str | None = None
     translation_model_path: str | None = None
+    fill_device: str | None = None
 
 
 class CuePatch(BaseModel):
@@ -417,6 +418,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 "model_bytes": model.stat().st_size if model.is_file() else 0,
                 "ready": fill_problem is None,
                 "problem": fill_problem or "",
+                "gpu_ready": textfill.gpu_problem("lama", model_dir) is None,
+                "gpu_problem": textfill.gpu_problem("lama", model_dir) or "",
             },
             "rewrite": rewrite,
             "stories": {"engine": "local", "ready": True},

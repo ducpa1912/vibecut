@@ -52,7 +52,8 @@ def test_estimate_uses_the_rate_measured_on_this_mac(tmp_path) -> None:
     edit = _edit([_layer("fill", 1.0, 3.0)])
     guess = render.estimate_edit(edit, META, tmp_path)
     (tmp_path / textfill.RATES_FILE).write_text(
-        json.dumps({"lama_run": {"seconds": 8.0, "runs": 3}}), encoding="utf-8",
+        json.dumps({"lama_run": {"seconds": 8.0, "runs": 3, "recent": [8.0, 8.0, 8.0]}}),
+        encoding="utf-8",
     )
     measured = render.estimate_edit(edit, META, tmp_path)
 
@@ -144,3 +145,17 @@ def test_a_single_slow_fill_is_outvoted(tmp_path) -> None:
     for seconds in (180.0, 186.0, 900.0, 183.0):
         textfill.record_rate(tmp_path, "lama", 30, seconds)
     assert textfill.fill_rate(tmp_path, "lama")["seconds"] == 6.2
+
+
+def test_a_stale_rate_file_is_not_trusted(tmp_path: Path) -> None:
+    """A rate from before the median rule has no samples; treat it as a guess."""
+    import json
+
+    from duckcore.engine import textfill
+
+    (tmp_path / "fill_rates.json").write_text(
+        json.dumps({"lama_run": {"seconds": 20.4, "runs": 62}}), encoding="utf-8",
+    )
+    rate = textfill.fill_rate(tmp_path, "lama", "cpu")
+    assert rate["measured"] is False
+    assert rate["seconds"] == textfill.SEED_RATES["lama"]

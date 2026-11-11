@@ -209,9 +209,14 @@ def fill_rate(data_root: Path | str, method: str, device: str = DEFAULT_DEVICE) 
     """Seconds per unit for an engine: this machine's own, else the seed."""
     try:
         stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
-        seconds = float(stored[_rate_key(method, device)]["seconds"])
-        if seconds > 0:
-            return {"seconds": seconds, "measured": True}
+        item = stored[_rate_key(method, device)]
+        # Old files held a running average that one starved run could poison for
+        # many renders. Only a rate from the current rule (a median with its
+        # samples) is trusted; anything else is a first guess.
+        if isinstance(item, dict) and item.get("recent"):
+            seconds = float(item["seconds"])
+            if seconds > 0:
+                return {"seconds": seconds, "measured": True}
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return {"seconds": _seed_rate(method, device), "measured": False}

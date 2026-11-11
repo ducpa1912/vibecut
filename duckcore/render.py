@@ -176,6 +176,7 @@ def render_frame(
     """
     from duckcore.engine import pipeline, textfill
 
+    device = _fill_device(Path(data_root))
     source = str(project["source_path"])
     meta = pipeline.probe(source)
     fps = float(meta.get("fps") or 30.0)
@@ -214,6 +215,7 @@ def render_frame(
             cache_dir=job_dir / "fill",
             data_root=data_root,
             ffmpeg=media.ffmpeg(),
+            device=device,
             cancel_event=cancel_event,
             progress=(
                 (lambda fraction, message: progress(
@@ -246,6 +248,15 @@ def render_frame(
     return output
 
 
+def _fill_device(data_root: Path) -> str:
+    """The chip fill uses: the setting, and only when that chip can run here."""
+    from duckcore import app_settings
+    from duckcore.engine import textfill
+
+    choice = str(app_settings.load(data_root).get("fill_device") or "cpu").lower()
+    return textfill.chosen_device("lama", choice, textfill.models_dir(data_root))
+
+
 def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
     """What a render of this edit will cost in AI fill, without running anything.
 
@@ -271,6 +282,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
             rows.append(textfill.estimate_span(
                 meta=meta, start=start, duration=max(0.04, end - start), layers=layers,
                 method="lama", cache_dir=cache, data_root=data_root,
+                device=_fill_device(data_root),
             ))
     summary = textfill.estimate_summary(rows, data_root)
     filled_frames = sum(int(row.get("frames") or 0) for row in rows)
@@ -302,6 +314,7 @@ def render_edit(
         if cancel_event is not None and cancel_event.is_set():
             raise RenderCancelled("Render cancelled.")
 
+    device = _fill_device(Path(data_root))
     source = str(project["source_path"])
     meta = pipeline.probe(source)
     target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
@@ -377,6 +390,7 @@ def render_edit(
                     cache_dir=cache,
                     data_root=data_root,
                     ffmpeg=ffmpeg,
+                    device=device,
                     cancel_event=cancel_event,
                     progress=(
                         (lambda fraction, message: progress(

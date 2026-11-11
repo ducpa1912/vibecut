@@ -67,6 +67,9 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
             "engine": str(settings.get("translation_engine") or "auto"),
             "custom_path": str(settings.get("translation_model_path") or ""),
         },
+        "fill": {
+            "device": "gpu" if str(settings.get("fill_device") or "cpu") == "gpu" else "cpu",
+        },
         "online": {
             "enabled": bool(settings.get("online_enabled")),
             "endpoint": str(settings.get("online_endpoint") or ""),
@@ -97,6 +100,11 @@ def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
         if engine not in {"auto", "custom"}:
             raise ValueError("Translation engine must be auto or custom.")
         current["translation_engine"] = engine
+    if "fill_device" in payload:
+        device = str(payload["fill_device"] or "cpu").strip().lower()
+        if device not in {"cpu", "gpu"}:
+            raise ValueError("Fill device must be cpu or gpu.")
+        current["fill_device"] = device
     if "translation_model_path" in payload:
         current["translation_model_path"] = str(payload["translation_model_path"] or "").strip()[:2000]
     # DuckSuite always auto-detects language. Keep the field read-only.
