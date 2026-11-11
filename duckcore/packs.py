@@ -7,6 +7,7 @@ pack is selected by feature code; a pack never runs by itself.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -30,6 +31,18 @@ PACKS = (
             "size_bytes": 28_214_398,
             "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
         }],
+    },
+    {
+        "id": "fill-lama-cpu",
+        "name": "CPU fill engine",
+        "purpose": "fill",
+        "detail": "Runs AI fill on the CPU. The GPU engine is built in, so this is optional.",
+        "size_bytes": 208_044_816,
+        "license": "Apache-2.0",
+        "filename": "lama_fp32.onnx",
+        "dest": "fill",
+        "sha256": "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
+        "url": "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
     },
     {
         "id": "speech-whisper",
@@ -70,13 +83,25 @@ def _files(pack: dict) -> list[dict]:
         "filename": pack["filename"],
         "size_bytes": pack["size_bytes"],
         "url": pack["url"],
+        "sha256": pack.get("sha256", ""),
     }]
     files.extend(pack.get("extra_files") or [])
     return files
 
 
+def _folder(data_root: Path, pack: dict) -> Path:
+    """Where a pack installs: its own folder, or a feature folder it declares."""
+    dest = str(pack.get("dest") or "").strip().strip("/")
+    if dest:
+        folder = Path(data_root) / "models" / dest
+    else:
+        folder = _root(data_root) / pack["id"]
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
 def _path(data_root: Path, pack: dict, filename: str = "") -> Path:
-    return _root(data_root) / pack["id"] / (filename or pack["filename"])
+    return _folder(data_root, pack) / (filename or pack["filename"])
 
 
 def installed_path(data_root: Path, pack_id: str) -> Path | None:
@@ -85,7 +110,7 @@ def installed_path(data_root: Path, pack_id: str) -> Path | None:
         pack = _entry(pack_id)
     except KeyError:
         return None
-    folder = Path(data_root) / "models" / "packs" / pack["id"]
+    folder = _folder(data_root, pack)
     for item in _files(pack):
         path = folder / item["filename"]
         if not path.is_file() or path.stat().st_size < item["size_bytes"] * 0.98:
@@ -130,7 +155,7 @@ def start_download(data_root: Path, pack_id: str) -> dict:
 
 
 def _download(data_root: Path, pack: dict) -> None:
-    folder = _root(data_root) / pack["id"]
+    folder = _folder(data_root, pack)
     folder.mkdir(parents=True, exist_ok=True)
     done = 0
     total = sum(int(item["size_bytes"]) for item in _files(pack))
@@ -149,6 +174,15 @@ def _download(data_root: Path, pack: dict) -> None:
                         "running": True, "bytes": done,
                         "total": total, "error": "",
                     }
+            expected = str(item.get("sha256") or "").strip().lower()
+            if expected:
+                digest = hashlib.sha256()
+                with temporary.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != expected:
+                    temporary.unlink(missing_ok=True)
+                    raise ValueError(f"{item['filename']} failed its checksum.")
             if temporary.stat().st_size < item["size_bytes"] * 0.98:
                 raise RuntimeError(f"{item['filename']} size does not match the manifest")
             temporary.replace(target)
@@ -163,7 +197,12 @@ def _download(data_root: Path, pack: dict) -> None:
 
 def remove(data_root: Path, pack_id: str) -> list[dict]:
     pack = _entry(pack_id)
-    folder = _path(data_root, pack).parent
-    shutil.rmtree(folder, ignore_errors=True)
+    folder = _folder(data_root, pack)
+    for item in _files(pack):
+        (folder / item["filename"]).unlink(missing_ok=True)
+    try:
+        folder.rmdir()  # only when nothing else lives there
+    except OSError:
+        pass
     _PROGRESS.pop(pack_id, None)
     return status(data_root)

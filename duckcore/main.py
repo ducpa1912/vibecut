@@ -241,6 +241,9 @@ def _proof_scope(edit: dict, when: float) -> tuple[list[dict], dict]:
 
 
 def create_app(token: str, data_root: Path) -> FastAPI:
+    from duckcore.engine import textfill as _textfill
+
+    _textfill.seed_models(data_root)
     if not token:
         raise ValueError("DuckSuite core requires a launch token.")
 
@@ -388,7 +391,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         vision_ready = vision.available()
         apple_speech = stt._apple_transcribe_helper()
         whisper = stt._whisper_command()
-        fill_problem = textfill.method_problem("lama", model_dir)
+        fill_cpu_problem = textfill.method_problem("lama", model_dir)
+        fill_gpu_problem = textfill.gpu_problem("lama", model_dir)
         rewrite = {"available": False, "reason": "The rewrite helper is missing."}
         rewrite_helper = script._helper("rewrite_apple")
         if rewrite_helper is not None:
@@ -416,10 +420,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 "method": "lama",
                 "model": str(model),
                 "model_bytes": model.stat().st_size if model.is_file() else 0,
-                "ready": fill_problem is None,
-                "problem": fill_problem or "",
-                "gpu_ready": textfill.gpu_problem("lama", model_dir) is None,
-                "gpu_problem": textfill.gpu_problem("lama", model_dir) or "",
+                "ready": fill_cpu_problem is None or fill_gpu_problem is None,
+                "problem": "" if (fill_cpu_problem is None or fill_gpu_problem is None) else (fill_gpu_problem or fill_cpu_problem),
+                "cpu_ready": fill_cpu_problem is None,
+                "cpu_problem": fill_cpu_problem or "",
+                "gpu_ready": fill_gpu_problem is None,
+                "gpu_problem": fill_gpu_problem or "",
             },
             "rewrite": rewrite,
             "stories": {"engine": "local", "ready": True},

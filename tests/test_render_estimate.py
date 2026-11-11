@@ -130,9 +130,9 @@ def test_one_slow_fill_does_not_hold_the_rate_up(tmp_path) -> None:
     (tmp_path / textfill.RATES_FILE).write_text(
         json.dumps({"lama_run": {"seconds": 35.0, "runs": 61}}), encoding="utf-8",
     )
-    textfill.record_rate(tmp_path, "lama", 30, 180.0)   # 6 s a unit
-    textfill.record_rate(tmp_path, "lama", 30, 186.0)   # 6.2 s a unit
-    rate = textfill.fill_rate(tmp_path, "lama")
+    textfill.record_rate(tmp_path, "lama", 30, 180.0, device="cpu")   # 6 s a unit
+    textfill.record_rate(tmp_path, "lama", 30, 186.0, device="cpu")   # 6.2 s a unit
+    rate = textfill.fill_rate(tmp_path, "lama", "cpu")
 
     assert rate["measured"] is True
     assert rate["seconds"] == 6.2

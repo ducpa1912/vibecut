@@ -70,18 +70,14 @@ for helper in vision_probe transcribe_apple translate_apple rewrite_apple; do
   fi
 done
 
-MODEL="${DUCK_LAMA_MODEL:-$HOME/vibecut-lanes/ducksuite/models/fill/lama_fp32.onnx}"
 GPU_MODEL="${DUCK_LAMA_GPU_MODEL:-$HOME/vibecut-lanes/ducksuite/models/fill/big-lama.pt}"
-if [ -f "$MODEL" ]; then
-  mkdir -p "$APP/Contents/Resources/base-models"
-  cp "$MODEL" "$APP/Contents/Resources/base-models/lama_fp32.onnx"
-else
-  printf 'warning: LaMa model not found at %s\n' "$MODEL" >&2
-fi
+mkdir -p "$APP/Contents/Resources/base-models"
+# v1 ships the GPU engine only. The CPU ONNX model is an optional Settings download.
+rm -f "$APP/Contents/Resources/base-models/lama_fp32.onnx"
 if [ -f "$GPU_MODEL" ]; then
   cp "$GPU_MODEL" "$APP/Contents/Resources/base-models/big-lama.pt"
 else
-  printf 'warning: LaMa GPU model not found at %s; GPU fill stays unavailable\n' "$GPU_MODEL" >&2
+  printf 'warning: LaMa GPU model not found at %s; AI fill will be unavailable\n' "$GPU_MODEL" >&2
 fi
 
 FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpeg}}"

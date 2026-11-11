@@ -34,7 +34,7 @@ METHODS = ("lama",)
 # Engines that run on key frames, with a plan, saved results and a choice of chip.
 KEYED_METHODS = ("lama",)
 DEVICES = ("cpu", "gpu")
-DEFAULT_DEVICE = "cpu"
+DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
@@ -100,10 +100,38 @@ class FillCancelled(FillError):
 
 
 def models_dir(data_root: Path | str) -> Path:
+    """Where fill models live: app data when seeded, else the read-only bundle."""
+    data = Path(data_root) / "models" / "fill"
+    names = {*MODEL_FILES.values(), *GPU_MODEL_FILES.values()}
+    if any((data / name).is_file() for name in names):
+        return data
     override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
     if override:
         return Path(override).expanduser()
-    return Path(data_root) / "models" / "fill"
+    return data
+
+
+def seed_models(data_root: Path | str) -> None:
+    """Copy the bundle's fill models into app data once, so packs share one folder."""
+    override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
+    if not override:
+        return
+    source = Path(override).expanduser()
+    target = Path(data_root) / "models" / "fill"
+    if not source.is_dir():
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for name in {*MODEL_FILES.values(), *GPU_MODEL_FILES.values()}:
+        origin = source / name
+        if not origin.is_file():
+            continue
+        destination = target / name
+        if destination.is_file() and destination.stat().st_size == origin.stat().st_size:
+            continue
+        try:
+            os.link(origin, destination)  # same volume: no copy, no extra bytes
+        except OSError:
+            shutil.copy2(origin, destination)
 
 
 def model_path(method: str, directory: Path, device: str = DEFAULT_DEVICE) -> Path:
@@ -128,11 +156,22 @@ def gpu_problem(method: str, directory: Path) -> str | None:
     return f"The GPU option for {METHOD_COPY.get(method, method)} needs {path.name} in {directory}."
 
 
+def device_problem(method: str, directory: Path, device: str) -> str | None:
+    """Why fill cannot run on this chip here, or None."""
+    if device == "gpu":
+        return gpu_problem(method, directory)
+    return method_problem(method, directory)
+
+
 def chosen_device(method: str, device: str | None, directory: Path) -> str:
-    """The chip a fill really uses: the GPU only when asked for and able to run."""
-    if device == "gpu" and gpu_problem(method, directory) is None:
-        return "gpu"
-    return DEFAULT_DEVICE
+    """The chip a fill really uses. GPU is the default; CPU only when installed."""
+    wanted = "gpu" if str(device or DEFAULT_DEVICE).lower() != "cpu" else "cpu"
+    if device_problem(method, Path(directory), wanted) is None:
+        return wanted
+    other = "cpu" if wanted == "gpu" else "gpu"
+    if device_problem(method, Path(directory), other) is None:
+        return other
+    return wanted
 
 
 def follow_problem() -> str | None:
@@ -156,7 +195,8 @@ def missing_model(method: str, directory: Path) -> str | None:
     """A plain message when the method's model file is absent, else None."""
     if method in CLASSIC_METHODS:
         return None
-    path = model_path(method, directory)
+    # This check is the CPU engine's; do not follow the new GPU default here.
+    path = Path(directory) / MODEL_FILES[method]
     if path.is_file() and path.stat().st_size > 0:
         return None
     return (
@@ -1361,10 +1401,10 @@ def prepare_span(
         return None
 
     directory = models_dir(data_root)
-    problem = missing_model(method, directory)
+    device = chosen_device(method, device, directory)
+    problem = device_problem(method, directory, device)
     if problem:
         raise FillError(problem)
-    device = chosen_device(method, device, directory)
     follow_motion = _follow_on(method, follow_motion)
     path = model_path(method, directory, device)
     key = span_key(

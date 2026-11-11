@@ -26,27 +26,31 @@ def _edit() -> dict:
     }
 
 
-def test_fill_device_defaults_to_cpu(tmp_path: Path) -> None:
-    assert app_settings.snapshot(tmp_path)["fill"]["device"] == "cpu"
+def test_fill_device_defaults_to_gpu(tmp_path: Path) -> None:
+    assert app_settings.snapshot(tmp_path)["fill"]["device"] == "gpu"
 
 
 def test_fill_device_is_saved_and_validated(tmp_path: Path) -> None:
-    app_settings.update(tmp_path, {"fill_device": "gpu"})
-    assert app_settings.snapshot(tmp_path)["fill"]["device"] == "gpu"
+    app_settings.update(tmp_path, {"fill_device": "cpu"})
+    assert app_settings.snapshot(tmp_path)["fill"]["device"] == "cpu"
     with pytest.raises(ValueError):
         app_settings.update(tmp_path, {"fill_device": "ane"})
 
 
-def test_gpu_falls_back_when_the_model_is_absent(tmp_path: Path) -> None:
-    # No big-lama.pt in an empty model folder, so the choice cannot stand.
+def test_cpu_is_used_when_only_the_cpu_model_is_installed(tmp_path: Path) -> None:
+    (tmp_path / "lama_fp32.onnx").write_bytes(b"x")
     assert textfill.chosen_device("lama", "gpu", tmp_path) == "cpu"
+
+
+def test_nothing_installed_keeps_the_requested_chip(tmp_path: Path) -> None:
+    # Neither model exists; the UI is what prevents the choice. No silent switch.
+    assert textfill.chosen_device("lama", "gpu", tmp_path) == "gpu"
 
 
 def test_fill_device_reads_the_setting(tmp_path: Path) -> None:
     app_settings.update(tmp_path, {"fill_device": "gpu"})
-    assert render._fill_device(tmp_path) in {"cpu", "gpu"}
-    # With no GPU model on this path the answer must be cpu, not a crash.
-    assert render._fill_device(tmp_path) == "cpu"
+    # With neither model on this path the answer stays gpu; the UI blocks it.
+    assert render._fill_device(tmp_path) == "gpu"
 
 
 def test_estimate_uses_the_selected_device(tmp_path: Path, monkeypatch) -> None:

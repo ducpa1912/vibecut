@@ -35,3 +35,25 @@ def test_pack_requires_primary_and_extra_files(tmp_path: Path, monkeypatch) -> N
 
     assert packs.status(tmp_path)[0]["installed"] is True
     assert packs.status(tmp_path)[0]["size_bytes"] == 6
+
+
+def test_cpu_fill_pack_installs_into_the_model_folder(tmp_path: Path) -> None:
+    pack = next(item for item in packs.PACKS if item["id"] == "fill-lama-cpu")
+    assert pack["dest"] == "fill"
+    assert pack["sha256"] == "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6"
+    folder = tmp_path / "models" / "fill"
+    folder.mkdir(parents=True)
+    assert packs.installed_path(tmp_path, "fill-lama-cpu") is None
+    with (folder / "lama_fp32.onnx").open("wb") as handle:
+        handle.truncate(pack["size_bytes"])  # sparse, size is what the check reads
+    assert packs.installed_path(tmp_path, "fill-lama-cpu") == folder
+
+
+def test_removing_the_cpu_pack_keeps_other_files(tmp_path: Path) -> None:
+    folder = tmp_path / "models" / "fill"
+    folder.mkdir(parents=True)
+    (folder / "lama_fp32.onnx").write_bytes(b"x")
+    (folder / "keep.txt").write_bytes(b"x")
+    packs.remove(tmp_path, "fill-lama-cpu")
+    assert not (folder / "lama_fp32.onnx").exists()
+    assert (folder / "keep.txt").exists()

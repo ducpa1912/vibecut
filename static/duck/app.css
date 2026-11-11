@@ -635,6 +635,8 @@ svg { display: block; flex: 0 0 auto; }
   background: var(--amber-soft); color: var(--amber-ink, #8a5a12); font-size: 9px; font-weight: 650;
   letter-spacing: .02em; text-transform: uppercase;
 }
+.fill-engine-line { display: grid; gap: 6px; margin: 2px 0 10px; }
+.fill-engine-line .rail-head { margin: 0; }
 .layer-note { margin: 2px 2px 8px; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .layer-note.is-warn { color: var(--amber-ink, #8a5a12); background: var(--amber-soft); border-radius: 6px; padding: 6px 8px; }
 .model-line { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }

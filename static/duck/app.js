@@ -1591,6 +1591,7 @@ function inspectorClean(scene, layer, layers) {
     }).join('')}
   </div>
   ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
+  <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
   ${layerListMarkup(layer, layers)}
   <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
   <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
@@ -2426,6 +2427,7 @@ function screenClean() {
             }).join('')}
           </div>
           ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
+          <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
           <button class="btn wide" type="button" data-action="brush-toggle">${icon('sparkle', 14)} ${state.brushMode ? 'Close brush' : 'Paint a mask'}</button>
           <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
@@ -2982,6 +2984,31 @@ function ensureRenderEstimate() {
     .finally(() => { if (state.renderEstimateKey === key) paintRenderEstimate(); });
 }
 
+function fillEngineControl() {
+  const device = state.settings?.fill?.device === 'cpu' ? 'cpu' : 'gpu';
+  const gpuReady = Boolean(state.engine?.fill?.gpu_ready);
+  const cpuReady = Boolean(state.engine?.fill?.cpu_ready);
+  const gpuNote = String(state.engine?.fill?.gpu_problem || '');
+  let note = '';
+  if (device === 'gpu') {
+    note = gpuReady
+      ? 'Apple GPU. Measured 4.6× faster on this Mac; same output.'
+      : esc(gpuNote || 'GPU is unavailable.');
+  } else if (cpuReady) {
+    note = 'CPU engine. Slower, but it runs when the GPU is busy.';
+  } else {
+    note = `CPU engine is optional. <button class="btn small" type="button" data-action="settings">Download in Settings</button>`;
+  }
+  if (device === 'gpu' && !cpuReady) {
+    note += `<br>CPU engine is optional. <button class="btn small" type="button" data-action="settings">Download in Settings</button>`;
+  }
+  return `<div class="segmented" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+    <button class="${device === 'cpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="cpu" ${cpuReady ? '' : 'disabled'} title="${esc(state.engine?.fill?.cpu_problem || 'CPU engine is not installed')}">CPU</button>
+    <button class="${device === 'gpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="gpu" ${gpuReady ? '' : 'disabled'} title="${esc(gpuNote || 'Apple GPU')}">GPU</button>
+  </div>
+  <p class="small muted">${note}</p>`;
+}
+
 function screenRender() {
   const scenes = getScenes();
   const checked = sceneReadyCount(scenes);
@@ -3006,9 +3033,6 @@ function screenRender() {
   const mine = state.project
     ? state.queue.filter((item) => !item.project_id || item.project_id === state.project.id)
     : state.queue;
-  const fillDevice = state.settings?.fill?.device === 'gpu' ? 'gpu' : 'cpu';
-  const gpuReady = Boolean(state.engine?.fill?.gpu_ready);
-  const gpuProblem = String(state.engine?.fill?.gpu_problem || '');
   const queue = state.queueScope === 'all' ? state.queue : mine;
   const elsewhere = state.queue.length - mine.length;
   const cleanOn = (state.edit?.clean || []).filter((layer) => layer.enabled !== false);
@@ -3023,13 +3047,7 @@ function screenRender() {
         <div class="panel-head"><h2>Render settings</h2></div>
         <div class="render-settings">
           <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Resolution</div><div class="readonly">${resolutionLabel}</div></div>
-          <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>
-            <div class="segmented" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-              <button class="${fillDevice === 'cpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="cpu">CPU</button>
-              <button class="${fillDevice === 'gpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="gpu" ${gpuReady ? '' : 'disabled'} title="${esc(gpuProblem || 'Apple GPU')}">GPU</button>
-            </div>
-            <p class="small muted">${gpuReady ? 'Apple GPU. Measured 4.6× faster on this Mac; same output.' : esc(gpuProblem || 'GPU is unavailable.')}</p>
-          </div>
+          <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
           <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
           <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div><div class="toggle-row"><span>${state.edit?.captions?.burn ? 'Burn into render' : 'Sidecar SRT'}</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div></div>
