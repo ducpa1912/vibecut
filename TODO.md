@@ -9,13 +9,14 @@ review carry the review file. Items marked `PLAN` came from the 11 Nov code and 
 **Do not start a full render before loop 4.** Fills are cold since `textfill.VERSION` 12; a 160 s
 render takes hours on this Mac, and any fill change in loop 3 would make it cold again.
 
-## Loop 3 — fill speed: founder decision open (REQ-20261111-04)
+## Loop 3 — fill speed: GPU default, CPU as a pack (REQ-20261111-04/07)
 
-- [ ] REQ-20261111-04 · **founder decides:** bundle torch + `big-lama.pt` for MPS fill (4.6× faster on a
-  real span, about +0.8 GB) or stay CPU. Numbers: `docs/duck/gpu-fill-bench.md`
-- [ ] REQ-20261111-04 · if yes: PyInstaller build with torch, measure the real bundle size and launch time
-- [ ] REQ-20261111-04 · if yes: `render_edit` passes the chosen device to `prepare_span`; CPU fallback stays
-- [ ] REQ-20261111-04 · if yes: Settings row shows the real device and the reason when GPU is unavailable
+- [x] REQ-20261111-04 · founder decision: bundle torch + `big-lama.pt`; GPU is the default
+- [x] REQ-20261111-04 · PyInstaller build with torch; bundle measured at 981 MB
+- [x] REQ-20261111-04 · `render_edit`/`render_frame` pass the device; `estimate_edit` follows it
+- [x] REQ-20261111-07 · CPU is an optional 198 MB pack; Render and Clean Focus disable it until installed
+- [x] REQ-20261111-07 · bundle ships no ONNX and no Kokoro weights; onnxruntime kept for both packs
+- [ ] REQ-20261111-07 · real CPU-pack download and CPU fill on a clean machine
 - [ ] PLAN · repeat the MPS real-span run 3 times and on a 60 s span: variance, heat, memory
 
 ## Loop 4 — one full render of the review project
@@ -116,6 +117,14 @@ v1 is completely local: the user plugs in local models; no keys. Design: `docs/d
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — GPU default, CPU pack (`docs/teams/loop-05-gpu-default/review.md`)
+- [x] REQ-20261111-07 · GPU shipped as the default; CPU optional download, SHA-256 verified
+- [x] REQ-20261111-07 · model seeding into `models/fill`; packs and the bundle share one folder
+- [x] REQ-20261111-07 · CPU/GPU control in Render and Clean Focus
+- [x] REQ-20261111-07 · final bundle GPU render: 1 s clip in 9.4 s, OCR clean
+- [x] REQ-20261111-07 · local cleanup ≈ 1.2 GB (Kokoro, ONNX, STTN/MI-GAN, CPU fills)
+- [x] REQ-20261111-07 · 101 tests pass
 
 ### 11 Nov — loop 3, fill speed measured (`docs/teams/loop-03-fill-speed/review.md`)
 - [x] REQ-20261111-04 · `bench_fill.py --device cpu|coreml|gpu --model`

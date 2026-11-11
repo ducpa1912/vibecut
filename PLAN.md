@@ -8,13 +8,13 @@ loops below, `AGENTS.md` is the working contract.
 
 | Fact | Value | Source |
 |---|---|---|
-| Branch / tests | `ducksuite`, 98 pass | `python3 -m pytest -q tests` |
-| Bundle | 1.2 GB (torch 565, LaMa 198 + GPU model 196, sidecar 136, ffmpeg 41) | `du -sh build/DuckSuite-Xcode.app` |
+| Branch / tests | `ducksuite`, 101 pass | `python3 -m pytest -q tests` |
+| Bundle | 981 MB (torch 565, GPU model 196, sidecar 136, ffmpeg 41; no ONNX) | `du -sh build/DuckSuite-Xcode.app` |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2, 13 GB free disk | `sysctl`, `sw_vers`, `df` |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips | `edits/ed_38a4c36a3aae.json` |
 | Clean layers | 42: 40 fill, 2 blur; **34 moving, 8 steady**; all `auto: true` (after loop 2) | same file |
 | Fill seconds | 64 s of 160 s; 50 s of that on moving footage | same file |
-| Fill engine | LaMa fp32 ONNX on CPU (default) or PyTorch MPS on the GPU | `textfill/lama.py:_providers` |
+| Fill engine | PyTorch MPS on the GPU (default); CPU via the optional `fill-lama-cpu` pack | `textfill/lama.py:_providers` |
 | Cold render | fill ≈ 28 min on CPU at the measured ~6 s a unit, up to ~2 h when the Mac is busy; ≈ 4.5 min on MPS (one run) | `docs/duck/gpu-fill-bench.md` |
 | Fill cache | every stored fill is stale since `textfill.VERSION` 12 | `textfill/__init__.py` |
 | Renders on disk | one 4.75 s proof render from loop 2 | `renders/` |

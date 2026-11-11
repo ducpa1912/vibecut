@@ -437,7 +437,7 @@ Flow   Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Wel
       <tr><td>arm64-only build, macOS 26 target</td><td>Single-arch app, ad-hoc signed for local use. App Store needs a real identity; not attempted.</td></tr>
       <tr><td>Bundled LGPL ffmpeg + ffprobe + libdav1d</td><td>System ffmpeg is not guaranteed and GPL builds cannot ship. AV1 input needs dav1d beside the helper.</td></tr>
       <tr><td>Browser-playable proxy</td><td>WKWebView cannot play the HEVC source reliably. The editor serves an H.264 proxy; the render still uses the source.</td></tr>
-      <tr><td>LaMa rates per chip</td><td>Measured: CPU ~6 s a unit, MPS ~0.95 s, CoreML 32× slower. CPU is the default; GPU is bundled (torch + <span class="mono">big-lama.pt</span>, bundle 1.2 GB) and selectable in Render settings.</td></tr>
+      <tr><td>LaMa rates per chip</td><td>Measured: CPU ~6 s a unit, MPS ~0.95 s, CoreML 32× slower. GPU is the default; the bundle carries torch + <span class="mono">big-lama.pt</span> (981 MB). CPU is an optional 198 MB Settings download; both are selectable in Render and Clean Focus.</td></tr>
       <tr><td>Packs in app data</td><td>Whisper and Kokoro load from <span class="mono">models/packs</span>, not the Hugging Face cache. Removed 1.5 GB of duplicated weights.</td></tr>
       <tr><td>Sidecar handshake</td><td>Swift reads the port from the sidecar's first stdout line within 12 s. A cold PyInstaller start can exceed it; kill an orphan sidecar before relaunching.</td></tr>
       <tr><td>Xcode + xcodegen</td><td>Command Line Tools alone cannot build the app. Xcode 26 plus <span class="mono">xcodegen</span> generates the project from <span class="mono">project.yml</span>.</td></tr>

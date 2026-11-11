@@ -77,8 +77,8 @@ REQ-20261111-06 bundled the measured winner.
 
 | Item | Value |
 |---|---|
-| Bundle | 377 MB → 1.2 GB (torch 565 MB, `big-lama.pt` 196 MB) |
-| Default | CPU, unchanged |
+| Bundle | 377 MB → 1.2 GB with both models; **981 MB** after the ONNX was moved to a pack |
+| Default | GPU. CPU is an optional 198 MB pack (`fill-lama-cpu`), SHA-256 checked |
 | Choice | Render → AI fill engine: CPU / GPU, GPU disabled with the reason when unavailable |
 | Cache | `method_stamp` adds `:gpu`; CPU and GPU fills never collide |
 | Proof | bundled sidecar rendered a 1 s clip in 10.9 s; the fill cache holds the `:gpu` key; OCR clean |

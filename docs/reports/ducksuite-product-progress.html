@@ -198,6 +198,21 @@ ul.clean li { margin:6px 0; }
       </div>
     </div>
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-07</strong><span>11 Nov · GPU default, CPU pack</span></div>
+      <div class="timeline-body">
+        <strong>v1 ships the GPU engine only; the CPU engine is a 198 MB download.</strong>
+        <ul class="clean">
+          <li>Bundle 1.2 GB → <span class="mono">981 MB</span>: torch and <span class="mono">big-lama.pt</span> only, no ONNX, no Kokoro weights.</li>
+          <li><span class="mono">fill-lama-cpu</span> pack installs into <span class="mono">models/fill</span>; downloads verify SHA-256. CPU stays disabled until installed, in Render and Clean Focus.</li>
+          <li>Bundle model is hardlinked into app data at startup so the GPU model and the CPU pack share one folder.</li>
+          <li>Found and fixed: <span class="mono">prepare_span</span> demanded the ONNX file before choosing a device, which blocked GPU fill.</li>
+          <li>Local cleanup: Kokoro, CPU ONNX, STTN/MI-GAN, CPU fill caches — about 1.2 GB.</li>
+        </ul>
+        <span class="mono">101 tests</span> · final bundle rendered a 1 s clip in 9.4 s on MPS, OCR-clean.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-06</strong><span>11 Nov · GPU fill ships</span></div>
       <div class="timeline-body">
         <strong>LaMa runs on the GPU behind a choice, and the CPU stays the default.</strong>

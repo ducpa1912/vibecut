@@ -91,6 +91,18 @@ bundle, 98 tests, three-loop review.
 **Outcome:** GPU shipped behind a choice; CPU default unchanged; estimate corrected (stale rate
 removed, 19 min first guess). Loop 4 untouched.
 
+### REQ-20261111-07 · 2026-11-11
+**Request:** "remove both onnx kokoro and lama on my local machine … only work with GPU. On the v1
+launch, also bundle only torch and GPU LaMa" … then "keep in v1, keep onnxruntime for kokoro, CPU is
+optional download … remove on my machine, not bundle it, leave it as optional download in setting"
+**Read as:** GPU is the shipped default; CPU fill becomes an optional Settings download; Kokoro stays
+an optional pack but is removed from this Mac; onnxruntime stays for both packs.
+**Response:** GPU-only bundle (981 MB), `fill-lama-cpu` pack with SHA-256, per-device readiness,
+CPU/GPU control in Render and Clean Focus, bundle models seeded into app data so packs share one
+folder, 101 tests, local cleanup of ~992 MB.
+**Outcome:** GPU default, CPU downloadable, Kokoro downloadable; final bundle rendered a 1 s clip in
+9.4 s on MPS with an OCR-clean frame.
+
 ## Session log
 
 | # | Time | Request | Response |
