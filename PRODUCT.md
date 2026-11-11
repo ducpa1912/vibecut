@@ -49,8 +49,8 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 | Voice | macOS voices, Kokoro pack, dub, music and SFX rows on one audio track | Manual microphone test | Voice cloning |
 | Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Colour grading, LUTs, keyframes |
 | Render | Source aspect, 1080p, 24/30 fps, H.264/AAC, queue scoped to the project | Render screen layout (loop 9) | 9:16 / 4:5 / 1:1 / 16:9 switching, auto-frame, 4K, 60 fps, HDR, ProRes |
-| Models | LaMa bundled; Whisper and Kokoro as optional data packs; translation from a user-supplied CTranslate2 folder | Local slots for Whisper, LLM URL, ONNX voice, ONNX fill; user keys in the Keychain (loop 7); SHA-256 per pack (loop 8) | Any translation weights shipped or hosted by DuckSuite |
-| Cloud | None. Nothing uploads. | User-key providers, off until ticked, consent per task | Cloud render plans, render broker |
+| Models | LaMa bundled; Whisper and Kokoro as optional data packs; translation from a user-supplied CTranslate2 folder | Local slots for Whisper, LLM URL on this Mac, ONNX voice, ONNX fill (loop 7); SHA-256 per pack (loop 8) | Any translation weights shipped or hosted by DuckSuite |
+| Cloud | None. Nothing uploads. | — | After v1: user-key providers, off until ticked, consent per task. Cloud render plans, render broker |
 | Store | No StoreKit code. $29 paid app restores through the buyer's Apple ID | — | Signing, TestFlight, review: paused |
 
 The "in the build" column follows the Done list in `TODO.md` and the code read on 2026-11-11; it was not re-tested by hand in this revision.
@@ -66,8 +66,8 @@ The "in the build" column follows the Done list in `TODO.md` and the code read o
 ### Decisions in force
 
 - **$29 one-time.** No account, no in-app purchase, no login. Restore is the App Store's, by Apple ID.
-- **Local is complete.** No telemetry, no upload path. A user key opts one task into that user's own provider, after consent.
-- **One shipped model: LaMa.** Every other model step takes a local default, a user-supplied local model, or a user key. No step requires a download. The UI names no model for a user slot and links no download.
+- **v1 is completely local.** No telemetry, no upload path, no keys. The user extends a step by plugging in a local model. User keys are planned for after v1.
+- **One shipped model: LaMa.** Every other model step takes a local default or a user-supplied local model. No step requires a download. The UI names no model for a user slot and links no download.
 - **Text clean is LaMa fill or explicit Blur.** A line over a moving background is flagged, never silently switched to blur.
 - **Dub is required**, with an editable script and three languages: English, Vietnamese, Chinese.
 - **1080p, 24 or 30 fps.** No LUTs, no colour grading, no publish kit.
@@ -133,7 +133,7 @@ DuckSuite is the local Mac essential toolkit for creators who will not upload cl
 ## Operating context
 
 - One Mac, one project, one source. Long sessions; a render can take far longer than the video when AI fill runs.
-- Footage may belong to a client. Custody and deletion matter; nothing leaves the Mac without a key the user added and a consent the user gave.
+- Footage may belong to a client. Custody and deletion matter; nothing leaves the Mac in v1.
 - The app must work offline after optional packs are installed.
 - The reference machine is the smallest one: M1, 8 GB RAM. A limit that shows there is a product limit.
 

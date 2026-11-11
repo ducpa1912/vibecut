@@ -56,26 +56,20 @@ render takes hours on this Mac, and any fill change in loop 3 would make it cold
 - [ ] PLAN · `script.rewrite`: remove the silent Ollama fallback and the `qwen3:4b` name; Apple
   Intelligence, else basic cleanup, stated in the UI
 - [ ] PLAN · delete the unused `online_enabled` / `online_endpoint` settings
-- [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): kept for BYOK; add a test
-  that none is reachable with zero keys
+- [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): code stays for after v1; add
+  a test that none is reachable in a v1 build
 - [ ] **Model pack manager polish.** LaMa, Whisper and Kokoro are wired. No in-app "verify all" or
   storage cleanup yet.
 
-## Loop 7 — providers, local slots, keys (REQ-20261111-02, REQ-20261111-03)
+## Loop 7 — local model slots (REQ-20261111-03)
 
-Design: `docs/duck/BYOK-PLAN.md`. In this order.
+v1 is completely local: the user plugs in local models; no keys. Design: `docs/duck/BYOK-PLAN.md`.
 
 - [ ] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
-- [ ] REQ-20261111-03 · Keychain store + redaction; never `settings.json`, logs or error strings
 - [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
-- [ ] REQ-20261111-03 · rewrite local slot: base URL, `/v1/models` check
+- [ ] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check
 - [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
 - [ ] REQ-20261111-03 · fill local slot: custom ONNX inpaint model
-- [ ] REQ-20261111-03 · Connections UI with per-task consent; off until ticked
-- [ ] REQ-20261111-02 · STT keys: OpenAI, Groq, Deepgram, OpenRouter
-- [ ] REQ-20261111-02 · rewrite keys: OpenAI, Anthropic, OpenRouter
-- [ ] REQ-20261111-02 · voice keys: ElevenLabs, OpenAI TTS
-- [ ] REQ-20261111-04 · fill endpoint, last: user URL, consent that frames leave the Mac, never default
 - [x] REQ-20261111-02 · remove the `translation-nllb` pack and every download affordance
 - [x] REQ-20261111-02 · custom CTranslate2 folder: choose, copy into app data, validate model.bin/config.json/sentencepiece
 - [x] REQ-20261111-02 · Settings copy names no model and offers no link
@@ -125,6 +119,13 @@ Design: `docs/duck/BYOK-PLAN.md`. In this order.
 - [ ] **App Store gate.** Signing identity, team, store URLs, review contact, screenshot rights, nested
   code signing. Blocked before; work intentionally stopped until the product is good.
 - [ ] **Cloud render plans** ($5 / $20). Founder decision of 2026-11-06; nothing in the build uploads.
+- [ ] **User keys (BYOK), after v1.** Planned in `docs/duck/BYOK-PLAN.md`, not built in v1:
+  - [ ] REQ-20261111-03 · Keychain store + redaction; never `settings.json`, logs or error strings
+  - [ ] REQ-20261111-03 · Connections UI with per-task consent; off until ticked
+  - [ ] REQ-20261111-02 · STT keys: OpenAI, Groq, Deepgram, OpenRouter
+  - [ ] REQ-20261111-02 · rewrite keys: OpenAI, Anthropic, OpenRouter
+  - [ ] REQ-20261111-02 · voice keys: ElevenLabs, OpenAI TTS
+  - [ ] REQ-20261111-04 · fill endpoint, last: user URL, consent that frames leave the Mac, never default
 - [x] **Translation licence.** Resolved by shipping no weights: the user supplies a CTranslate2 folder.
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 

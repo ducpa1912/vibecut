@@ -1,5 +1,8 @@
 # BYOK / BYOM plan
 
+Scope (founder decision, 2026-11-11): **v1 is completely local.** Local model slots (BYOM) are v1.
+User keys (BYOK) are planned here and built after v1.
+
 Status: translation BYOM is shipped (`REQ-20261111-02`). The key half and the other local-model
 slots are planned.
 Rule: DuckSuite ships no key, no default cloud provider and no proxy. Local is the default; a user

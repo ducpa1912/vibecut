@@ -35,7 +35,8 @@ A tester fail blocks sign-off. The user is final. Every loop writes `docs/teams/
 
 ## Models and keys
 
-Every step can take a local model or a user key; none require a download. LaMa is the only shipped
+v1 is completely local: every step can take a user-supplied local model; none require a download.
+User keys are planned for after v1, not built. LaMa is the only shipped
 model. Translation takes a CTranslate2 folder, user-supplied. Keys go to the Keychain, never
 `settings.json`. No step names a model in the UI. Plan: `docs/duck/BYOK-PLAN.md`.
 

@@ -89,14 +89,15 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 - Rewrite: remove the silent Ollama fallback and the model name; Apple Intelligence, else basic
   cleanup, said in the UI. The local LLM endpoint returns later as an explicit slot (loop 7).
 - Delete the unused `online_enabled` / `online_endpoint` settings.
-- Cloud STT: keep the code for BYOK, add a test that no provider is reachable with zero keys.
+- Cloud STT: the code stays for after v1; add a test that no provider is reachable in a v1 build.
 - Accept: tests for each; `grep` finds no model name in a user-facing string.
 
-### Loop 7 — providers, slots, keys (`docs/duck/BYOK-PLAN.md`)
+### Loop 7 — local model slots (`docs/duck/BYOK-PLAN.md`)
 
-Order: `providers.py` registry with no behaviour change → Keychain store + redaction → local slots
-(Whisper folder, LLM base URL, ONNX voice, ONNX fill) → Connections UI with per-task consent →
-key providers (STT, rewrite, voice) → fill endpoint last.
+v1 is completely local (founder decision, 2026-11-11): the user plugs in local models, no keys.
+Order: `providers.py` registry with no behaviour change → local slots: Whisper folder, LLM base
+URL on this Mac, ONNX voice, ONNX fill. User keys (Keychain, Connections UI, consent, key
+providers, fill endpoint) stay planned in `BYOK-PLAN.md` and are **not v1**.
 
 ### Loop 8 — $29 build readiness
 
@@ -112,6 +113,8 @@ Render screen two-column, inspector count + fade, collapse empty timeline lanes,
 
 - App Store, signing, TestFlight, StoreKit: paused by decision.
 - Cloud render ($5 / $20 plans), render broker: deferred; nothing in the build uploads.
+- User keys (BYOK): planned, not v1. v1 makes no request to a host other than this Mac, except
+  the optional pack downloads the user starts.
 - DuckClean, DuckClassic, DuckStudio: later products, other lanes.
 - Timeline split / reorder / remove-silence, aspect switching, auto-frame: after loop 9.
 

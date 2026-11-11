@@ -66,6 +66,9 @@ rewrite step falls back to Ollama silently). Then `PLAN.md` as the single build 
 loops, `PRODUCT.md` rewritten as shipped / planned / deferred with known limits, `TODO.md` reordered
 into those loops, `ROADMAP.md` marked historical.
 **Outcome:** docs only; no behaviour change, 83 tests. Next commit is loop 1: show the render cost.
+**Founder answers, same day:** cloud render stays deferred. BYOK is planned but not v1: "v1 is
+completely local, so users can just plug-in local models." The re-Check acceptance is "no
+`auto: false` layer changed". Docs updated to say so.
 
 ## Session log
 

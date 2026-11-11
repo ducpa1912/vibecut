@@ -105,8 +105,9 @@ verdict, good-to-go, revisions and bugs.
 
 ## Model plugins — BYOM and BYOK on every step
 
-Every model-backed step has three sources: a local default, a user-supplied local model, or a user's
-key. No step requires a download. DuckSuite ships one model, LaMa, because Clean is the product; it
+v1 is completely local: a step runs on its local default or on a local model the user plugs in.
+User keys are planned for after v1 and are not built. The full design has three sources per step: a
+local default, a user-supplied local model, or a user's key. No step requires a download. DuckSuite ships one model, LaMa, because Clean is the product; it
 ships no key, no translation weights and no proxy.
 
 | Step | Local default | Local model you can plug in | User key |
