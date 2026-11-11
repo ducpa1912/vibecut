@@ -97,7 +97,7 @@ def _grab(video: str, at: float, out: Path) -> Image.Image:
     return Image.open(out).convert("RGB")
 
 
-def _paint(image: Image.Image, box: dict, text: str) -> Image.Image:
+def _paint(image: Image.Image, box: dict, text: str, stroke_ratio: float = 0.055) -> Image.Image:
     """Draw a caption in the style of the source burn-in, inside ``box``.
 
     The line is shrunk until it fits the box, because a real caption is sized
@@ -112,7 +112,7 @@ def _paint(image: Image.Image, box: dict, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
     limit = w * 0.98
     size = max(8, int(round(h * 0.80)))
-    stroke = max(1, int(round(h * 0.055)))
+    stroke = max(1, int(round(h * stroke_ratio)))
     for _attempt in range(24):
         font = ImageFont.truetype(FONT, size)
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
@@ -153,13 +153,7 @@ def _fill(filler: LamaFiller, work: np.ndarray, hole: np.ndarray, upscale: float
     return out
 
 
-def _metrics(truth: np.ndarray, got: np.ndarray, hole: np.ndarray) -> dict:
-    rows = np.where(hole.any(axis=1))[0]
-    cols = np.where(hole.any(axis=0))[0]
-    y0, y1 = int(rows[0]), int(rows[-1]) + 1
-    x0, x1 = int(cols[0]), int(cols[-1]) + 1
-    region_truth = truth[y0:y1, x0:x1]
-    region_got = got[y0:y1, x0:x1]
+def _metrics(region_truth: np.ndarray, region_got: np.ndarray, hole_px: int) -> dict:
     diff = region_truth.astype(np.float32) - region_got.astype(np.float32)
     mse = float(np.mean(diff ** 2)) if diff.size else 0.0
     psnr = 99.0 if mse <= 1e-9 else 10.0 * math.log10(255.0 ** 2 / mse)
@@ -173,28 +167,35 @@ def _metrics(truth: np.ndarray, got: np.ndarray, hole: np.ndarray) -> dict:
         "psnr": round(psnr, 2),
         "ssim": round(ssim, 4),
         "mae": round(float(np.mean(np.abs(diff))), 2),
-        "hole_px": int(hole.sum()),
+        "hole_px": int(hole_px),
     }
 
 
 VARIANTS: dict[str, dict] = {
+    # The shipped defaults: a fill hole tight on the outline, normal context.
     "baseline": {},
+    # What the app shipped before the benchmark: a 0.06 pad and a 0.18 shadow.
+    "oldpads": {"FILL_PAD_RATIO": 0.06, "FILL_SHADOW_RATIO": 0.18},
+    # Rejected in the sweep: a smaller or larger work area around the line.
     "tight": {"CONTEXT_MIN_PX": 48, "CONTEXT_RATIO": 0.25},
     "wide": {"CONTEXT_MIN_PX": 192, "CONTEXT_RATIO": 1.0},
-    "wider": {"CONTEXT_MIN_PX": 256, "CONTEXT_RATIO": 1.5},
+    # Rejected: resampling the model input up before the fill.
     "upscale": {"UPSCALE": 1.5},
     "upscale2": {"UPSCALE": 2.0},
-    "up2wide": {"UPSCALE": 2.0, "CONTEXT_MIN_PX": 256, "CONTEXT_RATIO": 1.5},
 }
 
 
 def _apply(masks_module, variant: dict) -> None:
     masks_module.CONTEXT_MIN_PX = int(variant.get("CONTEXT_MIN_PX", 96))
     masks_module.CONTEXT_RATIO = float(variant.get("CONTEXT_RATIO", 0.5))
-    masks_module.PAD_RATIO = float(variant.get("PAD_RATIO", 0.06))
+    masks_module.FILL_PAD_RATIO = float(variant.get("FILL_PAD_RATIO", 0.04))
+    masks_module.FILL_SHADOW_RATIO = float(variant.get("FILL_SHADOW_RATIO", 0.10))
 
 
-def run(data_root: Path, project: str, count: int, variants: list[str], out: Path) -> dict:
+def run(
+    data_root: Path, project: str, count: int, variants: list[str], out: Path,
+    stroke: float = 0.055,
+) -> dict:
     project_dir = data_root / "projects" / project
     check = json.loads((project_dir / "check.json").read_text())
     report = check["report"]
@@ -216,13 +217,13 @@ def run(data_root: Path, project: str, count: int, variants: list[str], out: Pat
     temp = Path(tempfile.mkdtemp(prefix="fillbench-"))
     out.mkdir(parents=True, exist_ok=True)
     results: dict[str, list[dict]] = {name: [] for name in variants}
-    sheet_rows = []
+    sheets: dict[str, list] = {name: [] for name in variants}
 
     for index, at in enumerate(times):
         frame = _grab(source, at, temp / f"f{index}.jpg")
         caption = captions[index % len(captions)]
         box = caption["box"]
-        test = _paint(frame.copy(), box, str(caption["text_sample"])[:14])
+        test = _paint(frame.copy(), box, str(caption["text_sample"])[:14], stroke)
         truth = np.asarray(frame)
         dirty = np.asarray(test)
 
@@ -231,20 +232,20 @@ def run(data_root: Path, project: str, count: int, variants: list[str], out: Pat
             "tracklet_id": "bench",
             "large": bool(caption.get("large")),
         }
-        rect = masks.layer_rect(layer, width, height)
-        area = masks.lama_area([rect], width, height)
-        x0, y0, x1, y1 = area
-        work = dirty[y0:y1, x0:x1]
-        local = masks.rasterize(
-            [(rect[0] - x0, rect[1] - y0, rect[2] - x0, rect[3] - y0)],
-            x1 - x0, y1 - y0,
-        )
-        true_work = truth[y0:y1, x0:x1]
+        truth_full = np.asarray(frame)
+        dirty_full = np.asarray(test)
+        _apply(masks, {})
+        rect_ref = masks.layer_rect(layer, width, height)
+        ry0, ry1 = max(0, rect_ref[1]), min(height, rect_ref[3])
+        rx0, rx1 = max(0, rect_ref[0]), min(width, rect_ref[2])
 
         for name in variants:
             variant = VARIANTS[name]
             _apply(masks, variant)
             rect_n = masks.layer_rect(layer, width, height)
+            area_n = masks.lama_area([rect_n], width, height)
+            x0, y0, x1, y1 = area_n
+            work = dirty_full[y0:y1, x0:x1]
             local_n = masks.rasterize(
                 [(rect_n[0] - x0, rect_n[1] - y0, rect_n[2] - x0, rect_n[3] - y0)],
                 x1 - x0, y1 - y0,
@@ -252,11 +253,19 @@ def run(data_root: Path, project: str, count: int, variants: list[str], out: Pat
             started = time.perf_counter()
             filled = _fill(filler, work, local_n, float(variant.get("UPSCALE", 1.0)))
             elapsed = time.perf_counter() - started
-            item = _metrics(true_work, filled, local_n)
+            frame_out = dirty_full.copy()
+            frame_out[y0:y1, x0:x1][local_n] = filled[local_n]
+            # Score one fixed region for every variant: the baseline hole. A
+            # smaller hole that leaves an outline behind scores worse here,
+            # which a hole-only score would hide.
+            item = _metrics(
+                truth_full[ry0:ry1, rx0:rx1],
+                frame_out[ry0:ry1, rx0:rx1],
+                int(local_n.sum()),
+            )
             item.update({"t": at, "seconds": round(elapsed, 2), "variant": name})
             results[name].append(item)
-            if name == variants[0]:
-                sheet_rows.append((at, true_work, work, filled, local_n))
+            sheets[name].append((at, truth_full[y0:y1, x0:x1], work, filled, local_n))
 
     _apply(masks, {})
     shutil.rmtree(temp, ignore_errors=True)
@@ -271,7 +280,8 @@ def run(data_root: Path, project: str, count: int, variants: list[str], out: Pat
             "frames": len(rows),
         }
     (out / "results.json").write_text(json.dumps({"summary": summary, "rows": results}, indent=1))
-    _sheet(sheet_rows, out / "sheet.jpg")
+    for name, rows in sheets.items():
+        _sheet(rows, out / f"sheet-{name}.jpg")
     return summary
 
 
@@ -305,12 +315,16 @@ def main() -> int:
     parser.add_argument("--frames", type=int, default=10)
     parser.add_argument("--variants", default="baseline")
     parser.add_argument("--out", type=Path, default=Path("/tmp/fillbench"))
+    parser.add_argument("--stroke", type=float, default=0.055,
+                        help="synthetic outline width as a share of box height")
     args = parser.parse_args()
     variants = [name.strip() for name in args.variants.split(",") if name.strip()]
     unknown = [name for name in variants if name not in VARIANTS]
     if unknown:
         raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
-    summary = run(args.data_root, args.project, args.frames, variants, args.out)
+    summary = run(
+        args.data_root, args.project, args.frames, variants, args.out, args.stroke,
+    )
     print(json.dumps(summary, indent=1))
     return 0
 
