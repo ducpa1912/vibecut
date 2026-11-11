@@ -3286,7 +3286,36 @@ function chooseModelFolder() {
   toast('The folder picker is only available in the app.', 'bad');
 }
 
-window.duckModelFolder = async (path) => {
+function chooseFillModelFolder() {
+  if (window.webkit?.messageHandlers?.duck) {
+    window.webkit.messageHandlers.duck.postMessage({ type: 'chooseModelFolder', target: 'fill' });
+    return;
+  }
+  toast('The folder picker is only available in the app.', 'bad');
+}
+
+async function saveFillModel(path) {
+  try {
+    const data = await api('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ fill_model_path: path || '' }),
+    });
+    state.settings = data;
+    const model = data?.fill?.model || {};
+    toast(path
+      ? (model.ready ? 'Fill will use your model.' : `Saved, but: ${model.problem || 'that folder cannot be used.'}`)
+      : 'Fill will use LaMa.');
+    if (typeof openSettings === 'function') await openSettings();
+  } catch (error) {
+    toast(`Fill model: ${error.message}`, 'bad');
+  }
+}
+
+window.duckModelFolder = async (path, target) => {
+  if (target === 'fill') {
+    await saveFillModel(path || '');
+    return;
+  }
   const input = document.querySelector('#translation-path');
   if (input) input.value = path || '';
   const engine = document.querySelector('#translation-engine');
@@ -3328,6 +3357,21 @@ async function openSettings() {
           <div class="kv"><span>Vision</span><strong>${state.engine?.vision?.available ? 'Ready' : 'Unavailable'}</strong></div>
           <div class="kv"><span>Speech</span><strong>${state.engine?.speech?.default || 'Auto'}</strong></div>
           <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
+          ${(() => {
+            const fillModel = state.settings?.fill?.model || {};
+            return `<div class="field" style="margin-top:8px"><label for="fill-model-path">Your fill model</label>
+            <div class="path-row">
+              <input id="fill-model-path" type="text" value="${esc(fillModel.path || '')}" placeholder="Choose a folder with model.onnx or model.pt" readonly>
+              <button class="btn small" type="button" data-action="choose-fill-model">${icon('folder', 12)} Choose</button>
+            </div>
+          </div>
+          <p class="small muted">${fillModel.path
+            ? (fillModel.ready
+              ? `Using ${esc(fillModel.file)} in place of LaMa.`
+              : esc(fillModel.problem || 'That folder cannot be used.'))
+            : 'Runs in place of LaMa when set. DuckSuite ships no fill model and downloads none; the folder is copied into DuckSuite. Use a model you obtained yourself.'}</p>
+          ${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Use LaMa</button>` : ''}`;
+          })()}
           <div class="kv"><span>Voices</span><strong>${state.voices.length ? `${state.voices.length} local` : '—'}</strong></div>
           <div class="kv"><span>Rewrite</span><strong>${state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
           ${state.engine?.rewrite?.available ? '' : `<p class="small muted">${esc(
@@ -4129,6 +4173,8 @@ document.addEventListener('click', async (event) => {
     else if (action === 'settings') await openSettings();
     else if (action === 'save-translation') await saveTranslationSettings();
     else if (action === 'choose-model-folder') chooseModelFolder();
+    else if (action === 'choose-fill-model') chooseFillModelFolder();
+    else if (action === 'clear-fill-model') saveFillModel('');
     else if (action === 'fill-device') await setFillDevice(target.dataset.device || 'cpu');
     else if (action === 'clean-filter') { state.cleanFilter = target.dataset.filter === 'mine' ? 'mine' : 'all'; render(); }
     else if (action === 'search') openSearch();

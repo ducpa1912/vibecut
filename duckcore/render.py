@@ -442,10 +442,14 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
             end = float(clip.get("end") or 0.0)
             if end <= start or str(clip.get("kind")) == "media":
                 continue
+            crossings = textfill.count_crossings(
+                str(meta.get("path") or ""), meta, layers,
+                start=start, duration=max(0.04, end - start), data_root=data_root,
+            )
             rows.append(textfill.estimate_span(
                 meta=meta, start=start, duration=max(0.04, end - start), layers=layers,
                 method="lama", cache_dir=cache, data_root=data_root,
-                device=device,
+                device=device, crossings=crossings,
             ))
     summary = textfill.estimate_summary(rows, data_root)
     filled_frames = sum(int(row.get("frames") or 0) for row in rows)
@@ -1238,6 +1242,7 @@ class RenderQueue:
                     from duckcore.engine import pipeline
 
                     meta = pipeline.probe(str(project["source_path"]))
+                    meta["path"] = str(project["source_path"])
                     guess = estimate_edit(edit, meta, self.data_root)
                     seconds = guess.get("total_seconds") or guess.get("seconds") or 0
                     self._update(item["id"], estimate_seconds=float(seconds))

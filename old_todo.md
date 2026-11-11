@@ -265,3 +265,10 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] Player no longer rebuilt on Check progress; Check can run while the player keeps playing.
 - [x] Three-screen revamp: Edit desk, Clean focus, Preview/Render.
 - [x] Progress report created, then extended five times without deleting old entries.
+
+## Loop 8 closed items (2026-11-12)
+
+- [x] Licence table for video-inpaint candidates, clause and URL per row: none allowed.
+- [x] Bench the allowed candidates: none, so LaMa alone on 3 moving spans, 21 frames.
+- [x] Custom fill slot (no licence needed) for a user ONNX or TorchScript model.
+- [x] Crossings measured into the estimate (35 on the review project, +11.7 s).

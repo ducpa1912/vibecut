@@ -150,6 +150,20 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-12</strong><span>12 Nov · Loop 8 moving fill</span></div>
+      <div class="timeline-body">
+        <strong>No other inpainting engine may ship; the user can plug in their own fill model.</strong>
+        <ul class="clean">
+          <li>Licence table, 9 engines, clause and URL per row: ProPainter, E2FGVI and MAT are non-commercial; DiffuEraser inherits ProPainter; STTN, FGT and FGVC publish code without a weight grant. None is allowed.</li>
+          <li>Bench, LaMa alone, 3 moving spans, 21 frames, GPU: PSNR 22.04 with the old box hole vs <b>26.57 with loop 7's ink hole</b>, 0.48 vs 0.44 s a frame, peak 620 MB. Flicker max 1.82 on the shipped render.</li>
+          <li>New custom fill slot: a user folder with <span class="mono">model.onnx</span> or <span class="mono">model.pt</span> replaces LaMa, stamp in the cache key, plain fallback when the file is wrong. Ships no weights, names no model.</li>
+          <li>The estimate now counts crossings measured from the source (35 on the review project), not a factor: fill 298.4 -> 310.1 s. Still 483.5 s against a 698 s cold render; the rest is the per-letter stroke plan, recorded.</li>
+          <li>8 new tests, 163 pass, app builds. <span class="mono">VERSION</span> stays 17: no default output change.</li>
+        </ul>
+        <span class="mono">163 tests</span> · review: <span class="mono">docs/teams/loop-08-moving-fill/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-11</strong><span>11 Nov · Loop 7 ink check</span></div>
       <div class="timeline-body">
         <strong>The render is checked for leftover text from pixels, and two boundary leaks are gone.</strong>

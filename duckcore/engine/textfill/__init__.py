@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import numpy as np
+from PIL import Image
 
 from . import mask as masks
 
@@ -67,6 +68,14 @@ LAMA_RING_PX = 24
 # more than this many levels. No fill from another frame is used across that.
 LAMA_CROSS_LEVEL = 48
 LAMA_CROSS_SHARE = 0.10
+# The estimate counts crossings from the source, not a factor. A quarter-size
+# picture at 10 fps is enough to see a hand or chopsticks cross a line, and it
+# keeps the scan a few seconds for a whole edit.
+CROSS_SAMPLE_FPS = 10.0
+CROSS_SCALE = 4
+# One event per crossing: the picture must settle for this long before the next
+# one counts, so a hand that stays over the text is not counted frame by frame.
+CROSS_QUIET = 0.3
 # Cost of one LaMa run per pixel it reads, as a share of a 512 square, and of
 # reading, pasting and writing one frame.
 LAMA_FRAME_UNITS = 0.02
@@ -113,6 +122,25 @@ def models_dir(data_root: Path | str) -> Path:
     if override:
         return Path(override).expanduser()
     return data
+
+
+def custom_fill_model(data_root: Path | str) -> tuple[Path | None, str | None]:
+    """The user's fill model file and, when it is unusable, a plain reason."""
+    from duckcore import app_settings
+
+    folder = str(app_settings.load(data_root).get("fill_model_path") or "").strip()
+    if not folder:
+        return None, None
+    from . import custom
+
+    reason = custom.problem(folder)
+    if reason:
+        return None, reason
+    return custom.find_model(folder), None
+
+
+def custom_fill_path(data_root: Path | str) -> Path | None:
+    return custom_fill_model(data_root)[0]
 
 
 def seed_models(data_root: Path | str) -> None:
@@ -349,6 +377,134 @@ def _planned_units(
     return round(total, 2)
 
 
+def _crossings_key(meta: dict, layers: Iterable[dict], start: float, duration: float) -> str:
+    payload = {
+        "start": round(float(start), 3),
+        "duration": round(float(duration), 3),
+        "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
+        "fps": float(meta.get("fps") or 0.0),
+        "layers": [
+            {
+                "id": layer.get("id"),
+                "ranges": layer.get("ranges") or [],
+                "ink_key": layer.get("ink_key"),
+            }
+            for layer in layers
+        ],
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def count_crossings(
+    source: str,
+    meta: dict,
+    layers: Iterable[dict],
+    *,
+    start: float,
+    duration: float,
+    data_root: Path | str | None = None,
+    frames: Iterable[np.ndarray] | None = None,
+) -> int:
+    """Frames where the picture beside the text changes enough to end a blend.
+
+    Measured, not guessed: the predicate is the one the fill uses
+    (``_picture_moved``), read on a quarter-size picture at
+    ``CROSS_SAMPLE_FPS``. Each crossing starts a new run, which is one extra
+    fill per spot in the estimate. ``frames`` lets a test supply the pictures.
+    """
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    if width < 2 or height < 2 or fps <= 0 or duration <= 0.2:
+        return 0
+    count = max(1, int(round(float(duration) * fps)) + 1)
+    table = masks.frame_rects(
+        layers, start=start, fps=fps, frames=count, width=width, height=height,
+    )
+    if not any(table):
+        return 0
+    key = _crossings_key(meta, layers, start, duration)
+    store = Path(data_root) / "render_crossings.json" if data_root else None
+    if frames is None and store is not None:
+        try:
+            cached = json.loads(store.read_text(encoding="utf-8"))
+            if key in cached:
+                return int(cached[key])
+        except (OSError, ValueError):
+            pass
+    small_w = max(2, width // CROSS_SCALE)
+    small_h = max(2, height // CROSS_SCALE)
+    # A supplied sequence is already at the sample rate; the reader is not.
+    step = 1 if frames is not None else max(1, int(round(fps / CROSS_SAMPLE_FPS)))
+    sink = frames
+    reader = None
+    if sink is None:
+        from duckcore import media
+
+        reader = _Reader(media.ffmpeg(), str(source), start, float(duration), fps, small_w, small_h)
+
+        def read_frames():
+            while True:
+                frame = reader.read()
+                if frame is None:
+                    return
+                yield frame
+
+        sink = read_frames()
+    total = 0
+    previous = None
+    quiet = 0
+    quiet_frames = max(1, int(round(CROSS_QUIET * CROSS_SAMPLE_FPS)))
+    try:
+        for index, frame in enumerate(sink):
+            if index % step:
+                continue
+            if frame is None:
+                break
+            at = min(len(table) - 1, int(round(index)))
+            rects = table[at]
+            if not rects:
+                previous = None
+                quiet = 0
+                continue
+            grey = np.asarray(frame, dtype=np.uint8)
+            if grey.ndim == 3:
+                grey = grey.mean(axis=2)
+            if grey.shape != (small_h, small_w):
+                grey = np.asarray(
+                    Image.fromarray(grey.astype(np.uint8)).resize(
+                        (small_w, small_h), Image.BILINEAR,
+                    ),
+                    dtype=np.uint8,
+                )
+            hole = np.zeros((small_h, small_w), dtype=bool)
+            for x0, y0, x1, y1 in rects:
+                hole[
+                    max(0, y0 // CROSS_SCALE):max(0, y1 // CROSS_SCALE),
+                    max(0, x0 // CROSS_SCALE):max(0, x1 // CROSS_SCALE),
+                ] = True
+            if previous is not None and not hole.all():
+                if _picture_moved(previous, grey, hole):
+                    if quiet == 0:
+                        total += 1
+                    quiet = quiet_frames
+            quiet = max(0, quiet - 1)
+            previous = grey
+    finally:
+        if reader is not None:
+            _stop(reader.proc)
+    if store is not None:
+        try:
+            cached = json.loads(store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cached = {}
+        cached[key] = int(total)
+        temporary = store.with_suffix(".tmp")
+        temporary.write_text(json.dumps(cached, indent=1), encoding="utf-8")
+        temporary.replace(store)
+    return total
+
+
 def estimate_span(
     *,
     meta: dict,
@@ -360,6 +516,7 @@ def estimate_span(
     data_root: Path,
     device: str = DEFAULT_DEVICE,
     follow_motion: bool = False,
+    crossings: int = 0,
 ) -> dict:
     """What one beat's fill will cost, without running anything.
 
@@ -383,10 +540,24 @@ def estimate_span(
             table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
             method=method, device=device,
         )
+    if crossings > 0 and table:
+        # Each crossing starts a new run: one fill over the areas that hold text.
+        first = table[0]
+        area_cost = sum(
+            _run_units(method, spot[3] - spot[1], spot[2] - spot[0])
+            for spot in masks.lama_areas(first, width, height)
+        )
+        row["units"] = round(
+            row["units"] + crossings * (area_cost + frame_units(method, device)), 2,
+        )
+        row["crossings"] = int(crossings)
     if not missing_model(method, directory):
         key = span_key(
             meta=meta, start=start, duration=duration, layers=layers,
-            method=method, model_stamp=method_stamp(method, directory, device),
+            method=method,
+            model_stamp=method_stamp(
+                method, directory, device, custom=custom_fill_path(data_root),
+            ),
             follow_motion=follow_motion,
         )
         output = Path(cache_dir) / f"{key}.mp4"
@@ -456,8 +627,12 @@ def _model_stamp(path: Path) -> str:
     return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
-def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVICE) -> str:
+def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVICE,
+                 custom: Path | None = None) -> str:
     """What identifies an engine's pixels: its model file, or OpenCV's version."""
+    if custom is not None:
+        # The user's file decides the pixels; the chip is its own business.
+        return f"{_model_stamp(Path(custom))}:custom"
     if device == "gpu" and method in GPU_MODEL_FILES:
         return f"{_model_stamp(model_path(method, Path(directory), 'gpu'))}:gpu"
     if method in CLASSIC_METHODS:
@@ -469,7 +644,8 @@ def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVIC
     return _model_stamp(model_path(method, Path(directory)))
 
 
-def model_signature(methods: Iterable[str], directory: Path | str) -> str:
+def model_signature(methods: Iterable[str], directory: Path | str,
+                    custom: Path | None = None) -> str:
     """A stable signature of the model files a render will read.
 
     The render's master cache key includes this, so replacing a checkpoint
@@ -483,7 +659,7 @@ def model_signature(methods: Iterable[str], directory: Path | str) -> str:
         if missing_model(method, directory):
             parts.append([method, "missing"])
         else:
-            parts.append([method, method_stamp(method, directory)])
+            parts.append([method, method_stamp(method, directory, custom=custom)])
             if method in KEYED_METHODS:
                 parts.append(["runs", LAMA_RUN_RULE])
     payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
@@ -567,6 +743,26 @@ def _filler(method: str, path: Path, device: str = DEFAULT_DEVICE):
                 raise FillError(
                     f"{METHOD_COPY[method]} fill needs the {package} package on this Mac."
                 ) from exc
+            _FILLERS[key] = filler
+        return filler
+
+
+def _custom_filler(path: Path):
+    """The user's model, loaded once. A bad file is a plain FillError."""
+    from . import custom
+
+    try:
+        stat = Path(path).stat()
+        key = ("custom", str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError as exc:
+        raise FillError(f"Your fill model cannot be read: {exc}.") from exc
+    with _FILLERS_LOCK:
+        filler = _FILLERS.get(key)
+        if filler is None:
+            try:
+                filler = custom.open_filler(Path(path).parent)
+            except (ValueError, ImportError, OSError, RuntimeError) as exc:
+                raise FillError(f"Your fill model did not load: {exc}.") from exc
             _FILLERS[key] = filler
         return filler
 
@@ -1428,21 +1624,45 @@ def prepare_span(
         return None
 
     directory = models_dir(data_root)
-    device = chosen_device(method, device, directory)
-    problem = device_problem(method, directory, device)
-    if problem:
-        raise FillError(problem)
-    follow_motion = _follow_on(method, follow_motion)
-    path = model_path(method, directory, device)
+    custom_path, custom_reason = custom_fill_model(data_root)
+    if custom_reason:
+        LOGGER.warning("Your fill model is not usable: %s Using LaMa.", custom_reason)
+    custom_filler = None
+    custom_fallback = ""
+    if custom_path is not None:
+        # Load before the key: a file that cannot load must not own a clip.
+        try:
+            custom_filler = _custom_filler(custom_path)
+        except FillError as exc:
+            custom_fallback = str(exc)
+            LOGGER.warning("%s Using LaMa instead.", custom_fallback)
+            custom_path = None
+    if custom_path is not None:
+        device = DEFAULT_DEVICE
+        follow_motion = False
+        path = custom_path
+        stamp = method_stamp(method, directory, device, custom=custom_path)
+    else:
+        device = chosen_device(method, device, directory)
+        problem = device_problem(method, directory, device)
+        if problem:
+            raise FillError(problem)
+        follow_motion = _follow_on(method, follow_motion)
+        path = model_path(method, directory, device)
+        stamp = method_stamp(method, directory, device)
     key = span_key(
         meta=meta, start=start, duration=duration, layers=layers,
-        method=method, model_stamp=method_stamp(method, directory, device),
+        method=method, model_stamp=stamp,
         follow_motion=follow_motion,
     )
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
     if output.is_file() and output.stat().st_size > 1024:
-        return {"path": str(output), "key": key, "cached": True, "method": method}
+        return {
+            "path": str(output), "key": key, "cached": True, "method": method,
+            "engine": "custom" if custom_path is not None else method,
+            "custom_fallback": custom_fallback,
+        }
     cache_dir.mkdir(parents=True, exist_ok=True)
     part = cache_dir / f".{key}.part.mp4"
     saved = counted = None
@@ -1486,7 +1706,8 @@ def prepare_span(
             on_replay(index + 1)
         if progress and index % 10 == 0:
             reused = f" · {saved.hits} saved fills reused" if saved is not None and saved.hits else ""
-            progress(min(1.0, (index + 1) / expected), f"{METHOD_COPY[method]} {index + 1}/{expected}{reused}")
+            label = "Your fill model" if custom_path is not None else METHOD_COPY[method]
+            progress(min(1.0, (index + 1) / expected), f"{label} {index + 1}/{expected}{reused}")
 
     # A cancel while another render holds the lock must not wait for it.
     _check_cancel(cancelled)
@@ -1500,7 +1721,9 @@ def prepare_span(
         # by a killed server.
         for stale in cache_dir.glob(".*.part.mp4"):
             stale.unlink(missing_ok=True)
-        if device == "gpu":
+        if custom_filler is not None:
+            filler = custom_filler
+        elif device == "gpu":
             filler = _GpuOrCpu(
                 lambda: _filler(method, path, "gpu"),
                 lambda: _filler(method, model_path(method, directory), DEFAULT_DEVICE),
@@ -1512,7 +1735,7 @@ def prepare_span(
             counted = _CountedFiller(filler, method)
             _prune_saved(_saved_folders(data_root, cache_dir / SAVED_DIR))
             saved = filler = _SavedFills(
-                counted, cache_dir / SAVED_DIR, method_stamp(method, directory, device),
+                counted, cache_dir / SAVED_DIR, stamp,
             )
             plan_for = lama_plan(layers, start=start, fps=fps, frames=len(rect_table))
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
@@ -1565,7 +1788,7 @@ def prepare_span(
                 "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d "
                 "engine=%s device=%s follow=%s",
                 start, written, counted.runs, counted.units, took, took / max(1, written), saved.hits,
-                method, device, follow_motion,
+                "custom" if custom_path is not None else method, device, follow_motion,
             )
         # A resumed clip spent little time on what it reused: not a speed to learn.
         if written >= RATE_MIN_FRAMES and not (saved is not None and saved.hits):
@@ -1588,4 +1811,8 @@ def prepare_span(
         _LOCK.release()
     if progress:
         progress(1.0, f"{METHOD_COPY[method]} done")
-    return {"path": str(output), "key": key, "cached": False, "method": method}
+    return {
+        "path": str(output), "key": key, "cached": False, "method": method,
+        "engine": "custom" if custom_path is not None else method,
+        "custom_fallback": custom_fallback,
+    }

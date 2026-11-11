@@ -241,3 +241,18 @@ Senior PO review of loop 7 found the leftover-text check could pass a render tha
 read as output times, ffmpeg not found in the shipped app). Rebuilt: per-letter ink with its own
 frames, check of output against source, stroke-shaped hole, no fill reused across a crossing.
 `textfill.VERSION` 17, 155 tests, cold render 698 s. Detail: `docs/teams/loop-07-ink-check/review.md`.
+
+## Loop 8 — moving fill (2026-11-12)
+
+### REQ-20261111-12 · 2026-11-11
+**Request:** Senior PO brief, Loop 8 (PLAN.md loop 5): a better fill for moving footage.
+**Read as:** one licence table, a bench on the allowed engines only, and a user-supplied fill slot
+that needs no licence, proven on `prj_e95348a97316`.
+**Response:** `docs/duck/moving-fill-licences.md` (9 engines, all no); `bench_fill.py` gains
+`--spans` and an `ink` hole variant; `duckcore/engine/textfill/custom.py` loads a user ONNX or
+TorchScript model in place of LaMa, stamp in `span_key`, plain fallback; Settings picker + route;
+`count_crossings()` measured into the estimate.
+**Outcome:** 7/7 acceptance. Bench 21 frames over 3 moving spans: LaMa PSNR 22.04 (box) vs 26.57
+(ink), 0.48 vs 0.44 s/frame, peak 620 MB; no candidate allowed; flicker max 1.82 (render). 163
+tests, app builds. Estimate fill 298.4 -> 310.1 s from 35 measured crossings; still 483.5 s against
+698 s cold, the rest being the per-letter stroke plan (recorded, not fixed).

@@ -43,6 +43,7 @@ from skimage.metrics import structural_similarity
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from duckcore import ink as ink_mod  # noqa: E402
 from duckcore.engine.textfill import lama as lama_mod  # noqa: E402
 from duckcore.engine.textfill import mask as masks  # noqa: E402
 from duckcore.engine.textfill.lama import LamaFiller  # noqa: E402
@@ -96,26 +97,32 @@ def _model_path(data_root: Path, device: str = "cpu") -> Path:
     return data_root / "models/fill/lama_fp32.onnx"
 
 
-def _free_times(report: dict, duration: float, count: int) -> list[float]:
-    """Times where no tracklet is on screen, evenly spread over the video."""
+def _free_times(report: dict, duration: float, count: int,
+                windows: list[tuple[float, float]] | None = None) -> list[float]:
+    """Times where no tracklet is on screen, spread over the video or the windows."""
     spans = []
     for tracklet in report.get("tracklets") or []:
         for item in tracklet.get("ranges") or []:
             spans.append((float(item["start"]), float(item["end"])))
     spans.sort()
     margin = 0.6
+    windows = [(max(0.0, a), min(duration, b)) for a, b in (windows or []) if b > a]
+    if not windows:
+        windows = [(margin + 1.0, duration - margin)]
     candidates = []
     step = max(0.5, duration / 400.0)
-    at = margin + 1.0
-    while at < duration - margin:
-        blocked = any(start - margin < at < end + margin for start, end in spans)
-        if not blocked:
-            candidates.append(round(at, 3))
-        at += step
+    for window_start, window_end in windows:
+        at = window_start + margin / 2
+        while at < window_end - margin / 2:
+            blocked = any(start - margin < at < end + margin for start, end in spans)
+            if not blocked:
+                candidates.append(round(at, 3))
+            at += step
     if not candidates:
         return []
     if len(candidates) <= count:
         return candidates
+    # Spread the picks over the list, one pass, so every window contributes.
     picks = np.linspace(0, len(candidates) - 1, count).round().astype(int)
     return [candidates[index] for index in sorted(set(picks.tolist()))]
 
@@ -211,6 +218,8 @@ VARIANTS: dict[str, dict] = {
     # Rejected in the sweep: a smaller or larger work area around the line.
     "tight": {"CONTEXT_MIN_PX": 48, "CONTEXT_RATIO": 0.25},
     "wide": {"CONTEXT_MIN_PX": 192, "CONTEXT_RATIO": 1.0},
+    # Loop 7's hole: the painted caption's own strokes, grown 6 px, not its box.
+    "ink": {"INK": True},
     # Rejected: resampling the model input up before the fill.
     "upscale": {"UPSCALE": 1.5},
     "upscale2": {"UPSCALE": 2.0},
@@ -227,6 +236,7 @@ def _apply(masks_module, variant: dict) -> None:
 def run(
     data_root: Path, project: str, count: int, variants: list[str], out: Path,
     stroke: float = 0.055, device: str = "cpu", model: Path | None = None,
+    windows: list[tuple[float, float]] | None = None,
 ) -> dict:
     project_dir = data_root / "projects" / project
     check = json.loads((project_dir / "check.json").read_text())
@@ -241,7 +251,7 @@ def run(
     ]
     if not captions:
         raise SystemExit("No caption tracklets to borrow text and boxes from.")
-    times = _free_times(report, duration, count)
+    times = _free_times(report, duration, count, windows=windows)
     if not times:
         raise SystemExit("No text-free frames found.")
 
@@ -281,12 +291,30 @@ def run(
             variant = VARIANTS[name]
             _apply(masks, variant)
             rect_n = masks.layer_rect(layer, width, height)
+            if variant.get("INK"):
+                # The caption's own pixels, the way loop 7 builds a line's hole.
+                painted = np.any(
+                    np.abs(dirty_full.astype(np.int16) - truth_full.astype(np.int16)) > 8,
+                    axis=2,
+                )
+                inside = np.zeros_like(painted)
+                inside[rect_n[1]:rect_n[3], rect_n[0]:rect_n[2]] = True
+                hole = ink_mod.dilate(painted & inside, 6)
+                rows_y, cols_x = np.where(hole)
+                if not len(cols_x):
+                    continue
+                rect_n = (
+                    int(cols_x.min()), int(rows_y.min()),
+                    int(cols_x.max()) + 1, int(rows_y.max()) + 1,
+                )
             area_n = masks.lama_area([rect_n], width, height)
             x0, y0, x1, y1 = area_n
             work = dirty_full[y0:y1, x0:x1]
-            local_n = masks.rasterize(
-                [(rect_n[0] - x0, rect_n[1] - y0, rect_n[2] - x0, rect_n[3] - y0)],
-                x1 - x0, y1 - y0,
+            local_n = (
+                hole[y0:y1, x0:x1] if variant.get("INK") else masks.rasterize(
+                    [(rect_n[0] - x0, rect_n[1] - y0, rect_n[2] - x0, rect_n[3] - y0)],
+                    x1 - x0, y1 - y0,
+                )
             )
             started = time.perf_counter()
             filled = _fill(filler, work, local_n, float(variant.get("UPSCALE", 1.0)))
@@ -370,6 +398,8 @@ def main() -> int:
                         help="synthetic outline width as a share of box height")
     parser.add_argument("--device", choices=DEVICES, default="cpu",
                         help="where LaMa runs; one device per process")
+    parser.add_argument("--spans", default="",
+                        help="t0:t1,t2:t3 windows to sample inside (moving spans)")
     parser.add_argument("--model", type=Path, default=None,
                         help="model file; default is the shipped one for the device")
     args = parser.parse_args()
@@ -377,9 +407,19 @@ def main() -> int:
     unknown = [name for name in variants if name not in VARIANTS]
     if unknown:
         raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
+    windows = []
+    for part in str(args.spans or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            first, last = part.split(":")
+            windows.append((float(first), float(last)))
+        except ValueError:
+            raise SystemExit(f"Bad span {part!r}; use t0:t1,t2:t3")
     summary = run(
         args.data_root, args.project, args.frames, variants, args.out, args.stroke,
-        args.device, args.model,
+        args.device, args.model, windows=windows,
     )
     print(json.dumps(summary, indent=1))
     return 0

@@ -26,7 +26,8 @@ struct ContentView: View {
                     },
                     onRecordStart: { try await model.startRecording() },
                     onRecordStop: { model.stopRecording() },
-                    onChooseModelFolder: { await model.chooseModelFolder() }
+                    onChooseModelFolder: { await model.chooseModelFolder() },
+                    onChooseFillModelFolder: { await model.chooseFillModelFolder() }
                 )
             } else if let error = model.error {
                 VStack(spacing: 14) {
@@ -71,6 +72,7 @@ private struct WebView: NSViewRepresentable {
     let onRecordStart: @MainActor () async throws -> String
     let onRecordStop: @MainActor () -> String?
     let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
+    let onChooseFillModelFolder: @MainActor () async -> (path: String?, error: String?)
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -115,7 +117,8 @@ private struct WebView: NSViewRepresentable {
             onDropFiles: onDropFiles,
             onRecordStart: onRecordStart,
             onRecordStop: onRecordStop,
-            onChooseModelFolder: onChooseModelFolder
+            onChooseModelFolder: onChooseModelFolder,
+            onChooseFillModelFolder: onChooseFillModelFolder
         )
     }
 
@@ -127,6 +130,7 @@ private struct WebView: NSViewRepresentable {
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
         private let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
+        private let onChooseFillModelFolder: @MainActor () async -> (path: String?, error: String?)
         nonisolated(unsafe) private var mouseDownEvent: NSEvent?
         nonisolated(unsafe) private var mouseMonitor: Any?
 
@@ -136,7 +140,8 @@ private struct WebView: NSViewRepresentable {
             onDropFiles: @escaping @MainActor (URL, String) async -> Bool,
             onRecordStart: @escaping @MainActor () async throws -> String,
             onRecordStop: @escaping @MainActor () -> String?,
-            onChooseModelFolder: @escaping @MainActor () async -> (path: String?, error: String?)
+            onChooseModelFolder: @escaping @MainActor () async -> (path: String?, error: String?),
+            onChooseFillModelFolder: @escaping @MainActor () async -> (path: String?, error: String?)
         ) {
             self.onImport = onImport
             self.onImportNotice = onImportNotice
@@ -144,6 +149,7 @@ private struct WebView: NSViewRepresentable {
             self.onRecordStart = onRecordStart
             self.onRecordStop = onRecordStop
             self.onChooseModelFolder = onChooseModelFolder
+            self.onChooseFillModelFolder = onChooseFillModelFolder
             super.init()
             mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
                 self?.mouseDownEvent = event
@@ -210,11 +216,14 @@ private struct WebView: NSViewRepresentable {
             }
 
             if type == "chooseModelFolder" {
+                let target = (body["target"] as? String) ?? "translation"
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    let result = await self.onChooseModelFolder()
+                    let result = target == "fill"
+                        ? await self.onChooseFillModelFolder()
+                        : await self.onChooseModelFolder()
                     if let path = result.path {
-                        self.callJS("window.duckModelFolder", path)
+                        self.callJS("window.duckModelFolder", [path, target])
                     } else if let error = result.error {
                         self.callJS("window.duckModelFolderError", error)
                     }
@@ -227,6 +236,12 @@ private struct WebView: NSViewRepresentable {
             guard let data = try? JSONSerialization.data(withJSONObject: [value]),
                   let json = String(data: data, encoding: .utf8) else { return }
             webView?.evaluateJavaScript("\(function)(\(json)[0])")
+        }
+
+        func callJS(_ function: String, _ values: [String]) {
+            guard let data = try? JSONSerialization.data(withJSONObject: values),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView?.evaluateJavaScript("\(function)(\(json))")
         }
 
         func webView(

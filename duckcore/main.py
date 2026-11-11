@@ -96,6 +96,7 @@ class SettingsPatch(BaseModel):
     translation_engine: str | None = None
     translation_model_path: str | None = None
     fill_device: str | None = None
+    fill_model_path: str | None = None
 
 
 class CuePatch(BaseModel):
@@ -1764,6 +1765,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             meta = pipeline.probe(str(project["source_path"]))
         except (pipeline.PipelineError, OSError):
             meta = dict(edit.get("source") or {})
+        meta = {**meta, "path": str(project["source_path"])}
         return {"estimate": render.estimate_edit(edit, meta, data_root)}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/render/cancel")

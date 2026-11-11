@@ -56,6 +56,23 @@ def _tree_bytes(path: Path) -> int:
     return total
 
 
+def fill_model_status(data_root: Path | str) -> dict[str, Any]:
+    """The user's fill model folder: ready, or a plain reason it is not."""
+    from duckcore.engine.textfill import custom
+
+    folder = str(load(data_root).get("fill_model_path") or "").strip()
+    if not folder:
+        return {"path": "", "file": "", "ready": False, "problem": ""}
+    reason = custom.problem(folder)
+    path = custom.find_model(folder)
+    return {
+        "path": folder,
+        "file": path.name if path is not None else "",
+        "ready": reason is None,
+        "problem": reason or "",
+    }
+
+
 def fill_device(data_root: Path | str) -> str:
     """The fill chip the user chose. One default: GPU. The render reads this."""
     stored = str(load(data_root).get("fill_device") or "gpu").strip().lower()
@@ -73,7 +90,10 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
             "engine": str(settings.get("translation_engine") or "auto"),
             "custom_path": str(settings.get("translation_model_path") or ""),
         },
-        "fill": {"device": fill_device(root)},
+        "fill": {
+            "device": fill_device(root),
+            "model": fill_model_status(root),
+        },
         "online": {
             "enabled": bool(settings.get("online_enabled")),
             "endpoint": str(settings.get("online_endpoint") or ""),
@@ -111,6 +131,15 @@ def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
         current["fill_device"] = device
     if "translation_model_path" in payload:
         current["translation_model_path"] = str(payload["translation_model_path"] or "").strip()[:2000]
+    if "fill_model_path" in payload:
+        folder = str(payload["fill_model_path"] or "").strip()[:2000]
+        if folder:
+            from duckcore.engine.textfill import custom
+
+            reason = custom.problem(folder)
+            if reason:
+                raise ValueError(reason)
+        current["fill_model_path"] = folder
     # DuckSuite always auto-detects language. Keep the field read-only.
     current["language"] = "auto"
     return save(data_root, current)
