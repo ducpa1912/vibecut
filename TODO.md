@@ -1,7 +1,10 @@
 # TODO — DuckSuite
 
-Status as of 2026-11-11, after `b31b8bf`. Ordered by what blocks a good render, then quality, then
+Status as of 2026-11-11, after `7a40d7d`. Ordered by what blocks a good render, then quality, then
 polish. Done items stay listed so nothing is repeated by accident.
+
+Items that came from a new request carry its id (`REQ-YYYYMMDD-NN`), matching `MEMORY.md`. Items from
+a review carry the review file instead.
 
 ## P0 — blocks a clean render on the review project
 
@@ -66,6 +69,10 @@ polish. Done items stay listed so nothing is repeated by accident.
 - [ ] **Merge `main`.** No common ancestor; not a merge target.
 
 ## Done
+
+### 11 Nov — request intake
+- [x] REQ-20261111-01 · classify new request vs revision; log new ones in `MEMORY.md`
+- [x] REQ-20261111-01 · plan with request ids in `TODO.md`; close the loop in the same commit
 
 ### 11 Nov — fill quality loop
 - [x] Ground-truth benchmark (`scripts/bench_fill.py`): paint a caption on text-free frames, score PSNR/SSIM.

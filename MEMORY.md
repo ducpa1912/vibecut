@@ -10,6 +10,23 @@ Built: 2026-11-11. Source: the OpenCode session log (`session_message`, session 
 
 > what i want is building ducksuite an offline macos app from the learning and might be the repurposed code, workflow & optimization from the Vibecute Studio
 
+## Request log
+
+New requests append here, one entry each, before the code. Revisions are not logged here; they belong
+to the request that created the thing. Format and rules: `AGENTS.md` → Request intake.
+
+### REQ-20261111-01 · 2026-11-11
+**Request:** "update the direction in agent.md that each time there is a new request that is totally
+new (not things like revise the ui/ux, but detailed like i want the transcript panel inside the video
+preview panel), and your response to that request need to be write in to memory.md and what you plan
+to do into todo.md, this to create a software factory system or a systematic agent coding workflow"
+**Read as:** every request is classified new vs revision; a new one gets a MEMORY entry and a TODO
+plan before code, so the repo carries its own work order and history.
+**Response:** adopted as `AGENTS.md` → Request intake — the factory loop. Request ids
+(`REQ-YYYYMMDD-NN`), a MEMORY template, a TODO item prefix, and a definition of done that includes
+the three documents.
+**Outcome:** intake pipeline documented and in force; no behaviour change, 82 tests still pass.
+
 ## Session log
 
 | # | Time | Request | Response |

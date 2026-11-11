@@ -144,6 +144,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-01</strong><span>11 Nov · Workflow</span></div>
+      <div class="timeline-body">
+        <strong>The repo now carries its own work order.</strong>
+        <ul class="clean">
+          <li>Every request is classified new vs revision. A new one gets a <span class="mono">REQ-YYYYMMDD-NN</span> entry in <span class="mono">MEMORY.md</span> and a prefixed plan in <span class="mono">TODO.md</span> before code.</li>
+          <li>Definition of done includes the three documents: behaviour, test, MEMORY, TODO, report, one commit.</li>
+          <li>Rules in <span class="mono">AGENTS.md</span> → Request intake. First entry recorded.</li>
+        </ul>
+        <span class="mono">82 tests pass</span> · no behaviour change.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">uiux-balance-01</strong><span>11 Nov · Layout balance</span></div>
       <div class="timeline-body">
         <strong>Six screens measured at 1440×900. Four defects fixed; four imbalances named.</strong>

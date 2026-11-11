@@ -27,6 +27,55 @@ docs/            reports, team reviews, plans
 5. Old information is never deleted from the progress report. New entries go on top.
 6. Existing comments in code are payload. Do not shorten or delete one you were not asked to change.
 
+## Request intake — the factory loop
+
+Every request enters the same pipeline. Classify it before touching code.
+
+**New request** — a capability, screen, data flow or behaviour that does not exist yet.
+Example from this project: "put the transcript panel inside the video preview panel".
+That needs a new panel, state and data flow, so it is new.
+
+**Revision** — a change to something that already exists: polish, spacing, wording, a
+regression, a bug in shipped behaviour. Example: "revise the UI/UX", "the inspector is too busy".
+
+Rule of thumb: if the request can be answered with a screenshot of an existing screen, it is a
+revision. If it needs a new panel, state, endpoint or data flow, it is new.
+
+### For a new request
+
+Do this before writing code.
+
+1. **`MEMORY.md`** — append one entry under `## Request log`:
+
+   ```md
+   ### REQ-20261111-01 · 2026-11-11
+   **Request:** <the user's words, verbatim>
+   **Read as:** <one sentence: what must exist after this>
+   **Response:** <what the agent said it would build, or the decision taken>
+   **Outcome:** <filled when done: what shipped, test count, follow-up id if any>
+   ```
+
+2. **`TODO.md`** — add the plan under the right priority. Every item carries the request id:
+
+   ```md
+   - [ ] REQ-20261111-01 · transcript panel docks inside the video preview
+   - [ ] REQ-20261111-01 · scene change updates the docked transcript
+   ```
+
+3. Implement, test, then tick the items and fill `Outcome`. Name the change, not the sha of the
+   commit that contains the record; a commit cannot contain its own hash.
+4. Add the loop to `docs/reports/ducksuite-product-progress.html` on top, old entries kept.
+
+### For a revision
+
+No new entry body. Add one line to the request that created the thing if the plan changes, and a
+TODO line only when it creates new work. It still gets a commit and a report line.
+
+### Never batch
+
+One request, one MEMORY entry, one TODO block, one commit. A second request during the same turn
+gets its own id and its own block, even when the code lands together.
+
 ## Run
 
 ```bash
@@ -88,12 +137,18 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 
 ## Change recipe
 
+0. Classify the request with **Request intake** above. New request: log it in `MEMORY.md` and
+   plan it in `TODO.md` first.
 1. Pick one item from `TODO.md`.
 2. Reproduce it; write the failing test first when the bug is in Python.
 3. Fix small, in the module that owns the behaviour.
 4. `pytest`, `node --check`, then rebuild and look at the real screen at 1440×900.
 5. Commit in Conventional Commits, then push with the HTTPS URL above. One loop = one commit.
-6. Add the loop to `docs/reports/ducksuite-product-progress.html` on top, and to `MEMORY.md`.
+6. Close the loop in the same commit: tick `TODO.md`, fill `Outcome` in `MEMORY.md`, add the entry
+   to `docs/reports/ducksuite-product-progress.html` on top.
+
+Definition of done: behaviour + test + the three documents changed in one commit. A commit that
+changes behaviour but leaves the documents stale is not done.
 
 ## Where the evidence lives
 
