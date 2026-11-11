@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DuckSuite — Session log</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#161a21; --panel2:#1d222b; --line:#2a313d; --ink:#e8e6e1; --muted:#98a1b0;
+  --amber:#f0a45c; --amber2:#c46812; --green:#5fbf8f; --red:#e2705f; --blue:#7aa7c7; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:38px 26px 90px}
+a{color:var(--amber)}
+h1,h2,h3{letter-spacing:-.02em;margin:0}
+.kicker{font:700 11px/1.2 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--amber);margin:0 0 12px}
+.hero{border:1px solid var(--line);border-radius:20px;background:linear-gradient(140deg,#1b2029,#12151b 60%,#171b22);padding:42px 38px}
+h1{font-size:clamp(34px,4.6vw,58px);line-height:1.02}
+.sub{max-width:780px;color:var(--muted);font-size:16px;margin:16px 0 0}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.pill{border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;color:var(--muted);background:#12161c;white-space:nowrap}
+.pill b{color:var(--ink)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px}
+.dot.amber{background:var(--amber)}
+.toc{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:24px 0 34px}
+.toc a{display:block;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:12px;font-weight:600;text-decoration:none}
+.toc a:hover{border-color:var(--amber2)}
+section{margin:40px 0}
+.head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:0 0 14px}
+.head h2{font-size:26px}
+.head p{margin:0;color:var(--muted);font-size:13px;max-width:600px;text-align:right}
+.rule{height:1px;background:var(--line);margin:16px 0}
+.card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:18px}
+.card h3{font-size:15px;margin:0 0 8px}
+.card p{margin:0;color:var(--muted);font-size:13px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.big{font-size:30px;font-weight:760;letter-spacing:-.04em;margin:2px 0 4px}
+.quote{border-left:3px solid var(--amber2);background:#181d25;border-radius:0 10px 10px 0;padding:12px 16px;color:var(--ink);font-size:14px}
+.quote small{display:block;color:var(--muted);font-size:11px;margin-top:6px;font-family:var(--mono)}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:#1b212a;color:var(--muted);font:700 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+tr:last-child td{border-bottom:0}
+td b{color:var(--ink)}
+.mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.tag{display:inline-block;padding:1px 6px;border-radius:999px;font:700 9px/1.6 var(--mono);letter-spacing:.06em;text-transform:uppercase}
+.tag.done{background:#163126;color:var(--green)}
+.tag.open{background:#33251a;color:var(--amber)}
+.tag.stop{background:#331b18;color:var(--red)}
+.tag.info{background:#172633;color:var(--blue)}
+.phase{border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;margin-bottom:10px}
+.phase summary{cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:12px;list-style:none}
+.phase summary::-webkit-details-marker{display:none}
+.phase .n{font:700 11px var(--mono);color:var(--amber);min-width:26px}
+.phase .t{font-weight:650;font-size:14px;flex:1}
+.phase .d{font:11px var(--mono);color:var(--muted);white-space:nowrap}
+.phase .body{padding:0 16px 16px 54px;color:var(--muted);font-size:13px}
+.phase .body strong{color:var(--ink)}
+.phase .body ul{margin:8px 0 0;padding-left:18px}
+.phase .body li{margin:3px 0}
+.code{background:#0b0e13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;font:12px/1.6 var(--mono);color:#c9d3e0;overflow:auto;white-space:pre}
+.callout{border:1px solid var(--amber2);border-left:4px solid var(--amber2);border-radius:10px;background:#1d1812;padding:14px 16px}
+.callout p{margin:6px 0 0;color:var(--muted);font-size:13px}
+footer{border-top:1px solid var(--line);margin-top:50px;padding-top:14px;display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px}
+@media (max-width:900px){.g4,.g3,.g2,.toc{grid-template-columns:1fr 1fr}.wrap{padding:22px 16px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="kicker">Session log · not the product report</p>
+  <h1>What was actually asked, built, measured and stopped.</h1>
+  <p class="sub">DuckSuite, 6–11 November 2026. 132 requests, 18 phases, one branch. This file records the session itself: the words, the decisions, the evidence and the commits. The product-owner narrative lives in <span class="mono">docs/reports/ducksuite-product-progress.html</span>; when the two disagree, this one wins.</p>
+  <div class="meta">
+    <span class="pill"><span class="dot"></span><b>branch</b> ducksuite</span>
+    <span class="pill"><b>HEAD</b> <span class="mono">7c017ae</span></span>
+    <span class="pill"><span class="dot"></span><b>82</b> tests</span>
+    <span class="pill"><b>18</b> phases</span>
+    <span class="pill"><b>132</b> requests</span>
+    <span class="pill"><span class="dot amber"></span><b>App Store</b> paused</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#initial">Initial request</a>
+  <a href="#phases">18 phases</a>
+  <a href="#decisions">Decisions</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#detection">Detection evidence</a>
+  <a href="#fill">Fill evidence</a>
+  <a href="#cost">Cost model</a>
+  <a href="#silicon">M1/M2 fixes</a>
+  <a href="#commits">Commits</a>
+  <a href="#limits">Limits</a>
+  <a href="#next">Next work</a>
+  <a href="#method">Method</a>
+</nav>
+
+<section id="initial">
+  <div class="head"><h2>Initial request</h2><p>6 November 2026, 23:19. Quoted, not paraphrased.</p></div>
+  <div class="quote">
+    “Ok for process: 1. I can sell this as DuckSuite app via Apple Store for $29 (no update just bugfixes). So each sales is a win already. With a HF render upsell, helping bring render up to 3 concurrent at $5/month or just ai clean. Other model depend but from $20/month and no unlimited render or gen. 2. I can sell DuckClean as independent test trial, for only clean text. Just a contabo server for ui &amp; OCR (need rebuild) and HF jobs. … each customer can pay $15/month for 15hrs of normal render … or paid $39/month for 25hrs of quick render … total cost: $400/month, for up to 30 customers. … But will LaMa run quicker on GPU, and the possibility to use better clean text model”
+    <small>user, 2026-11-06 23:19</small>
+  </div>
+  <div class="quote" style="margin-top:10px">
+    “what i want is building ducksuite an offline macos app from the learning and might be the repurposed code, workflow &amp; optimization from the Vibecute Studio”
+    <small>user, 2026-11-07 13:10</small>
+  </div>
+  <div class="grid g3" style="margin-top:14px">
+    <div class="card"><h3>The ask</h3><p>A paid, offline macOS editor: import one long video, find scenes, remove burned-in text, edit script/voice/captions, render 1080p.</p></div>
+    <div class="card"><h3>The business frame</h3><p>$29 one-time. Optional render subscription and a separate DuckClean trial. The cost model was part of the brief, not an afterthought.</p></div>
+    <div class="card"><h3>The hard question</h3><p>“Will LaMa run quicker on GPU, and can a better clean-text model replace it?” Six days later that question was still open, with numbers.</p></div>
+  </div>
+</section>
+
+<section id="phases">
+  <div class="head"><h2>18 phases</h2><p>Chronological. Each card quotes the request that opened it and states what shipped.</p></div>
+
+  <details class="phase" open><summary><span class="n">01</span><span class="t">Render revamp correction, cleanup, fill-cache economics</span><span class="d">6 Nov · 08:11–16:43</span></summary>
+    <div class="body">
+      <div class="quote">“Your render revamp is wrong. Read my requirement again … Review had a playable panel, with ai-fill box temp change to quick blur … Queue list go side by side with render panel with a history tab.”</div>
+      <ul>
+        <li><strong>Shipped:</strong> playable review with a blur toggle, queue beside the render panel, two-column publish surface.</li>
+        <li><strong>Cleanup:</strong> old media, projects and jobs pruned. Found 2 GB of AI-fill cache for one job — defined as over-fitting the cache, not the model.</li>
+        <li><strong>Rejected rule:</strong> “AI fill only for busy backgrounds, blur the rest” was refused. The user wanted the engine to try, not a heuristic that hides text.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">02</span><span class="t">Commercial model, hosting and unit cost</span><span class="d">6 Nov · 19:44–23:19</span></summary>
+    <div class="body">
+      <div class="quote">“why not ran 3 tenants on 1 mac mini 6, it would be at least 2 times or 4-5 times quicker compare to my mac m1 … spin a sub-agent senior fullstack backend developer … to revamp the whole commercial plan.”</div>
+      <ul>
+        <li>Compared Contabo CPU, HF jobs, a Mac mini M5 Pro at $249, and cloud Mac servers. User corrected the agent twice: a cloud Mac is still a cloud server; the UI node and render node can be separate.</li>
+        <li><strong>No build changed in this phase.</strong> Output was the cost model in <a href="#cost">§ Cost model</a>.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">03</span><span class="t">Product plan and one-day MVP cut</span><span class="d">7 Nov · 00:02–07:26</span></summary>
+    <div class="body">
+      <div class="quote">“Calendar: 36–44 weeks with 2–3 people. Solo: 12–18 months. Do not compress by keeping pro features. stop being stupid, we're vibe [coding]”</div>
+      <div class="quote" style="margin-top:8px">“The one-day MVP cut: Must have dub. Only 1080p, 24 &amp; 30fps, no LUTs mean no color grading, and no publish kit.”</div>
+      <ul>
+        <li>Scope cut to a local editor: import, check, clean, edit, voice/dub, captions, 1080p render.</li>
+        <li>Cloud render, subscriptions, LUTs, publish kit deferred.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">04</span><span class="t">Branch surgery: freeze Studio, start DuckSuite at zero</span><span class="d">7 Nov · 12:11–13:03</span></summary>
+    <div class="body">
+      <div class="quote">“why studio is clean? studio should be freeze only, not build anymore … This session will only work in ducksuite.”</div>
+      <ul>
+        <li>Studio, Classic and Voice Room frozen as their own mains. DuckSuite started from an empty branch, not a copy.</li>
+        <li>SSH signing identity fixed in the moment; the key still prompts for a passphrase today.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">05</span><span class="t">Engine extraction and day-1/day-2 build</span><span class="d">7 Nov · 13:10–15:43</span></summary>
+    <div class="body">
+      <div class="quote">“What to copy from Studio: Apple Vision OCR, faces, saliency … Apple Speech transcription … But DuckSuite still need import, job check, edit, render, queue, admin, why not fastapi.”</div>
+      <ul>
+        <li>Ported Vision probe, Apple Speech, engine extraction. FastAPI sidecar, WKWebView shell, project store.</li>
+        <li>Committed the day-1 shell as <span class="mono">9ca0515</span>.</li>
+        <li>No language picker: auto-detect, matching Studio.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">06</span><span class="t">UI/UX direction hunt</span><span class="d">7 Nov · 15:49–16:53</span></summary>
+    <div class="body">
+      <div class="quote">“wait, you did not use the original vibecute studio interface? why?” … “give me an image gen prompt for each new direction (3) and the prompt for the old ui. Also give me another 10 creative &amp; ground breaking [directions]”</div>
+      <ul>
+        <li>Three directors reviewed: product (impeccable), taste, and a synthesis pass.</li>
+        <li>Chosen direction: “Daylight Story Desk” — warm paper, dark video, amber primary, flat surfaces.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">07</span><span class="t">Daylight Story Desk and the six screens</span><span class="d">7 Nov · 18:22–19:28</span></summary>
+    <div class="body">
+      <div class="quote">“The shell step is a stupid thing … There should be no shell step.” … “instead of 3 teams, it's just one team working on 3 sessions, one after one.”</div>
+      <ul>
+        <li>Flow fixed at Welcome → Check → Edit ⇄ Clean Focus → Preview → Render.</li>
+        <li>One team, three sequential sessions, each with a product-owner review before the next.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">08</span><span class="t">Packaging, Xcode, and the rights gate</span><span class="d">7 Nov · 22:11–23:30</span></summary>
+    <div class="body">
+      <div class="quote">“where is the packaged dmg file? how can i apply for appstore. review what is missing.” … “Remove the right gate, put it in readme, t&amp;c, and an always tick-on in setting.”</div>
+      <ul>
+        <li>Xcode/xcodegen path established; DMG not built. App Store needs a real team and identity.</li>
+        <li>Footage-rights gate removed from the flow, moved to README, terms, and an always-on Settings row.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">09</span><span class="t">Loops 1–3 and the clean block</span><span class="d">8 Nov · 07:02–07:40</span></summary>
+    <div class="body">
+      <div class="quote">“finish loop 2 with the team” · “build loop 3, xcode already in”</div>
+      <ul>
+        <li>Clean quality loop 3: edge-text OCR pass, shared proof/render frame path, glyph masks.</li>
+        <li>0 s / 25.875 s scenes passed; a 3.5 s scene still failed at that point.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">10</span><span class="t">Status, signed archive, team self-review</span><span class="d">8 Nov · 11:33–14:37</span></summary>
+    <div class="body">
+      <div class="quote">“fix all issue of the app what signed archive, no apple enrollment for now. Test &amp; build until the app perfect” … “run the same team loop to self check find bugs and improve performance”</div>
+      <ul>
+        <li>Unsigned arm64 archive passes; export fails with “No Team Found in Archive”.</li>
+        <li>Refactor sprint, internal UI review (<span class="mono">uiux-review-01.md</span>), four defects fixed.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">11</span><span class="t">Relaunch and playback fixes</span><span class="d">8 Nov · 14:50–21:18</span></summary>
+    <div class="body">
+      <div class="quote">“i click on the icon after closing, but it can not open/restart again” … “after check is done, both the review in check and edit is currently unplayable” … “preview panel open a popup player, should be in-app player”</div>
+      <ul>
+        <li>Window reopens on screen; core stops on quit (<span class="mono">20f4bd6</span>).</li>
+        <li>HEVC source served as a browser-playable proxy (<span class="mono">fb81bbf</span>); inline player replaces the modal (<span class="mono">c65f111</span>).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">12</span><span class="t">Edit feature expansion</span><span class="d">9 Nov · 06:37–09:14</span></summary>
+    <div class="body">
+      <div class="quote">“Now Edit and Clean focus is all about Clean text, plan for them: 1. Transcript to Translate 2. Rewrite &amp; Caption 3. Voice-Over &amp; Dub lacking the preview voice. Clean focus missing all the paint brush…”</div>
+      <ul>
+        <li>Script drawer, rewrite, captions, voice preview, dub with optional BGM, manual brush, pack list in Settings.</li>
+        <li>Custom 48 px toolbar with hidden native title bar; one project at a time; append import to the same project.</li>
+        <li>Commit <span class="mono">b60a105</span>, append <span class="mono">4cee3e8</span>.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">13</span><span class="t">Refactor sprint and loops A / B / C</span><span class="d">9 Nov · 09:38–12:56</span></summary>
+    <div class="body">
+      <div class="quote">“build refractor sprint loop after 3 dev loops” · “start loop A with the whole team” · “start loop B” · “start loop C”</div>
+      <ul>
+        <li>Module seams: timeline, audio, markup extracted (<span class="mono">19b1f0b</span> later).</li>
+        <li>Append became a job API with 202 + polling, commit markers and rollback.</li>
+        <li>Loop A fixed the dead import modal; B/C closed user-test defects.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">14</span><span class="t">App Store attempt, custom chrome, playback unblock</span><span class="d">9 Nov · 13:07–14:09</span></summary>
+    <div class="body">
+      <div class="quote">“review &amp; publish to app store test” · “why the custom bar is not in” · “player still blocked in check or edit during check, player should not be impacted”</div>
+      <ul>
+        <li>Export blocked: no signing identity, no team. Recorded, not worked around.</li>
+        <li>Web toolbar extended under the title bar (<span class="mono">9920b55</span>); player survives Check polling (<span class="mono">72a9498</span>).</li>
+        <li>Progress report created (<span class="mono">docs/reports/ducksuite-product-progress.html</span>).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">15</span><span class="t">Edit desk revamp and transcript iterations</span><span class="d">9 Nov · 14:46–18:37</span></summary>
+    <div class="body">
+      <div class="quote">“Revise the edit block, too busy. I love the direction of Focus mode …” · “the transcript should be blended more into the players, with a transparent setting” · “transcript must move with the scene”</div>
+      <ul>
+        <li>Three equal panels, four focus modes (Script, Audio, SFX, Clean), voice and music merged into one expandable track.</li>
+        <li>Transcript became a transparent overlay that follows playback and scene cuts.</li>
+        <li>Team interviews with founder and creator personas; three product loops plus one refactor loop.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">16</span><span class="t">Model packs, readiness, NLLB</span><span class="d">9 Nov 20:52 – 10 Nov 12:36</span></summary>
+    <div class="body">
+      <div class="quote">“do not use the one in HF cache, it should be local and not related to HF” · “what is readiness and what is the proof generated process, it's prolonged the working flow” · “add NLLB-200-distilled-600M int8 as optional”</div>
+      <ul>
+        <li>Whisper and Kokoro moved to app-data packs; HF cache removed, 1.5 GB freed.</li>
+        <li>Readiness gate removed as a render requirement; proofs became optional review frames.</li>
+        <li>NLLB optional pack with Apple → NLLB fallback and a custom CTranslate2 path.</li>
+        <li>Finder drag/drop fixed with a native WKWebView drop target (<span class="mono">8632be1</span>).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">17</span><span class="t">UX review and the 70% refocus</span><span class="d">10 Nov · 13:02–18:50</span></summary>
+    <div class="body">
+      <div class="quote">“stop thinking about app store, the app suck, it's just 70% complete. Focus on fixing errors &amp; improvements”</div>
+      <ul>
+        <li>Product-owner and creator reviews; six UX fixes shipped (<span class="mono">1fee59f</span>, <span class="mono">59c9c1f</span>).</li>
+        <li>Pending fixes named: AI-fill repair path, one import action, disabled styling, queue scope, Clean-all confirmation, 9:16 verification. Four shipped later; repair path and 9:16 still open.</li>
+        <li>App Store work stopped by instruction.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="phase"><summary><span class="n">18</span><span class="t">Bad render, fill quality loops, factory docs</span><span class="d">10 Nov 19:34 – 11 Nov 09:42</span></summary>
+    <div class="body">
+      <div class="quote">“render is completed and result is really bad, ai fill suck. Review and fix the issue”</div>
+      <ul>
+        <li><strong>Cause:</strong> the 0 s title was never detected — Check's 4 fps extractor skipped the first two frames. Fill was not the main fault.</li>
+        <li><strong>Fixed:</strong> true first-frame read, title classification, motion flag, flash → blur, Clean-all confirm, queue scope, one import, layout balance.</li>
+        <li><strong>Measured:</strong> ground-truth fill benchmark; tighter hole gives +1.1 dB PSNR at the same run time.</li>
+        <li><strong>Docs:</strong> report, MEMORY, TODO, AGENTS, and the request-intake factory loop.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<section id="decisions">
+  <div class="head"><h2>Decisions</h2><p>Each one changes what an agent is allowed to do.</p></div>
+  <table>
+    <thead><tr><th style="width:22%">Decision</th><th style="width:52%">What it means</th><th style="width:12%">State</th><th style="width:14%">Source</th></tr></thead>
+    <tbody>
+      <tr><td><b>Offline first</b></td><td>No account, no upload, no telemetry, no downloaded executable code. Model packs are data.</td><td><span class="tag done">Held</span></td><td>7 Nov brief</td></tr>
+      <tr><td><b>Merge target</b></td><td>Work lands on <span class="mono">ducksuite</span>. <span class="mono">main</span> has no common ancestor and is never merged.</td><td><span class="tag done">Held</span></td><td>7 Nov</td></tr>
+      <tr><td><b>App Store paused</b></td><td>Signing, team, store URLs and screenshots are not touched until the render is good.</td><td><span class="tag stop">Paused</span></td><td>10 Nov</td></tr>
+      <tr><td><b>NLLB optional</b></td><td>CC-BY-NC-4.0. Cannot be a paid default. Keep it a download or replace it.</td><td><span class="tag open">Open</span></td><td>10 Nov</td></tr>
+      <tr><td><b>Proofs optional</b></td><td>Review frames never gate a render.</td><td><span class="tag done">Held</span></td><td>10 Nov</td></tr>
+      <tr><td><b>Whisper stays</b></td><td>Apple Speech does not transcribe Vietnamese; Whisper is the fallback.</td><td><span class="tag done">Held</span></td><td>9 Nov</td></tr>
+      <tr><td><b>Fill default, blur explicit</b></td><td>No silent fallback. Moving lines are flagged; only a flash under 0.5 s defaults to blur.</td><td><span class="tag done">Held</span></td><td>10 Nov</td></tr>
+      <tr><td><b>Request intake</b></td><td>New request → MEMORY entry + TODO plan before code; revision attaches to the request that made the thing.</td><td><span class="tag done">In force</span></td><td>11 Nov</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="architecture">
+  <div class="head"><h2>Architecture</h2><p>What runs, in order, and where the state lives.</p></div>
+  <div class="code">Swift shell (window, file access, sidecar launch)
+   └─ WKWebView  ──  static/duck/app.js + app.css
+          │  HTTP + bearer token, HttpOnly cookie for media
+          ▼
+   FastAPI sidecar  (duckcore/main.py)      port 0, token on stdin
+          ├─ check      detect.py · vision.py · stt.py · pipeline.py
+          ├─ clean      clean.py · engine/textfill/{lama,sttn,mask}.py
+          ├─ edit       edits store · captions · story/clipset
+          └─ render     render.py · media.py · audio mix
+
+Data root  ~/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite
+   projects/&lt;id&gt;/check.json            detection + transcript report
+   projects/&lt;id&gt;/edits/&lt;edit&gt;.json     clips, clean layers, captions, voice, audio
+   projects/&lt;id&gt;/fill/&lt;key&gt;.mp4        AI-fill cache, key includes textfill.VERSION
+   projects/&lt;id&gt;/renders/&lt;edit&gt;_&lt;ts&gt;.mp4
+   models/packs/{whisper,kokoro,nllb}   optional packs
+   models/fill/lama_fp32.onnx           or the bundled copy in the app
+
+Flow   Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Welcome</div>
+  <div class="grid g3" style="margin-top:12px">
+    <div class="card"><h3>Detection</h3><p>4 fps stills, Apple Vision OCR, edge-text crops, tracklets → clean layers. First frame is read by a separate seek.</p></div>
+    <div class="card"><h3>Fill</h3><p>Per span: work area = hole + context, LaMa keyframes, blend/carry, cached clip. The render reads the clip, not the source.</p></div>
+    <div class="card"><h3>Render</h3><p>Cut clips, apply fill clips or blur, burn captions, mix voice/dub/music/SFX, encode 1080p H.264.</p></div>
+  </div>
+</section>
+
+<section id="detection">
+  <div class="head"><h2>Detection evidence</h2><p>Measured on the 160 s review project, not estimated.</p></div>
+  <table>
+    <thead><tr><th style="width:30%">Fact</th><th style="width:40%">Value</th><th style="width:30%">How it was checked</th></tr></thead>
+    <tbody>
+      <tr><td>Source</td><td>160.033 s · 1080×1920 · 30 fps · HEVC</td><td><span class="mono">ffprobe</span></td></tr>
+      <tr><td>Check scan</td><td>640 stills at 4 fps; 41 tracklets; text coverage 0.4046</td><td><span class="mono">check.json</span> → <span class="mono">text</span></td></tr>
+      <tr><td>Clean layers</td><td>41, all subtitles; boxes around y 0.458 and 0.511 for the opening lines</td><td>edit JSON</td></tr>
+      <tr><td>Opening title</td><td>“人吃啥咪吃啥”, y 0.321, h 0.063, exactly 2 frames (66 ms)</td><td>frame-by-frame OCR</td></tr>
+      <tr><td>Why it was missed</td><td><span class="mono">fps=4</span> emitted its first still at ~0.066 s; the title was gone by then</td><td>compared <span class="mono">fps</span> vs <span class="mono">select</span> extraction</td></tr>
+      <tr><td>Fix</td><td><span class="mono">pipeline._first_still</span> overwrites sample 0 with the true first frame</td><td>0–3 s run now yields <span class="mono">title 0.0–0.25</span></td></tr>
+      <tr><td>Classification</td><td>Top display type (y+h ≤ 0.42, h ≥ 0.05, w ≥ 0.30) is a title, not a word-pop caption</td><td>unit test + real run</td></tr>
+      <tr><td>Render check</td><td>Captions gone at 2 s, 10 s, 90 s. 0 s title present until Check re-runs.</td><td>frames from the 21:25 render</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="fill">
+  <div class="head"><h2>Fill evidence</h2><p>Ground truth, not opinion: paint a caption on a text-free frame, fill it, compare.</p></div>
+  <div class="grid g4">
+    <div class="card"><div class="big">22.5 → 23.6</div><p>dB PSNR on 10 frames, review project, after the hole tightened.</p></div>
+    <div class="card"><div class="big">22.8 → 23.6</div><p>dB on a second 4:3 project. The gain holds.</p></div>
+    <div class="card"><div class="big">+0.02</div><p>SSIM, 17% lower mean error, same 5.1 s per frame.</p></div>
+    <div class="card"><div class="big">25.1</div><p>dB with a thick 0.11 h outline. No leak when scored over the baseline hole.</p></div>
+  </div>
+  <table style="margin-top:12px">
+    <thead><tr><th>Variant</th><th>PSNR</th><th>SSIM</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Shipped default (hole 0.04 / outline 0.10)</td><td>23.6</td><td>0.682</td><td><span class="tag done">Kept</span></td></tr>
+      <tr><td>Old pads (0.06 / 0.18)</td><td>22.5</td><td>0.665</td><td><span class="tag stop">Replaced</span></td></tr>
+      <tr><td>Wider work area (192 px / 1.0)</td><td>22.9</td><td>0.673</td><td><span class="tag stop">Rejected</span></td></tr>
+      <tr><td>Tighter work area (48 px / 0.25)</td><td>22.8</td><td>0.682</td><td><span class="tag stop">Rejected</span></td></tr>
+      <tr><td>Model input upscale 1.5×</td><td>23.1</td><td>0.683</td><td><span class="tag stop">Rejected, no time budget</span></td></tr>
+      <tr><td>Upscale 2×</td><td>23.0</td><td>0.681</td><td><span class="tag stop">Rejected</span></td></tr>
+      <tr><td>STTN, MI-GAN, glyph-tight mask, per-frame, zero carry</td><td colspan="3">Each changed the look; none restored moving texture. Checked on 90 s and 157 s spans.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout" style="margin-top:12px">
+    <strong>The limit, stated once</strong>
+    <p>A per-frame model cannot rebuild a plate it has never seen. On moving food the fill smooths and invents. That is a model limit, not a padding bug. The app now measures the motion per line, shows it before the render, and offers Blur per line. Replacing the model is the only real fix.</p>
+  </div>
+</section>
+
+<section id="cost">
+  <div class="head"><h2>Cost model</h2><p>Discussed on 6 Nov. Numbers are the user's, not measured by the agent.</p></div>
+  <table>
+    <thead><tr><th style="width:34%">Item</th><th style="width:24%">Price</th><th style="width:42%">Role</th></tr></thead>
+    <tbody>
+      <tr><td>DuckSuite macOS app</td><td>$29 one-time</td><td>Local editor. Bug fixes only, no feature updates promised.</td></tr>
+      <tr><td>Render upsell</td><td>$5/month</td><td>3 concurrent renders, or AI clean only.</td></tr>
+      <tr><td>Plan A</td><td>$15/month · 15 h</td><td>Normal render, ~30 one-minute videos, 1800 credits.</td></tr>
+      <tr><td>Plan B</td><td>$39/month · 25 h</td><td>Quick render, separate fast node.</td></tr>
+      <tr><td>Contabo 8 vCPU / 8 GB / 600 GB</td><td>$24/month</td><td>UI + OCR node for DuckClean.</td></tr>
+      <tr><td>HF CPU</td><td>$22/month</td><td>Render fallback; free CPU Basic / ZeroCPU tiers per 10 customers.</td></tr>
+      <tr><td>Contabo 12 vCPU EPYC / 48 GB</td><td>$90/month</td><td>Quick render node.</td></tr>
+      <tr><td>HF Nvidia T4 small</td><td>$288/month</td><td>GPU quick render.</td></tr>
+      <tr><td>Total</td><td>≈ $400/month</td><td>Up to 30 customers.</td></tr>
+      <tr><td>Mac mini M5 Pro 24 GB / 512 GB</td><td>$249</td><td>User's claim: 5 tenants with a separate UI node.</td></tr>
+    </tbody>
+  </table>
+  <p class="mono" style="margin-top:8px">State: model only. No tenant, billing, quota or GPU path was built or measured. The local app has no IAP surface.</p>
+</section>
+
+<section id="silicon">
+  <div class="head"><h2>Apple silicon (M1/M2) and runtime fixes</h2><p>What actually had to change to run on this Mac.</p></div>
+  <table>
+    <thead><tr><th style="width:32%">Fix</th><th style="width:68%">Why</th></tr></thead>
+    <tbody>
+      <tr><td>arm64-only build, macOS 26 target</td><td>Single-arch app, ad-hoc signed for local use. App Store needs a real identity; not attempted.</td></tr>
+      <tr><td>Bundled LGPL ffmpeg + ffprobe + libdav1d</td><td>System ffmpeg is not guaranteed and GPL builds cannot ship. AV1 input needs dav1d beside the helper.</td></tr>
+      <tr><td>Browser-playable proxy</td><td>WKWebView cannot play the HEVC source reliably. The editor serves an H.264 proxy; the render still uses the source.</td></tr>
+      <tr><td>LaMa rates per chip</td><td>Seed rates are per model and device: 4.0 s/frame CPU on an M1 8 GB, 0.8 s/frame claimed for GPU. The app defaults to CPU; CoreML covers only part of the graph.</td></tr>
+      <tr><td>Packs in app data</td><td>Whisper and Kokoro load from <span class="mono">models/packs</span>, not the Hugging Face cache. Removed 1.5 GB of duplicated weights.</td></tr>
+      <tr><td>Sidecar handshake</td><td>Swift reads the port from the sidecar's first stdout line within 12 s. A cold PyInstaller start can exceed it; kill an orphan sidecar before relaunching.</td></tr>
+      <tr><td>Xcode + xcodegen</td><td>Command Line Tools alone cannot build the app. Xcode 26 plus <span class="mono">xcodegen</span> generates the project from <span class="mono">project.yml</span>.</td></tr>
+      <tr><td>Signing key passphrase</td><td>Commits sign with an SSH key that prompts. Branch history is unsigned because the passphrase was not available; commits use <span class="mono">-c commit.gpgsign=false</span>.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="commits">
+  <div class="head"><h2>Commits</h2><p>21 since the 9 Nov snapshot; the branch is the record.</p></div>
+  <div class="code">7c017ae docs(workflow): make request intake a factory loop
+7a40d7d docs(report): date and count the current build
+ff1f960 docs: record the session, the rules and the open work
+b31b8bf fix(ui): stop scene titles covering their thumbnails
+ccf631d docs(report): record the render review and the one open step
+7739885 docs(report): record the fill quality loop and its ground-truth numbers
+7d6a70e perf(fill): keep more real texture inside the fill hole
+8df531a test(fill): score every fill variant over the same region
+70840e8 test(fill): add a ground-truth benchmark for AI text fill
+583b8fd docs(report): bring the whole report in line with the 2d6a09f build
+71193da docs(report): record the bad-render review and the fill limit
+2d6a09f fix(clean): read the first frame and flag fill quality
+59c9c1f fix(ui): make active renders and dense scene projects legible
+1fee59f fix(ui): tighten settings, preview status and detection review
+c53c6f9 feat(script): add optional NLLB translation and video detection review
+e8f974a fix(preview): make proofs optional and generate on demand
+8632be1 fix(import): accept Finder drags through a native drop target
+7dfb722 feat(models): run from DuckSuite packs without Hugging Face
+19b1f0b refactor(editor): split timeline, audio and markup helpers
+8feec43 feat(editor): clarify status, scope and story context
+c83dfed feat(story): carry edits into stories and extend with beats
+7308bbb feat(audio): finish per-row audio editing and solo-safe render
+— earlier: 268d848 · a86a7fe · c4528dc · e2ba94b · 74f67a0 · 1d48020 · c841514
+  72a9498 · 9920b55 · 4cee3e8 · b60a105 · c65f111 · fb81bbf · d989eaf · 20f4bd6
+  fc37d1a · cec4b24 · a26e40a · c970e45 · 415e964 · cbc55fd · b438d2a · 9ca0515</div>
+</section>
+
+<section id="limits">
+  <div class="head"><h2>Limits</h2><p>What this session did not solve.</p></div>
+  <div class="grid g2">
+    <div class="card"><h3>Clean</h3><p>LaMa invents moving texture. A per-frame model cannot recover food that moved under the caption. Blur is the honest fallback; the model is the real fix.</p></div>
+    <div class="card"><h3>Render cost</h3><p>Cache version 12 invalidates every stored fill. A 25 s slice was still running after 42 min and was stopped. A cold 160 s render is hours, not minutes.</p></div>
+    <div class="card"><h3>Editor</h3><p>Trim works. Split, reorder and remove-silence do not. Aspect switching and auto-frame are absent. One project at a time.</p></div>
+    <div class="card"><h3>Distribution</h3><p>No DMG. Unsigned archive only. Export fails without a team. Screenshots use internal fixture footage.</p></div>
+    <div class="card"><h3>Layout</h3><p>Render ends at 60% height; the inspector clips its fifth row; three timeline lanes are empty; portrait Preview keeps side paper. Proposals exist, none shipped.</p></div>
+    <div class="card"><h3>Business</h3><p>The cost model was never tested. No tenant, quota, billing or GPU path exists. NLLB cannot ship as a paid default.</p></div>
+  </div>
+</section>
+
+<section id="next">
+  <div class="head"><h2>Next work</h2><p>Ordered. Full list in <span class="mono">TODO.md</span>.</p></div>
+  <table>
+    <thead><tr><th style="width:8%">Order</th><th style="width:52%">Work</th><th style="width:40%">Done when</th></tr></thead>
+    <tbody>
+      <tr><td><b>1</b></td><td>Re-run Check on <span class="mono">prj_e95348a97316</span></td><td>The 0 s title exists as a clean layer at 0.0–0.25 s</td></tr>
+      <tr><td><b>2</b></td><td>Clean all → confirm</td><td>Title layer defaults to Blur; user choices kept</td></tr>
+      <tr><td><b>3</b></td><td>Render and review 0/2/10/90/157 s</td><td>No text, no outline, no freeze frame at the cut</td></tr>
+      <tr><td><b>4</b></td><td>Fill model for moving footage</td><td>Benchmark beats 23.6 dB or the licence decision is made</td></tr>
+      <tr><td><b>5</b></td><td>Layout: render restructure, inspector fade, empty lanes, portrait strip</td><td>No screen ends above 85% of a 900 px window</td></tr>
+      <tr><td><b>6</b></td><td>Cold render cost</td><td>A 160 s render has a visible estimate and a warm-cache path</td></tr>
+      <tr><td><b>7</b></td><td>9:16 preview at 1440 and 1280</td><td>Both sizes measured after the portrait change</td></tr>
+      <tr><td><b>—</b></td><td>App Store, NLLB licence, <span class="mono">main</span> merge</td><td>Paused by decision. Do not start.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="method">
+  <div class="head"><h2>Method</h2><p>Why this file can be trusted more than a summary.</p></div>
+  <div class="grid g2">
+    <div class="card"><h3>Source</h3><p>OpenCode session database, table <span class="mono">session_message</span>, session <span class="mono">ses_e7cbc45efffetnXc3Kv7TCcOod</span>. 132 user messages from 6 Nov onward were read; requests here are quoted.</p></div>
+    <div class="card"><h3>Evidence</h3><p>Numbers come from <span class="mono">check.json</span>, the fill benchmark (<span class="mono">scripts/bench_fill.py</span>), rendered frames, and <span class="mono">git log</span>. Where a figure is the user's estimate, it says so.</p></div>
+  </div>
+  <div class="callout" style="margin-top:12px">
+    <strong>Relationship to the product report</strong>
+    <p><span class="mono">docs/reports/ducksuite-product-progress.html</span> is the product-owner narrative: status, plan, screenshots, app-store gate. This file is the session record: what was asked, what was answered, what was measured, what was refused. When they differ, this file is the source.</p>
+  </div>
+</section>
+
+<footer>
+  <span>DuckSuite · session log · 6–11 Nov 2026</span>
+  <span>HEAD 7c017ae · 82 tests · branch ducksuite</span>
+</footer>
+
+</div>
+</body>
+</html>

@@ -153,6 +153,7 @@ changes behaviour but leaves the documents stale is not done.
 ## Where the evidence lives
 
 - `docs/reports/ducksuite-product-progress.html` — product report, newest on top, plus the session log.
+- `docs/reports/SESSION.html` — session record: requests, 18 phases, evidence, cost model, limits.
 - `docs/teams/uiux-balance-01.md` — layout balance review and proposals.
 - `scripts/bench_fill.py` — fill quality benchmark with ground truth.
 - `tests/` — behaviour contract. `tests/test_clean_loop2.py` covers layer planning and the fill hole.
