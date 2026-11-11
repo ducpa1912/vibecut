@@ -1433,7 +1433,7 @@ function screenEditor() {
               : `<video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
             <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
             <div class="media-overlay"><span class="tc">${fmtTC(mediaClip ? state.timelineTime : (state.previewTime || scene.start))} / ${fmtTC(mediaClip ? timelineDuration() : (state.edit?.end || state.check?.result?.meta?.duration || 0))}</span><span class="spacer"></span></div>
-            ${mediaClip ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
+            ${mediaClip || !overlayCues.length ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
               <button class="overlay-toggle overlay-move" type="button" data-action="overlay-position" title="Move transcript between bottom and top">⇕</button>
               <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
