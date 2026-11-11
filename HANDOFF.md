@@ -17,6 +17,9 @@ this document and the docs in `docs/duckclean/`.
 - Push only to `origin/duckclean`. Never push to `main` or `classic`.
 
 For the current M2 implementation and next steps, read `FREEBUFF_HANDOFF.md`.
+For engineering workflow, read `AGENTS.md`. The request/response history is
+`memory.md`; the actionable checklist is `todo.md`; the visual history is
+`SESSION.html`.
 
 ## Mission
 

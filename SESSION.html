@@ -293,6 +293,7 @@
           <span class="pill ok">M1 complete</span>
           <span class="pill ok">M2 short-source complete</span>
           <span class="pill warn">live cloud not provisioned</span>
+          <span class="pill ok">software factory workflow</span>
         </div>
       </header>
 
@@ -314,6 +315,7 @@
         <a href="#state">15. Current state</a>
         <a href="#commits">16. Commits and files</a>
         <a href="#next">17. Next work</a>
+        <a href="#factory">18. Software factory</a>
       </nav>
 
       <section id="initial">
@@ -1036,7 +1038,7 @@ git archive origin/classic detect.py clean_source.py pipeline.py textfill | tar 
 remote:  https://github.com/ducpa1912/vibecut.git
 branch:  duckclean
 history: orphan, separate from classic and main
-head:    699b41d (before this documentation commit)
+head:    3ebde2e (before this handoff update)
 local:   /Users/happynghia/Public/Project/Code/drop_eval/duckclean</pre>
       </section>
 
@@ -1094,6 +1096,14 @@ local:   /Users/happynghia/Public/Project/Code/drop_eval/duckclean</pre>
               <td><code>699b41d</code></td>
               <td>Clerk React 6 migration + audit fix</td>
             </tr>
+            <tr>
+              <td><code>e68269d</code></td>
+              <td>Session HTML, AGENTS.md, memory.md, todo.md</td>
+            </tr>
+            <tr>
+              <td><code>3ebde2e</code></td>
+              <td>Software factory request workflow</td>
+            </tr>
           </tbody>
         </table>
         <h3>Key files</h3>
@@ -1137,6 +1147,67 @@ local:   /Users/happynghia/Public/Project/Code/drop_eval/duckclean</pre>
           <a href="FREEBUFF_HANDOFF.md">FREEBUFF_HANDOFF.md</a>,
           <a href="HANDOFF.md">HANDOFF.md</a>, <a href="todo.md">todo.md</a>,
           <a href="memory.md">memory.md</a>.
+        </p>
+      </section>
+
+      <section id="factory">
+        <h2>18. Software factory workflow</h2>
+        <div class="quote">
+          <div class="who">User</div>
+          <blockquote>
+            update the direction in agent.md that each time there is a new request that is
+            totally new (not things like revise the ui/ux, but detailed like i want the
+            transcript panel inside the video preview panel), and your response to that
+            request need to be write in to memory.md and what you plan to do into todo.md,
+            this to create a software factory system or a systemactic agent coding
+            workflow
+          </blockquote>
+        </div>
+        <p>
+          Added the workflow to <code>AGENTS.md</code> and recorded it as
+          <code>REQ-20261111-01</code> in <code>memory.md</code>. The workflow is:
+        </p>
+        <pre>
+Intake -&gt; Classify -&gt; Memory -&gt; Todo -&gt; Contract -&gt; Build -&gt; Verify -&gt; Ship -&gt; Reflect</pre>
+        <div class="grid">
+          <div class="card">
+            <h3>Totally new</h3>
+            <p>
+              New capability, panel, screen, API, table, worker route, queue, storage
+              layout, integration, billing unit or acceptance rule.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Revision</h3>
+            <p>
+              Spacing, colour, typography, copy, icon, layout polish, rename, refactor or
+              dependency patch. No new REQ unless the contract, data, acceptance or
+              capability changes.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Before code</h3>
+            <p>
+              Append <code>REQ-YYYYMMDD-NN</code> to <code>memory.md</code> and a linked
+              actionable checklist to <code>todo.md</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Before ship</h3>
+            <p>
+              Contract updates, tests, <code>make check</code>, real-media acceptance
+              where needed, commit code + memory + todo together, fill the commit hash,
+              mark the todo done.
+            </p>
+          </div>
+        </div>
+        <p>
+          Example: “transcript panel inside the video preview” is a new capability. “Move
+          the transcript panel 4 px lower” is a revision.
+        </p>
+        <p class="small muted">
+          Sources: <a href="AGENTS.md">AGENTS.md</a>, <a href="memory.md">memory.md</a>,
+          <a href="todo.md">todo.md</a>.
         </p>
       </section>
 

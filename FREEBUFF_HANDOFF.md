@@ -12,6 +12,8 @@ current code, what changed, and what the next agent must not break.
 - Push only to `origin/duckclean`. Never move `main` or `classic`.
 - Classic source is `origin/classic` in the same repo. The old Classic worktree
   is deleted.
+- Current head when this handoff was updated: see `git log -1` (`3ebde2e` before
+  the handoff refresh).
 
 ## Current status
 
@@ -25,6 +27,7 @@ ruff check/format          pass
 API Vitest                 68 tests pass
 Worker pytest              40 tests pass
 web build                  pass
+npm audit --omit=dev       0 vulnerabilities
 ```
 
 Local no-Cloudflare stack exists:
@@ -59,6 +62,24 @@ Clerk and R2 values, or use `R2_ENDPOINT=http://127.0.0.1:9000` with MinIO.
 - Detection run API, cancel, scope selection, revision, UI detection panel.
 - Mask writes to R2; masks are inline base64 from the worker until M3.
 - API owns the canonical beat-manifest hash; worker returns `source_sha256`.
+
+## Software factory workflow
+
+This project is not ad-hoc chat. Before any **totally new** capability, append a
+`REQ-YYYYMMDD-NN` entry to `memory.md` and a linked actionable checklist to
+`todo.md`. Then freeze the contract, build, test, ship and reflect.
+
+- New capability: new panel/screen/route/table/worker route/queue/storage/
+  integration/billing unit/acceptance rule.
+- Revision: spacing, colour, type, copy, icon, layout, rename, refactor,
+  dependency patch. No new REQ unless contract/data/acceptance/capability
+  changes.
+- Example: “transcript panel inside the video preview” = new REQ.
+  “Move the transcript panel 4 px lower” = revision.
+- Commit code + tests + memory + todo together. Fill the REQ commit hash and mark
+  the todo done.
+
+Read `AGENTS.md` §Software factory workflow for the exact templates.
 
 ## Hard rules
 
