@@ -437,7 +437,7 @@ Flow   Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Wel
       <tr><td>arm64-only build, macOS 26 target</td><td>Single-arch app, ad-hoc signed for local use. App Store needs a real identity; not attempted.</td></tr>
       <tr><td>Bundled LGPL ffmpeg + ffprobe + libdav1d</td><td>System ffmpeg is not guaranteed and GPL builds cannot ship. AV1 input needs dav1d beside the helper.</td></tr>
       <tr><td>Browser-playable proxy</td><td>WKWebView cannot play the HEVC source reliably. The editor serves an H.264 proxy; the render still uses the source.</td></tr>
-      <tr><td>LaMa rates per chip</td><td>Seed rates are per model and device: 4.0 s/frame CPU on an M1 8 GB, 0.8 s/frame claimed for GPU. The app defaults to CPU; CoreML covers only part of the graph.</td></tr>
+      <tr><td>LaMa rates per chip</td><td>Measured: CPU ~6 s a unit, MPS ~0.95 s, CoreML 32× slower. CPU is the default; GPU is bundled (torch + <span class="mono">big-lama.pt</span>, bundle 1.2 GB) and selectable in Render settings.</td></tr>
       <tr><td>Packs in app data</td><td>Whisper and Kokoro load from <span class="mono">models/packs</span>, not the Hugging Face cache. Removed 1.5 GB of duplicated weights.</td></tr>
       <tr><td>Sidecar handshake</td><td>Swift reads the port from the sidecar's first stdout line within 12 s. A cold PyInstaller start can exceed it; kill an orphan sidecar before relaunching.</td></tr>
       <tr><td>Xcode + xcodegen</td><td>Command Line Tools alone cannot build the app. Xcode 26 plus <span class="mono">xcodegen</span> generates the project from <span class="mono">project.yml</span>.</td></tr>
@@ -567,7 +567,7 @@ c83dfed feat(story): carry edits into stories and extend with beats
       <tr><td><b>5</b></td><td>Layout: render restructure, inspector fade, empty lanes, portrait strip</td><td>No screen ends above 85% of a 900 px window</td></tr>
       <tr><td><b>6</b></td><td>Cold render cost</td><td>A 160 s render has a visible estimate and a warm-cache path</td></tr>
       <tr><td><b>7</b></td><td>Shrink the Whisper pack or make it per-language</td><td>Vietnamese works without a 1.61 GB first run</td></tr>
-      <tr><td><b>8</b></td><td>LaMa GPU: measure CPU vs CoreML vs MPS, then package or stay CPU</td><td>Numbers in <span class="mono">gpu-fill-bench.md</span>; decision recorded</td></tr>
+      <tr><td><b>8</b></td><td>LaMa GPU variance and thermal drop on a long render</td><td>Numbers in <span class="mono">gpu-fill-bench.md</span>; decision recorded</td></tr>
       <tr><td><b>9</b></td><td>Pack checksums and the LGPL source offer</td><td>Every download verified; ffmpeg offer present</td></tr>
       <tr><td><b>10</b></td><td>9:16 preview at 1440 and 1280</td><td>Both sizes measured after the portrait change</td></tr>
       <tr><td><b>—</b></td><td>App Store, NLLB licence, <span class="mono">main</span> merge</td><td>Paused by decision. Do not start.</td></tr>

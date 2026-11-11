@@ -70,3 +70,16 @@ three fills. Whole review project, 283 units:
 | Loop 1 reading | 35 s | 2 h 45 min |
 | CPU, measured | ~6 s | ~28 min, up to ~2 h when the Mac is busy |
 | MPS, measured once | ~0.95 s | ~4.5 min |
+
+## 6. Shipped
+
+REQ-20261111-06 bundled the measured winner.
+
+| Item | Value |
+|---|---|
+| Bundle | 377 MB → 1.2 GB (torch 565 MB, `big-lama.pt` 196 MB) |
+| Default | CPU, unchanged |
+| Choice | Render → AI fill engine: CPU / GPU, GPU disabled with the reason when unavailable |
+| Cache | `method_stamp` adds `:gpu`; CPU and GPU fills never collide |
+| Proof | bundled sidecar rendered a 1 s clip in 10.9 s; the fill cache holds the `:gpu` key; OCR clean |
+| Estimate | follows the chosen chip; stale pre-median rate removed, now "19 min, first guess" |

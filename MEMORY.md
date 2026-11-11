@@ -79,6 +79,18 @@ Real clip, cold: MPS 50 s, CPU 189–864 s for the same job. CoreML closed. Esti
 rate; now the middle of the last three fills): the project is about 28 min of fill on CPU. Open for
 the founder: bundle torch (about +0.8 GB) for MPS. 92 tests.
 
+### REQ-20261111-06 · 2026-11-11
+**Request:** "1. Push 6 commits 2. Rebuild & Relaunch … 3. Yes build GPU before loop 4. but keep both
+option, CPU & GPU 4. Build GPU & bundle in first. Run 3 dev loops with the whole team PO, dev,
+QA-QC-tester 5. Rebuild & Relaunch. 6. Commits and prepare for Loop 4"
+**Read as:** ship the MPS path in the bundle, keep CPU as the default and GPU as a choice, prove it
+on a real render, then leave the branch ready for the full render.
+**Response:** `fill_device` setting, device plumbed through render/proof/estimate, CPU/GPU toggle in
+Render settings, torch + `big-lama.pt` bundled (377 MB → 1.2 GB), real GPU render through the
+bundle, 98 tests, three-loop review.
+**Outcome:** GPU shipped behind a choice; CPU default unchanged; estimate corrected (stale rate
+removed, 19 min first guess). Loop 4 untouched.
+
 ## Session log
 
 | # | Time | Request | Response |

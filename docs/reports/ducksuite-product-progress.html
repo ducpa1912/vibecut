@@ -198,6 +198,21 @@ ul.clean li { margin:6px 0; }
       </div>
     </div>
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261111-06</strong><span>11 Nov · GPU fill ships</span></div>
+      <div class="timeline-body">
+        <strong>LaMa runs on the GPU behind a choice, and the CPU stays the default.</strong>
+        <ul class="clean">
+          <li>Torch and <span class="mono">big-lama.pt</span> are in the bundle: 377 MB → 1.2 GB.</li>
+          <li>Render settings has CPU / GPU; GPU is disabled with the real reason when it cannot run.</li>
+          <li>Device is in the estimate and in the fill cache key; CPU and GPU clips cannot collide.</li>
+          <li>Bundled proof: 1 s clip rendered in 10.9 s, cache holds the <span class="mono">:gpu</span> key, OCR clean.</li>
+          <li>Estimate corrected: a stale pre-median rate made it read 1 h 36 min; it now says 19 min, first guess.</li>
+        </ul>
+        <span class="mono">98 tests</span> · three dev loops, review in <span class="mono">docs/teams/loop-04-gpu-engine/</span>.
+      </div>
+    </div>
+
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-04</strong><span>11 Nov · GPU plan</span></div>
       <div class="timeline-body">
         <strong>LaMa GPU is planned with its real cost.</strong>

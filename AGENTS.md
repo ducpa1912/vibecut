@@ -153,7 +153,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 92 pass; 1 skips when node is not on PATH
+python3 -m pytest -q tests      # 98 pass; 1 skips when node is not on PATH
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth
@@ -200,9 +200,10 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
   last (`detect._run_range`). Half a step leaked two frames of text. Prove edge changes by OCR on
   every frame of a short render, not on spot frames.
 - Proofs are optional. Render never waits for a proof.
-- Fill runs on the CPU. PyTorch MPS is measured at 4.6× faster on a real span but unshipped (torch is
-  not in the bundle); CoreML EP is 32× slower and closed. See `docs/duck/gpu-fill-bench.md`. The cache
-  key already separates devices through `method_stamp`.
+- Fill ships on both chips: CPU is the default, GPU is a Render setting. PyTorch MPS measured 4.6×
+  faster on a real span; torch (565 MB) and `big-lama.pt` (196 MB) are in the bundle, 1.2 GB total.
+  CoreML EP is 32× slower and closed. See `docs/duck/gpu-fill-bench.md`. The cache key separates the
+  devices through `method_stamp` (`:gpu`).
 - CPU fill time swings up to 4.6× with load on an 8 GB Mac. Never quote one run as the speed.
 - A line over a moving background is flagged (`quality: "moving"`), not silently switched to blur.
   Only a flash under 0.6 s, a line read once, defaults to blur.
