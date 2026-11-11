@@ -256,3 +256,14 @@ TorchScript model in place of LaMa, stamp in `span_key`, plain fallback; Setting
 (ink), 0.48 vs 0.44 s/frame, peak 620 MB; no candidate allowed; flicker max 1.82 (render). 163
 tests, app builds. Estimate fill 298.4 -> 310.1 s from 35 measured crossings; still 483.5 s against
 698 s cold, the rest being the per-letter stroke plan (recorded, not fixed).
+
+## Loop 9 — the code matches the rules (2026-11-12)
+
+### REQ-20261111-13 · 2026-11-11
+**Request:** Senior PO brief, Loop 9 (PLAN.md loop 6): make the code match the rules.
+**Read as:** no silent local-model fallback, no dead online settings, no cloud call in a v1 build,
+no model name in the UI, and the Whisper cue nobody spoke explained and dropped if small.
+**Response:** rewrite is Apple Intelligence or basic cleanup (UI says which); `online_*` deleted and
+legacy files still load; guard test with every key set and non-local sockets blocked; pack/STT
+labels and fill error copy neutral; repeated slow lines are dropped from Whisper output.
+**Outcome:** 6/6 acceptance, 169 tests, JS clean, app builds. `textfill.VERSION` stays 17.

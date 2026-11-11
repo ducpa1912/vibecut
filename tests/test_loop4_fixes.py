@@ -79,12 +79,14 @@ def test_caption_file_is_opt_in() -> None:
     assert captions.wants_srt({"cues": [{"text": "x"}], "srt": True}) is True
 
 
-def test_a_gpu_error_never_names_the_cpu_file(tmp_path: Path) -> None:
+def test_a_gpu_error_names_no_model_or_file(tmp_path: Path) -> None:
+    """Loop 9: a user-facing reason says what to do, not which model is missing."""
     from duckcore.engine import textfill
 
     problem = textfill.device_problem("lama", tmp_path, "gpu") or ""
-    assert "big-lama.pt" in problem or "PyTorch" in problem
-    assert "lama_fp32.onnx" not in problem
+    assert problem
+    assert "lama" not in problem.lower()
+    assert "big-lama" not in problem.lower()
 
 
 def test_edge_end_never_widens_past_one_frame() -> None:

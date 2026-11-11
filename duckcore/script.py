@@ -10,7 +10,6 @@ import json
 import os
 import shutil
 import subprocess
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -97,34 +96,6 @@ def _array_from_text(text: str) -> list[str] | None:
     return value
 
 
-def _rewrite_ollama(lines: list[str], mode: str) -> tuple[list[str], str]:
-    base = os.environ.get("DUCK_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-    model = os.environ.get("DUCK_OLLAMA_MODEL", "qwen3:4b")
-    style = {
-        "short": "Make every line shorter and tighter while keeping the meaning.",
-        "punchy": "Make every line punchier and more direct while keeping the meaning.",
-        "clean": "Remove filler words and false starts while keeping the meaning and tone.",
-    }.get(mode, "Remove filler words and false starts.")
-    prompt = (
-        "You rewrite subtitle lines. " + style +
-        " Keep the same line count. Return a JSON array of strings only, no commentary.\n" +
-        "\n".join(f"{index + 1}. {line}" for index, line in enumerate(lines))
-    )
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
-    request = urllib.request.Request(
-        base + "/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=120) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    values = _array_from_text(str(body.get("response") or ""))
-    if values is None or len(values) != len(lines):
-        raise ValueError("The local rewrite model returned the wrong line count.")
-    return values, f"ollama:{model}"
-
-
 def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -> dict:
     target = str(target or "").strip().lower()
     if target not in {"en", "vi", "zh"}:
@@ -183,13 +154,11 @@ def rewrite(edit: dict, data_root: Path, *, mode: str = "clean") -> dict:
     try:
         values = _run("rewrite_apple", {"mode": mode, "lines": lines})
     except ValueError:
-        try:
-            values, engine = _rewrite_ollama(lines, mode)
-            fallback = True
-        except Exception:
-            values = [_basic_rewrite(line, mode) for line in lines]
-            engine = "basic-cleanup"
-            fallback = True
+        # Apple Intelligence when the Mac has it; otherwise a plain cleanup.
+        # No local model endpoint is tried here; that returns as a slot later.
+        values = [_basic_rewrite(line, mode) for line in lines]
+        engine = "basic-cleanup"
+        fallback = True
     for cue, value in zip(cues, values):
         cue["text"] = value
     edit["script"] = {

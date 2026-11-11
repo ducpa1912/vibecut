@@ -91,8 +91,6 @@ class LayerAction(BaseModel):
 
 
 class SettingsPatch(BaseModel):
-    online_enabled: bool | None = None
-    online_endpoint: str | None = None
     translation_engine: str | None = None
     translation_model_path: str | None = None
     fill_device: str | None = None
@@ -446,7 +444,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             "models": [
                 {
                     "id": "lama",
-                    "label": "LaMa text fill",
+                    "label": "AI text fill",
                     "file": str(model),
                     "installed": model.is_file() and model.stat().st_size > 0,
                     "bytes": model.stat().st_size if model.is_file() else 0,

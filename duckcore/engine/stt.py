@@ -68,12 +68,12 @@ STT_ENGINES = LOCAL_STT_ENGINES + CLOUD_STT_PROVIDERS
 WHISPER_MODELS = (
     {
         "id": DEFAULT_WHISPER_MODEL,
-        "name": "Whisper large-v3 turbo · best",
+        "name": "Best · accurate",
         "size_mb": 1600,
     },
     {
         "id": "mlx-community/whisper-large-v3-turbo-q4",
-        "name": "Whisper large-v3 turbo q4 · balanced",
+        "name": "Balanced · smaller",
         "size_mb": 900,
     },
 )
@@ -905,12 +905,26 @@ def _whisper_payload(data: Mapping[str, Any]) -> dict:
     words: list[dict] = []
     raw_segments = [item for item in data.get("segments") or [] if isinstance(item, Mapping)]
     line_counts: dict[str, int] = {}
+    spans: dict[str, list[tuple[float, int]]] = {}
     for item in raw_segments:
         key = _line_key(_clean_text(item.get("text")))
         line_counts[key] = line_counts.get(key, 0) + 1
+        seconds = max(0.0, _float(item.get("end")) - _float(item.get("start")))
+        word_count = len(_clean_text(item.get("text")).split())
+        spans.setdefault(key, []).append((seconds, word_count))
+    # Whisper fills music or room noise with a line it knows. The tell is a
+    # line repeated while one copy covers far longer than its words can say:
+    # 23 s for ten words on the review project, three times over.
+    loops = {
+        key for key, rows in spans.items()
+        if len(rows) >= 2
+        and any(seconds >= 8.0 and seconds / max(1, count) >= 1.2 for seconds, count in rows)
+    }
     for raw_segment in raw_segments:
         text = " ".join(_clean_text(raw_segment.get("text")).split())
         if not text:
+            continue
+        if _line_key(text) in loops:
             continue
         if _hallucinated(text, line_counts, raw_segment):
             continue

@@ -190,31 +190,25 @@ def test_full_edit_smart_cut_and_clean_layers(tmp_path: Path) -> None:
         assert patched.json()["edit"]["clean"][0]["kind"] == "blur"
 
 
-def test_settings_online_and_model_verify(tmp_path: Path) -> None:
+def test_settings_load_legacy_online_keys_and_verify_model(tmp_path: Path) -> None:
     app = create_app("test-token", tmp_path)
     headers = {"Authorization": "Bearer test-token"}
+    (tmp_path / "settings.json").write_text(
+        '{"language": "auto", "online_enabled": true, "online_endpoint": "https://old.example.com"}'
+    )
 
     with TestClient(app) as client:
         settings = client.get("/api/settings", headers=headers)
         assert settings.status_code == 200
         assert settings.json()["language"] == "auto"
-        assert settings.json()["online"]["enabled"] is False
+        # The dead switches are gone from the API even when the file holds them.
+        assert "online" not in settings.json()
 
         patched = client.patch(
-            "/api/settings",
-            headers=headers,
-            json={"online_enabled": True, "online_endpoint": "https://render.example.com"},
+            "/api/settings", headers=headers, json={"fill_device": "gpu"},
         )
         assert patched.status_code == 200
-        assert patched.json()["online"]["enabled"] is True
-        assert patched.json()["online"]["endpoint"] == "https://render.example.com"
-
-        bad = client.patch(
-            "/api/settings",
-            headers=headers,
-            json={"online_endpoint": "ftp://example.com"},
-        )
-        assert bad.status_code == 400
+        assert patched.json()["fill"]["device"] == "gpu"
 
         verified = client.post("/api/models/lama/verify", headers=headers)
         assert verified.status_code == 200

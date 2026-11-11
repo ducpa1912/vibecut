@@ -2035,7 +2035,7 @@ function syncScriptStatus() {
   } else if (script.mode === 'rewritten') {
     const engine = script.engine || (script.fallback ? 'basic-cleanup' : 'apple-intelligence');
     state.scriptStatusKind = engine === 'basic-cleanup' ? 'warn' : 'ready';
-    state.scriptStatus = `Rewritten · ${script.rewrite || 'clean'} · ${engine.startsWith('ollama:') ? 'local model' : engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup'}`;
+    state.scriptStatus = `Rewritten · ${script.rewrite || 'clean'} · ${engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup'}`;
   } else {
     state.scriptStatusKind = 'ready';
     state.scriptStatus = 'Script ready';
@@ -2231,7 +2231,7 @@ function scriptFocus() {
           ${[['clean', 'Clean up'], ['short', 'Shorten'], ['punchy', 'Punchier']].map(([value, label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
         </select></div>
         <button class="btn wide" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>${icon('sparkle', 13)} Rewrite</button>
-        <p class="setup-note">${state.engine?.rewrite?.available === false ? 'Apple Intelligence is off. Rewrite uses the local model or basic cleanup.' : 'Rewrite uses the best available local engine.'}</p>
+        <p class="setup-note">${state.engine?.rewrite?.available === false ? 'Apple Intelligence is off. Rewrite uses a basic cleanup.' : 'Rewrite uses the best available local engine.'}</p>
         <button class="btn wide" type="button" data-action="script-reset">Reset to source</button>
         <div class="rule-sep"></div>
         <div class="rail-head">Caption tools</div>
@@ -3304,7 +3304,7 @@ async function saveFillModel(path) {
     const model = data?.fill?.model || {};
     toast(path
       ? (model.ready ? 'Fill will use your model.' : `Saved, but: ${model.problem || 'that folder cannot be used.'}`)
-      : 'Fill will use LaMa.');
+      : 'Fill will use the default engine.');
     if (typeof openSettings === 'function') await openSettings();
   } catch (error) {
     toast(`Fill model: ${error.message}`, 'bad');
@@ -3367,10 +3367,10 @@ async function openSettings() {
           </div>
           <p class="small muted">${fillModel.path
             ? (fillModel.ready
-              ? `Using ${esc(fillModel.file)} in place of LaMa.`
+              ? `Using ${esc(fillModel.file)} in place of the default engine.`
               : esc(fillModel.problem || 'That folder cannot be used.'))
-            : 'Runs in place of LaMa when set. DuckSuite ships no fill model and downloads none; the folder is copied into DuckSuite. Use a model you obtained yourself.'}</p>
-          ${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Use LaMa</button>` : ''}`;
+            : 'Runs in place of the default engine when set. DuckSuite ships no fill model and downloads none; the folder is copied into DuckSuite. Use a model you obtained yourself.'}</p>
+          ${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Use the default engine</button>` : ''}`;
           })()}
           <div class="kv"><span>Voices</span><strong>${state.voices.length ? `${state.voices.length} local` : '—'}</strong></div>
           <div class="kv"><span>Rewrite</span><strong>${state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
@@ -3931,7 +3931,7 @@ async function rewriteScript() {
     state.edit.captions = data.captions;
     if (data.script) state.edit.script = data.script;
     const engine = data.script?.engine || 'apple-intelligence';
-    const engineLabel = engine.startsWith('ollama:') ? 'local model' : engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup';
+    const engineLabel = engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup';
     state.scriptStatusKind = engine === 'basic-cleanup' ? 'warn' : 'ready';
     state.scriptStatus = `Rewritten · ${data.script?.rewrite || state.scriptMode} · ${engineLabel}`;
     toast(state.scriptStatus);

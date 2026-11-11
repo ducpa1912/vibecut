@@ -40,20 +40,15 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 
 ## Loops
 
-### Loop 5 — a better fill for moving footage
+Brief loops 7 (ink check), 8 (moving fill) and 9 (rules) are **closed**; the PLAN loops still open
+are 7 (local model slots), 8 ($29 readiness) and 9 (layout balance).
 
-- Researcher first: licence table for the candidates, quoted clause, commercial use yes/no.
-- Bench the allowed candidates on the moving spans (`scripts/bench_fill.py`).
-- Alternative with no licence: the custom ONNX fill slot (loop 7), user-supplied.
-- Accept: a candidate beats LaMa on moving spans by a stated dB at a stated cost, or the doc records
-  that none does and the UI keeps the `moves` warning.
+### Loops 5 and 6 — closed 2026-11-12
 
-### Loop 6 — make the code match the rules
-
-- Rewrite: no silent fallback, no model name in a user-facing string; Apple Intelligence, else basic
-  cleanup, stated in the UI.
-- Delete the unused online settings; test that cloud STT is unreachable in a v1 build.
-- Accept: tests for each; `grep` finds no model name in user-facing copy.
+- Loop 5 (moving fill): `docs/teams/loop-08-moving-fill/review.md`. No licensed engine; a user fill
+  slot ships; bench in the review.
+- Loop 6 (rules): `docs/teams/loop-09-rules/review.md`. Rewrite order fixed, dead settings removed,
+  no cloud call with every key set, no model name in the UI, the Whisper loop cue dropped.
 
 ### Loop 7 — local model slots (`docs/duck/BYOK-PLAN.md`)
 

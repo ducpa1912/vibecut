@@ -26,16 +26,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
   (no steady strokes). A short OCR read of just those frames would close it.
 - [ ] REQ-20261111-11 · the Render screen's "not checked" count was not looked at in the built app.
 
-## Loop 6 — make the code match the rules
-
-- [ ] `script.rewrite`: remove the silent Ollama fallback and the `qwen3:4b` name; Apple
-  Intelligence, else basic cleanup, stated in the UI.
-- [ ] Delete the unused `online_enabled` / `online_endpoint` settings.
-- [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): code stays for after v1;
-  add a test that none is reachable in a v1 build.
-- [ ] Render queue lists "Done" jobs whose file is gone; Play must not be offered for a missing file.
-- [ ] Model pack manager polish: in-app "verify all" and storage cleanup.
-
 ## Loop 7 — local model slots (REQ-20261111-03)
 
 Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.

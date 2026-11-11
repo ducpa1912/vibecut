@@ -28,8 +28,10 @@ def load(data_root: Path | str) -> dict[str, Any]:
     if not isinstance(value, dict):
         value = {}
     value.setdefault("language", "auto")
-    value.setdefault("online_enabled", False)
-    value.setdefault("online_endpoint", "")
+    # Removed in loop 9: an old file may still hold them, and they are dropped
+    # on the next save rather than failing the load.
+    value.pop("online_enabled", None)
+    value.pop("online_endpoint", None)
     return value
 
 
@@ -94,10 +96,6 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
             "device": fill_device(root),
             "model": fill_model_status(root),
         },
-        "online": {
-            "enabled": bool(settings.get("online_enabled")),
-            "endpoint": str(settings.get("online_endpoint") or ""),
-        },
         "storage": {
             "data_root": str(root),
             "projects_bytes": _tree_bytes(root / "projects"),
@@ -110,13 +108,6 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
 
 def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
     current = load(data_root)
-    if "online_enabled" in payload:
-        current["online_enabled"] = bool(payload["online_enabled"])
-    if "online_endpoint" in payload:
-        endpoint = str(payload["online_endpoint"] or "").strip()
-        if endpoint and not endpoint.startswith(("https://", "http://127.0.0.1", "http://localhost")):
-            raise ValueError("Online endpoint must be HTTPS or localhost.")
-        current["online_endpoint"] = endpoint[:500]
     if "translation_engine" in payload:
         engine = str(payload["translation_engine"] or "auto").strip().lower()
         if engine == "nllb":  # legacy setting from the removed pack

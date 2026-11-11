@@ -36,8 +36,8 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
 - 155 tests pass. Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
   an optional pack.
 - App Store work is paused. Do not start signing or TestFlight.
-- Planning is closed. Open loops: 5 (moving fill), 6 (code/rules), 7 (local model slots), 8 ($29
-  readiness), 9 (layout balance). Next briefs sit in `docs/teams/loop-08-*` and `loop-09-*`.
+- Planning is closed. Brief loops 7–9 are closed (ink check, moving fill, rules). PLAN loops 7–9
+  are still open: local model slots, $29 readiness, layout balance.
 - `textfill.VERSION` 17; the last render has 0 leftover text, 40 of 42 lines checked. Loop 8's
   unfinished custom-fill work is parked on branch `loop8-wip`.
 

@@ -45,7 +45,7 @@ MODEL_FILES = {"lama": "lama_fp32.onnx"}
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}
 MODEL_PACKAGES = {"lama": "onnxruntime"}
 METHOD_COPY = {
-    "lama": "LaMa (per frame)",
+    "lama": "AI fill (per frame)",
 }
 # Share of the previous frame's fill kept on LaMa output, to calm flicker.
 LAMA_CARRY = 0.3
@@ -185,7 +185,7 @@ def gpu_problem(method: str, directory: Path) -> str | None:
     path = model_path(method, directory, "gpu")
     if path.is_file() and path.stat().st_size > 0:
         return None
-    return f"The GPU option for {METHOD_COPY.get(method, method)} needs {path.name} in {directory}."
+    return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
 
 
 def device_problem(method: str, directory: Path, device: str) -> str | None:
@@ -232,8 +232,7 @@ def missing_model(method: str, directory: Path) -> str | None:
     if path.is_file() and path.stat().st_size > 0:
         return None
     return (
-        f"The {METHOD_COPY.get(method, method)} fill model is missing. "
-        f"Put {MODEL_FILES[method]} in {directory}."
+        "The AI fill model is missing. Reinstall DuckSuite to restore it."
     )
 
 
@@ -1539,7 +1538,7 @@ def fill_frame(
     neighbouring frames and is left to the full render.
     """
     if method == "sttn":
-        raise FillError("The single-frame fill preview uses the LaMa model.")
+        raise FillError("The single-frame fill preview uses the AI fill model.")
     directory = models_dir(data_root)
     problem = missing_model(method, directory)
     if problem:
@@ -1626,7 +1625,7 @@ def prepare_span(
     directory = models_dir(data_root)
     custom_path, custom_reason = custom_fill_model(data_root)
     if custom_reason:
-        LOGGER.warning("Your fill model is not usable: %s Using LaMa.", custom_reason)
+        LOGGER.warning("Your fill model is not usable: %s Using the default engine.", custom_reason)
     custom_filler = None
     custom_fallback = ""
     if custom_path is not None:
@@ -1635,7 +1634,7 @@ def prepare_span(
             custom_filler = _custom_filler(custom_path)
         except FillError as exc:
             custom_fallback = str(exc)
-            LOGGER.warning("%s Using LaMa instead.", custom_fallback)
+            LOGGER.warning("%s Using the default engine instead.", custom_fallback)
             custom_path = None
     if custom_path is not None:
         device = DEFAULT_DEVICE

@@ -272,3 +272,22 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] Bench the allowed candidates: none, so LaMa alone on 3 moving spans, 21 frames.
 - [x] Custom fill slot (no licence needed) for a user ONNX or TorchScript model.
 - [x] Crossings measured into the estimate (35 on the review project, +11.7 s).
+
+## Loop 9 closed items (2026-11-12)
+
+## Loop 6 — make the code match the rules
+
+- [ ] `script.rewrite`: remove the silent Ollama fallback and the `qwen3:4b` name; Apple
+  Intelligence, else basic cleanup, stated in the UI.
+- [ ] Delete the unused `online_enabled` / `online_endpoint` settings.
+- [ ] REQ-20261111-02 · cloud STT paths (`groq`, `deepgram`, `openrouter`): code stays for after v1;
+  add a test that none is reachable in a v1 build.
+- [ ] Render queue lists "Done" jobs whose file is gone; Play must not be offered for a missing file.
+- [ ] Model pack manager polish: in-app "verify all" and storage cleanup.
+
+
+- [x] `script.rewrite`: no local-model fallback, no model name; Apple Intelligence, else basic cleanup.
+- [x] `online_enabled` / `online_endpoint` removed; an old file still loads.
+- [x] No cloud STT reachable in a v1 build; guard test with every key set.
+- [x] No user-facing string names a model (grep empty).
+- [x] Whisper loop cue dropped by a tested rule (repeated line, ≥ 8 s, ≥ 1.2 s a word).

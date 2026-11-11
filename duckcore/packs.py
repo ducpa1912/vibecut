@@ -19,7 +19,7 @@ from pathlib import Path
 PACKS = (
     {
         "id": "tts-kokoro",
-        "name": "Kokoro voice pack",
+        "name": "Extra voice pack",
         "purpose": "voice",
         "detail": "Higher-quality local voices for voice-over and dub.",
         "size_bytes": 325_532_387,
@@ -46,7 +46,7 @@ PACKS = (
     },
     {
         "id": "speech-whisper",
-        "name": "Whisper large-v3-turbo",
+        "name": "Speech pack · non-Apple languages",
         "purpose": "speech",
         "detail": "Local speech model for languages Apple Speech does not cover.",
         "size_bytes": 1_613_977_612,
