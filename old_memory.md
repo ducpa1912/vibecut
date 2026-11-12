@@ -275,3 +275,10 @@ could pick different engines.
 filler; per-span table in the review (24 spans, total −6.7 %, worst 1.75x); `_learn_rate` skips a
 custom engine and resumed clips; both sides call `textfill.engine_choice()`. Founder script at
 `docs/teams/loop-08-moving-fill/founder-test.md`. 170 tests; `VERSION` stays 17.
+
+### Loop 9 revision 1 · 2026-11-12
+**Fault:** the Whisper loop rule dropped every copy of a repeated slow line, including real speech.
+**Fixed:** only one run of back-to-back copies (gap <= 2 s, measured 0 and 1.74 s) that holds a
+slow copy (>= 8 s at >= 1.2 s a word) is dropped; the same line elsewhere stays. Four tests.
+The stored transcript still holds the cues: the founder must re-Check, which can move layer ranges.
+170 tests; `VERSION` stays 17.

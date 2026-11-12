@@ -1,3 +1,49 @@
+# Loop 9 review — revision 1 (Senior PO, 2026-11-12)
+
+**Fault fixed: the Whisper loop rule dropped real speech.** A line said twice, one copy slow, lost
+every copy wherever it appeared. The rule now drops only one run of back-to-back copies.
+
+## What the review project's cues measure
+
+| Copy | Start–end (s) | Words | Seconds/word | Gap before |
+|---|---:|---:|---:|---:|
+| 1 | 90.00–91.86 | 10 | 0.19 | — |
+| 2 | 91.86–92.96 | 10 | 0.11 | **0.00 s** |
+| 3 | 94.70–118.06 | 10 | **2.34** | **1.74 s** |
+
+What else sets them apart, read from the stored transcript: the pack returned **no**
+`no_speech_prob`, `avg_logprob` or `compression_ratio` (all null), so no score-based rule can run
+here. Words exist and their confidences are low and erratic (`I'm` 0.17, `a` 0.02, `little` 0.05),
+and two words share the same span (`to` and `eat` both 90.92–90.96 s). The one robust fact is
+**local**: the copies follow each other, gaps 0 and 1.74 s, and the last covers 23 s.
+
+## The rule
+
+`_whisper_payload` groups *consecutive* segments with the same line key and a gap of at most
+`_REPEAT_GAP` (2.0 s — measured 0 and 1.74 here). A group of two or more is dropped only when one
+copy is slow (`_REPEAT_SLOW_SECONDS` 8 s and `_REPEAT_SLOW_PER_WORD` 1.2 s per word). The same line
+elsewhere in the video is a separate group and stays. No threshold was added beyond the measured
+gap and the measured 23 s/10 words.
+
+## Tests (all pass, 170 total)
+
+- (a) `test_the_review_project_loop_is_dropped` — 90.0, 91.86, 94.7 s, one 23 s copy: all three go.
+- (b) `test_the_same_line_a_minute_later_keeps_both` — 60 s apart, one slow: both stay.
+- (c) `test_a_chorus_at_speaking_pace_keeps_all_three` — three back-to-back, none slow: all stay.
+- (d) `test_one_slow_line_is_kept_when_it_is_not_repeated` — a single slow line stays.
+
+## The stored transcript
+
+`prj_e95348a97316` still holds the three made-up cues: they are in `transcript.json` from a run
+before this rule. **The founder must run Check again** to apply it. Check also re-runs detection,
+so it **can move clean-layer ranges** and the next render is cold for the spans it changes.
+
+## Gates
+
+170 tests, `node --check` clean, app builds. No fill output change, `textfill.VERSION` stays 17.
+
+---
+
 # Loop 9 review — make the code match the rules
 
 Brief: `BRIEF.md`. Base: loop 8 (`7bda48d`), loop 7 rev 2 (`8d1a9c8`).

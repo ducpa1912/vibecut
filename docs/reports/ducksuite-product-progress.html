@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 9 · rev 1</strong><span>12 Nov · the cue rule stays local</span></div>
+      <div class="timeline-body">
+        <strong>The Whisper loop rule no longer drops real speech.</strong>
+        <ul class="clean">
+          <li>Measured on the review project: copies at 90.0, 91.86 and 94.7 s (gaps 0 and 1.74 s), the last 23 s for 10 words; the pack returns no speech scores.</li>
+          <li>A line is dropped only in one run of back-to-back copies (gap ≤ 2 s) that holds a slow copy (≥ 8 s at ≥ 1.2 s a word). The same line a minute later stays.</li>
+          <li>Four tests: the review pattern goes; 60 s apart keeps both; a chorus of three keeps all; one slow line stays.</li>
+          <li>The stored transcript still holds the cues: the founder must re-Check, and that can move clean-layer ranges.</li>
+        </ul>
+        <span class="mono">170 tests</span> · <span class="mono">VERSION</span> 17 unchanged
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 8 · rev 1</strong><span>12 Nov · estimate from the fill plan</span></div>
       <div class="timeline-body">
         <strong>The estimate now walks the fill's own run plan, and a user model no longer skews it.</strong>
