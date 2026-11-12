@@ -95,6 +95,7 @@ class CutBody(BaseModel):
     fit: str = "fit"
     crop: dict | None = None
     grade: dict | None = None
+    enhance: dict | None = None
 
 
 class LayerAction(BaseModel):
@@ -1872,7 +1873,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         try:
             edit = edits.get_edit(data_root, project_id, edit_id)
             edit = edits.set_cut(
-                edit, aspect=body.aspect, fit=body.fit, crop=body.crop, grade=body.grade,
+                edit, aspect=body.aspect, fit=body.fit, crop=body.crop,
+                grade=body.grade, enhance=body.enhance,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc

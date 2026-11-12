@@ -33,7 +33,6 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 
 ## Cut — phase 3 (open)
 
-- [ ] REQ-20261112-04 · loop 19: enhance 360p→1080p with lanczos, honest "no new detail" label; optional CoreML pack only after licence check and an M1/8 GB benchmark
 
 ## Layout — open after brief loop 10
 

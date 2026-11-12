@@ -409,3 +409,10 @@ this Mac, so the real model path is unproven.
 crop/scale, reset; player preview is CSS.
 **Numbers:** neutral adds no filter; +100 exposure lum 126.2 -> 131.6; -100 saturation chroma
 192.3 -> 2.6; +100 temperature R-B -5.7 -> -2.2; UI saves +80 and resets to 0. 197 tests.
+
+### REQ-20261112-04 · loop 19 (2026-11-12)
+**Shipped:** Cut → Enhance: source/output comparison, Lanczos upscale toggle and Sharpen 0-100,
+stored in `edit.cut.enhance`, applied only when upscaling; "no new detail" stated.
+**Numbers:** 640x360 -> 1920x1080; proof frame 1920x1080, sharpness 8.1 -> 14.2 (1.75x); 360->720
+benchmark bicubic PSNR 36.03 / lap 18.3, lanczos 36.20 / 19.5, lanczos+unsharp 40.21 / 35.4 vs
+original 40.7. 198 tests.

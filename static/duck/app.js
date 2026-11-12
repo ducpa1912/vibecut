@@ -1712,6 +1712,38 @@ function cutPreview() {
   return { cls, style };
 }
 
+function cutOutputSize() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const cut = state.edit?.cut || {};
+  const sizes = {
+    '9:16': { w: 1080, h: 1920 }, '1:1': { w: 1080, h: 1080 },
+    '4:5': { w: 1080, h: 1350 }, '16:9': { w: 1920, h: 1080 },
+  };
+  if (cut.crop) {
+    const sw = Number(meta.width || 0);
+    const sh = Number(meta.height || 0);
+    const cw = Math.max(0.02, Number(cut.crop.w) || 1);
+    const ch = Math.max(0.02, Number(cut.crop.h) || 1);
+    return { w: Math.round((sw || 1080) * cw), h: Math.round((sh || 1920) * ch) };
+  }
+  if (sizes[cut.aspect]) return sizes[cut.aspect];
+  const sw = Number(meta.width || 0);
+  const sh = Number(meta.height || 0);
+  if (!sw || !sh) return { w: 1920, h: 1080 };
+  const even = (value) => Math.round(value / 2) * 2;
+  return sw >= sh
+    ? { w: even((sw * 1080) / sh), h: 1080 }
+    : { w: 1080, h: even((sh * 1080) / sw) };
+}
+
+function enhanceInfo() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const source = { w: Number(meta.width || 0), h: Number(meta.height || 0) };
+  const output = cutOutputSize();
+  const upscale = Boolean(source.w && source.h) && (output.w > source.w || output.h > source.h);
+  return { upscale, source, output };
+}
+
 function cutOutputLabel() {
   const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
   const cut = state.edit?.cut || {};
@@ -1776,7 +1808,17 @@ function cutFocus() {
     </div>
     <div class="focus-card">
       <h3>Enhance</h3>
-      <p class="small muted">Upscaling is planned (loop 19). Today the output is 1080-class and keeps the source detail.</p>
+      ${(() => {
+        const info = enhanceInfo();
+        const enhance = state.edit?.cut?.enhance || { enabled: false, sharpen: 0 };
+        if (!info.upscale) {
+          return `<p class="small muted">Source is ${info.source.w}×${info.source.h}; the output is ${info.output.w}×${info.output.h}. No upscale is added.</p>`;
+        }
+        return `<p class="small muted">${info.source.w}×${info.source.h} → ${info.output.w}×${info.output.h}. Lanczos keeps edges; it invents no detail.</p>
+        <label class="enhance-row"><input type="checkbox" data-enhance="enabled" ${enhance.enabled ? 'checked' : ''}> Lanczos upscale</label>
+        <label class="enhance-row">Sharpen <input data-enhance="sharpen" type="range" min="0" max="100" step="1" value="${Number(enhance.sharpen || 0)}"><span data-enhance-value>${Number(enhance.sharpen || 0)}</span></label>
+        <p class="small muted">No new detail: upscaling cannot recover what the source never captured.</p>`;
+      })()}
     </div>
   </div>`;
 }
@@ -5021,6 +5063,14 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.dataset && target.dataset.enhance) {
+    const current = state.edit?.cut?.enhance || { enabled: false, sharpen: 0 };
+    const enabled = target.dataset.enhance === 'enabled' ? Boolean(target.checked) : Boolean(current.enabled);
+    const sharpenInput = document.querySelector('[data-enhance="sharpen"]');
+    const sharpen = sharpenInput ? Number(sharpenInput.value || 0) : Number(current.sharpen || 0);
+    saveCut({ enhance: { enabled, sharpen } });
+    return;
+  }
   if (target.dataset && target.dataset.grade) {
     const grade = { ...gradeOf() };
     document.querySelectorAll('[data-grade]').forEach((input) => {
@@ -5088,6 +5138,11 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.dataset && event.target.dataset.enhance === 'sharpen') {
+    const read = event.target.closest('label')?.querySelector('[data-enhance-value]');
+    if (read) read.textContent = String(Number(event.target.value || 0));
+    return;
+  }
   if (event.target.dataset && event.target.dataset.grade) {
     const key = event.target.dataset.grade;
     const grade = { ...gradeOf(), [key]: Number(event.target.value || 0) };

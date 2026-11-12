@@ -343,3 +343,7 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 
 - [x] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels
 - [x] REQ-20261112-07 · loop 17: visible no-model fallback; every beat traceable to a source cue
+
+## Loop 19 — Cut enhance (closed 2026-11-12)
+
+- [x] REQ-20261112-04 · loop 19: enhance 360p→1080p with lanczos, honest "no new detail" label; optional CoreML pack only after licence check and an M1/8 GB benchmark

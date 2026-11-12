@@ -176,12 +176,22 @@ def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tu
             parts.append(f"crop={cw}:{ch}:{cx}:{cy}")
         except (TypeError, ValueError):
             pass
+    enhance = cut.get("enhance") if isinstance(cut.get("enhance"), dict) else {}
+    upscaling = out_w > width or out_h > height
+    use_lanczos = bool(enhance.get("enabled")) and upscaling
+    flags = ":flags=lanczos+accurate_rnd" if use_lanczos else ""
     if str(cut.get("fit") or "fit") == "fill":
-        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
+        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase{flags}")
         parts.append(f"crop={out_w}:{out_h}")
     else:
-        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease")
+        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease{flags}")
         parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
+    try:
+        sharpen = max(0.0, min(100.0, float(enhance.get("sharpen") or 0))) if use_lanczos else 0.0
+    except (TypeError, ValueError):
+        sharpen = 0.0
+    if sharpen > 0:
+        parts.append(f"unsharp=5:5:{sharpen / 100 * 1.5:.3f}:5:5")
     grade = cut.get("grade") if isinstance(cut.get("grade"), dict) else {}
     try:
         exposure = max(-2.0, min(2.0, float(grade.get("exposure") or 0) / 50.0))

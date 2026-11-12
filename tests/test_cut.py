@@ -56,6 +56,7 @@ def test_cut_route_saves(tmp_path: Path) -> None:
         assert saved.json()["edit"]["cut"] == {
             "aspect": "4:5", "fit": "fill", "crop": None,
             "grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0},
+            "enhance": {"enabled": False, "sharpen": 0},
         }
         bad = client.patch(
             "/api/projects/prj_cut/edits/ed_cut/cut",
@@ -99,3 +100,17 @@ def test_grade_turns_into_ffmpeg_filters() -> None:
     assert "colorbalance=rs=0.150:gs=0:bs=-0.150" in chain
     _, _, plain = _scale_filter(META, 30, {"cut": {"grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0}}})
     assert "exposure=" not in plain and "colorbalance=" not in plain and "eq=" not in plain
+
+
+def test_enhance_clamps_and_only_lifts_a_small_source() -> None:
+    out = edits.set_cut({"id": "ed_e"}, enhance={"enabled": True, "sharpen": 180})
+    assert out["cut"]["enhance"] == {"enabled": True, "sharpen": 100}
+    small = {"width": 640, "height": 360}
+    _, _, chain = _scale_filter(small, 30, {"cut": {"enhance": {"enabled": True, "sharpen": 50}}})
+    assert "flags=lanczos+accurate_rnd" in chain
+    assert "unsharp=5:5:0.750:5:5" in chain
+    _, _, big = _scale_filter(META, 30, {"cut": {"enhance": {"enabled": True, "sharpen": 50}}})
+    assert "lanczos" not in big
+    assert "unsharp" not in big
+    _, _, off = _scale_filter(small, 30, {"cut": {"enhance": {"enabled": False, "sharpen": 50}}})
+    assert "lanczos" not in off and "unsharp" not in off

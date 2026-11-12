@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 19 · enhance</strong><span>12 Nov · 360p to 1080p, honestly</span></div>
+      <div class="timeline-body">
+        <strong>Cut → Enhance upscales a small source with Lanczos and optional sharpen.</strong>
+        <ul class="clean">
+          <li>640×360 project: <b>640×360 → 1920×1080</b>, two controls, saved as <span class="mono">{enabled, sharpen}</span>.</li>
+          <li>Proof frame <b>1920×1080</b>; sharpness <b>8.1 → 14.2</b> with sharpen 60. Benchmark 360→720: bicubic PSNR 36.03, lanczos 36.20, lanczos+unsharp <b>40.21</b> vs original edge energy 40.7.</li>
+          <li>1080p source: no controls, “No upscale is added”. The UI states it invents no detail.</li>
+          <li>CoreML super-resolution is <b>not built</b>; licence and M1/8 GB benchmark still open. 198 tests.</li>
+        </ul>
+        <span class="mono">198 tests</span> · review: <span class="mono">docs/teams/loop-19-enhance/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 18 · grading</strong><span>12 Nov · four sliders in Cut</span></div>
       <div class="timeline-body">
         <strong>Exposure, contrast, saturation and temperature, rendered by ffmpeg.</strong>

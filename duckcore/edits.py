@@ -522,11 +522,13 @@ def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dic
 
 CUT_ASPECTS = ("source", "9:16", "1:1", "4:5", "16:9")
 GRADE_KEYS = ("exposure", "contrast", "saturation", "temperature")
+ENHANCE_KEYS = ("enabled", "sharpen")
 
 
 def set_cut(
     edit: dict, *, aspect: str = "source", fit: str = "fit",
     crop: dict | None = None, grade: dict | None = None,
+    enhance: dict | None = None,
 ) -> dict:
     """Store the visual treatment. Crop is normalized to the source frame."""
     aspect = str(aspect or "source").strip()
@@ -561,7 +563,20 @@ def set_cut(
             if value != value:
                 raise EditError("Grade values must be numbers.")
             clean_grade[key] = int(round(max(-100.0, min(100.0, value))))
-    edit["cut"] = {"aspect": aspect, "fit": fit, "crop": clean_crop, "grade": clean_grade}
+    clean_enhance = {"enabled": False, "sharpen": 0}
+    if enhance:
+        clean_enhance["enabled"] = bool(enhance.get("enabled"))
+        try:
+            sharpen = float(enhance.get("sharpen", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise EditError("Sharpen must be a number.") from exc
+        if sharpen != sharpen:
+            raise EditError("Sharpen must be a number.")
+        clean_enhance["sharpen"] = int(round(max(0.0, min(100.0, sharpen))))
+    edit["cut"] = {
+        "aspect": aspect, "fit": fit, "crop": clean_crop,
+        "grade": clean_grade, "enhance": clean_enhance,
+    }
     return edit
 
 

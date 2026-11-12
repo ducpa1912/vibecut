@@ -2011,3 +2011,9 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .grade-grid label { display: grid; grid-template-columns: 72px minmax(0, 1fr) 34px; align-items: center; gap: 7px; font-size: 9.5px; color: var(--muted); }
 .grade-grid input { width: 100%; height: 3px; accent-color: var(--amber); }
 .grade-grid [data-grade-value] { font: 9px var(--mono); text-align: right; color: var(--ink); }
+
+/* Enhance: lanczos on a small source, no invented detail. */
+.enhance-row { display: flex; align-items: center; gap: 7px; margin: 5px 0; font-size: 9.5px; color: var(--muted); }
+.enhance-row input[type="checkbox"] { accent-color: var(--amber); }
+.enhance-row input[type="range"] { flex: 1; min-width: 0; height: 3px; accent-color: var(--amber); }
+.enhance-row span { min-width: 22px; text-align: right; font: 9px var(--mono); color: var(--ink); }
