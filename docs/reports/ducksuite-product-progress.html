@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 8 · rev 1</strong><span>12 Nov · estimate from the fill plan</span></div>
+      <div class="timeline-body">
+        <strong>The estimate now walks the fill's own run plan, and a user model no longer skews it.</strong>
+        <ul class="clean">
+          <li>New <span class="mono">textfill.dry_units()</span> runs <span class="mono">fill_frames_lama</span> on the decoded span with a counting filler: same holes, same runs, same motion test.</li>
+          <li>Per-span table in the review: 24 spans, <b>790.4 s estimated against 847.2 s real (−6.7 %)</b>, no span over 2× (worst 1.75× at 98.0 s). Runs match: 85/85, 54/54, 116/115.</li>
+          <li>A custom fill model is no longer learned into the LaMa rate; estimate and render share one <span class="mono">engine_choice()</span>, so a model that will not load falls back on both sides.</li>
+          <li>Founder script: <span class="mono">docs/teams/loop-08-moving-fill/founder-test.md</span>. The estimate costs 66.7 s the first time, 24 s after.</li>
+        </ul>
+        <span class="mono">170 tests</span> · <span class="mono">VERSION</span> 17 unchanged
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">REQ-20261111-13</strong><span>12 Nov · Loop 9 rules</span></div>
       <div class="timeline-body">
         <strong>The code matches the rules: local rewrite, no cloud call, no model name in the UI.</strong>

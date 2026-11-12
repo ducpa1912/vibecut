@@ -267,3 +267,11 @@ no model name in the UI, and the Whisper cue nobody spoke explained and dropped 
 legacy files still load; guard test with every key set and non-local sockets blocked; pack/STT
 labels and fill error copy neutral; repeated slow lines are dropped from Whisper output.
 **Outcome:** 6/6 acceptance, 169 tests, JS clean, app builds. `textfill.VERSION` stays 17.
+
+### Loop 8 revision 1 · 2026-11-12
+**Faults:** the estimate planned box runs; a custom model taught the LaMa rate; estimate and render
+could pick different engines.
+**Fixed:** `dry_units()` walks the same `fill_frames_lama` on the decoded span with a counting
+filler; per-span table in the review (24 spans, total −6.7 %, worst 1.75x); `_learn_rate` skips a
+custom engine and resumed clips; both sides call `textfill.engine_choice()`. Founder script at
+`docs/teams/loop-08-moving-fill/founder-test.md`. 170 tests; `VERSION` stays 17.

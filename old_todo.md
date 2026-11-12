@@ -291,3 +291,7 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] No cloud STT reachable in a v1 build; guard test with every key set.
 - [x] No user-facing string names a model (grep empty).
 - [x] Whisper loop cue dropped by a tested rule (repeated line, ≥ 8 s, ≥ 1.2 s a word).
+
+- [x] Estimate from the fill's own run plan (loop 8 revision 1): `dry_units` walks the same
+  `fill_frames_lama`; 790.4 s against 847.2 s real (−6.7 %), worst span 1.75x.
+- [x] A custom model no longer teaches the LaMa rate; estimate and render share `engine_choice`.

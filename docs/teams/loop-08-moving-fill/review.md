@@ -1,3 +1,85 @@
+# Loop 8 review — revision 1 (Senior PO, 2026-11-12)
+
+Three faults from the review of `7bda48d`, and the founder script. All fixed in the commit that
+carries this section.
+
+## Fault 1 — the estimate planned a different fill
+
+The estimate planned box runs; the fill runs the real per-frame plan (ink ranges, crossings, still
+lines). Now the estimate calls **the same function the render calls**:
+`textfill.dry_units()` walks `fill_frames_lama` on the decoded span with the same holes, the same
+run rules and the same motion test, and a filler that only counts (`_CountingFiller`). No model
+runs and no constant is fitted. Units are model work plus frames × frame cost, exactly what
+`record_rate` learns.
+
+**Measured against a cold render** (`ed_38a4c36a3aae_20261112-074517.mp4`, 847.2 s wall clock,
+fill spans 688.5 s):
+
+| Span start (s) | Estimated fill (s) | Real fill (s) | Ratio |
+|---:|---:|---:|---:|
+| 0.00 | 59.6 | 42.9 | 1.39 |
+| 4.75 | 33.0 | 25.9 | 1.27 |
+| 10.06 | 45.2 | 48.1 | 0.94 |
+| 15.38 | 37.7 | 38.2 | 0.99 |
+| 19.62 | 59.5 | 80.1 | 0.74 |
+| 25.27 | 47.0 | 56.4 | 0.83 |
+| 81.73 | 9.6 | 14.6 | 0.66 |
+| 87.38 | 27.9 | 29.4 | 0.95 |
+| 89.25 | 58.6 | 64.1 | 0.91 |
+| 93.62 | 29.3 | 33.4 | 0.88 |
+| 98.00 | 10.3 | 5.9 | **1.75** |
+| 100.50 | 14.6 | 13.6 | 1.07 |
+| 105.08 | 24.7 | 30.8 | 0.80 |
+| 109.67 | 27.1 | 39.6 | 0.68 |
+| 114.25 | 10.7 | 12.1 | 0.88 |
+| 119.38 | 15.4 | 12.1 | 1.27 |
+| 124.50 | 17.6 | 14.8 | 1.19 |
+| 137.88 | 22.3 | 25.4 | 0.88 |
+| 141.06 | 14.3 | 13.3 | 1.08 |
+| 144.25 | 7.5 | 5.4 | 1.39 |
+| 146.00 | 1.2 | 2.3 | 0.52 |
+| 148.00 | 3.3 | 3.8 | 0.87 |
+| 149.88 | 38.3 | 39.8 | 0.96 |
+| 154.95 | 35.0 | 36.5 | 0.96 |
+
+- **Total: 790.4 s estimated against 847.2 s real, −6.7 %** (within 15 %).
+- Fill only: 649.7 s against 688.5 s, −5.6 %.
+- No span is off by more than 2×. The worst is **98.00 s at 1.75×**: a 5.9 s span where two runs ran
+  together in the real fill (10 planned, 9 real); the model ran faster than the median rate there.
+  The `0.00` span (1.39×) is the first span, which pays the model load.
+- Runs now match almost exactly: 85/85, 54/54, 70/69, 75/75, 100/99, 104/104, 116/115.
+
+Cost of the estimate: **66.7 s** the first time for the whole edit (ink build + a decode of every
+span), 24 s after because the per-span units are cached in `render_estimate_units.json`. The old
+`crossing_frames` scan is deleted; its 10 fps set could not express "moved since the run started".
+
+## Fault 2 — a custom model taught the LaMa speed
+
+`record_rate` was called for every span, including a user model's. Now `_learn_rate()` skips a
+custom engine (and a resumed clip). Test: `test_a_user_model_never_teaches_the_default_rate` —
+`_learn_rate(..., custom=Path("/x/model.onnx"))` leaves no rate file; the default call writes one.
+
+## Fault 3 — estimate and render could pick different engines
+
+`estimate_span` stamped a custom model by its path even when it could not load, while
+`prepare_span` fell back to LaMa. Both now call `textfill.engine_choice()`, which loads the model
+(or returns the plain reason) once and is cached. Test:
+`test_a_model_that_cannot_load_is_not_chosen_anywhere` — a folder with a file that is not a graph
+gives `(None, reason)` and the default stamp.
+
+## Founder script
+
+`docs/teams/loop-08-moving-fill/founder-test.md`: pick a good folder, a wrong one, clear it; what
+must be seen at each step. Not run by the agent (as asked).
+
+## Gates
+
+**170 tests**, `node --check` clean, app builds. No fill output change: the real fill still uses
+its own pixel test (`moved_at` defaults to None), `textfill.VERSION` stays **17**. No render was
+started twice on the same span.
+
+---
+
 # Loop 8 review — a better fill for moving footage
 
 Brief: `BRIEF.md`. Project: `prj_e95348a97316`, edit `ed_38a4c36a3aae`. GPU only. Loop 7 rev 2

@@ -435,6 +435,18 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
     layers = _fill_layers(edit)
     fps = float(meta.get("fps") or 0.0)
     device = _fill_device(data_root)
+    source = str(meta.get("path") or "")
+    strokes: dict = {}
+    if layers and source:
+        from duckcore import inkcheck
+
+        inks = inkcheck.build_inks(edit, meta, source=source)
+        layers, strokes = _inked_layers(layers, inks, meta)
+    store = data_root / "render_estimate_units.json"
+    try:
+        cached_units = json.loads(store.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached_units = {}
     rows = []
     if layers:
         for clip in edit.get("clips") or []:
@@ -442,15 +454,24 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
             end = float(clip.get("end") or 0.0)
             if end <= start or str(clip.get("kind")) == "media":
                 continue
-            crossings = textfill.count_crossings(
-                str(meta.get("path") or ""), meta, layers,
-                start=start, duration=max(0.04, end - start), data_root=data_root,
-            )
-            rows.append(textfill.estimate_span(
-                meta=meta, start=start, duration=max(0.04, end - start), layers=layers,
+            duration = max(0.04, end - start)
+            key = textfill.units_key(meta, layers, start, duration)
+            row = textfill.estimate_span(
+                meta=meta, start=start, duration=duration, layers=layers,
                 method="lama", cache_dir=cache, data_root=data_root,
-                device=device, crossings=crossings,
-            ))
+                device=device, strokes=strokes or None, source=source,
+                units_override=cached_units.get(key),
+            )
+            if strokes and row.get("units"):
+                cached_units[key] = row["units"]
+            rows.append(row)
+    if strokes and cached_units:
+        try:
+            temporary = store.with_suffix(".tmp")
+            temporary.write_text(json.dumps(cached_units, indent=1), encoding="utf-8")
+            temporary.replace(store)
+        except OSError:
+            pass
     summary = textfill.estimate_summary(rows, data_root)
     filled_frames = sum(int(row.get("frames") or 0) for row in rows)
     timeline = sum(
@@ -471,6 +492,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
                                  + timeline * 0.25, 1))
     return {
         **summary,
+        "spans": rows,
         "total_seconds": total,
         "total_measured": bool(total),
         "timeline_seconds": round(timeline, 1),

@@ -93,17 +93,45 @@ def test_old_online_settings_load_and_are_dropped(tmp_path) -> None:
     assert "online_enabled" not in saved and "online_endpoint" not in saved
 
 
-def test_a_repeated_line_over_a_long_span_is_dropped() -> None:
+def test_the_review_project_loop_is_dropped() -> None:
+    """(a) 90.0, 91.86 and 94.7 s: one run of copies, the last 23 s for ten words."""
     same = "I'm going to eat a little bit of chicken."
     data = {
         "segments": [
             {"start": 90.0, "end": 91.86, "text": same},
             {"start": 91.86, "end": 92.96, "text": same},
-            {"start": 94.7, "end": 118.06, "text": same},  # 23 s for 10 words
+            {"start": 94.7, "end": 118.06, "text": same},
         ],
         "words": [],
     }
     assert stt._whisper_payload(data)["segments"] == []
+
+
+def test_the_same_line_a_minute_later_keeps_both() -> None:
+    """(b) A real repeat is not a loop: 60 s apart, one copy slow."""
+    same = "We are going to eat a little bit of chicken."
+    data = {
+        "segments": [
+            {"start": 10.0, "end": 12.0, "text": same},
+            {"start": 72.0, "end": 96.0, "text": same},
+        ],
+        "words": [],
+    }
+    assert len(stt._whisper_payload(data)["segments"]) == 2
+
+
+def test_a_chorus_at_speaking_pace_keeps_all_three() -> None:
+    """(c) Three back-to-back copies, none slow: a chorus, not a loop."""
+    same = "Everybody sing it now"
+    data = {
+        "segments": [
+            {"start": 0.0, "end": 1.6, "text": same},
+            {"start": 1.6, "end": 3.2, "text": same},
+            {"start": 3.2, "end": 4.8, "text": same},
+        ],
+        "words": [],
+    }
+    assert len(stt._whisper_payload(data)["segments"]) == 3
 
 
 def test_one_slow_line_is_kept_when_it_is_not_repeated() -> None:

@@ -873,6 +873,20 @@ _REPEATED_ONLY_LINES = frozenset({
     "thank you", "thanks", "cảm ơn", "okay", "you", "bye", "bye bye", "ta-da",
 })
 _REPEATED_ONLY_MIN = 3
+# A made-up loop is local. Measured on the review project: copies at 90.0, 91.86
+# and 94.7 s, gaps of 0 and 1.74 s, one copy 23.36 s for ten words.
+_REPEAT_GAP = 2.0
+_REPEAT_SLOW_SECONDS = 8.0
+_REPEAT_SLOW_PER_WORD = 1.2
+
+
+def _slow_copy(segment: Mapping[str, Any] | None) -> bool:
+    """One copy that takes far longer than its words can say."""
+    if not segment:
+        return False
+    seconds = max(0.0, _float(segment.get("end")) - _float(segment.get("start")))
+    words = len(_clean_text(segment.get("text")).split())
+    return seconds >= _REPEAT_SLOW_SECONDS and seconds / max(1, words) >= _REPEAT_SLOW_PER_WORD
 
 
 def _line_key(text: str) -> str:
@@ -905,26 +919,36 @@ def _whisper_payload(data: Mapping[str, Any]) -> dict:
     words: list[dict] = []
     raw_segments = [item for item in data.get("segments") or [] if isinstance(item, Mapping)]
     line_counts: dict[str, int] = {}
-    spans: dict[str, list[tuple[float, int]]] = {}
+    keys: list[str] = []
     for item in raw_segments:
         key = _line_key(_clean_text(item.get("text")))
+        keys.append(key)
         line_counts[key] = line_counts.get(key, 0) + 1
-        seconds = max(0.0, _float(item.get("end")) - _float(item.get("start")))
-        word_count = len(_clean_text(item.get("text")).split())
-        spans.setdefault(key, []).append((seconds, word_count))
-    # Whisper fills music or room noise with a line it knows. The tell is a
-    # line repeated while one copy covers far longer than its words can say:
-    # 23 s for ten words on the review project, three times over.
-    loops = {
-        key for key, rows in spans.items()
-        if len(rows) >= 2
-        and any(seconds >= 8.0 and seconds / max(1, count) >= 1.2 for seconds, count in rows)
-    }
-    for raw_segment in raw_segments:
+    # Whisper fills music or room noise with a line it knows, and the copies sit
+    # together. Measured on the review project: 90.0, 91.86 and 94.7 s (gaps 0
+    # and 1.74 s), one copy 23.36 s for ten words. A real repeat a minute later
+    # is not a loop, so only one run of back-to-back copies is dropped.
+    runs: list[list[int]] = []
+    for index, key in enumerate(keys):
+        if (
+            runs
+            and keys[runs[-1][-1]] == key
+            and _float(raw_segments[index].get("start")) - _float(raw_segments[runs[-1][-1]].get("end")) <= _REPEAT_GAP
+        ):
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    looped: set[int] = set()
+    for run in runs:
+        if len(run) < 2:
+            continue
+        if any(_slow_copy(raw_segments[index]) for index in run):
+            looped.update(run)
+    for index, raw_segment in enumerate(raw_segments):
         text = " ".join(_clean_text(raw_segment.get("text")).split())
         if not text:
             continue
-        if _line_key(text) in loops:
+        if index in looped:
             continue
         if _hallucinated(text, line_counts, raw_segment):
             continue

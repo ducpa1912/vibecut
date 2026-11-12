@@ -15,9 +15,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
 - [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
-- [ ] **Estimate the per-letter stroke runs.** `estimate_span` plans from the box table; the render
-  starts a run whenever the letters on screen change. Measured: 483.5 s estimate against a 698 s
-  cold render; crossings account for 11.7 s of it. Needs the stroke frames at estimate time.
 - [ ] REQ-20261111-11 · the estimate does not count the extra fills where something crosses the
   text: cold render 698 s. Count crossings in Check, or show the range.
 - [ ] REQ-20261111-11 · 48 filled letter-frames still show strokes in the output (differs from the

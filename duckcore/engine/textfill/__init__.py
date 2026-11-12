@@ -68,14 +68,6 @@ LAMA_RING_PX = 24
 # more than this many levels. No fill from another frame is used across that.
 LAMA_CROSS_LEVEL = 48
 LAMA_CROSS_SHARE = 0.10
-# The estimate counts crossings from the source, not a factor. A quarter-size
-# picture at 10 fps is enough to see a hand or chopsticks cross a line, and it
-# keeps the scan a few seconds for a whole edit.
-CROSS_SAMPLE_FPS = 10.0
-CROSS_SCALE = 4
-# One event per crossing: the picture must settle for this long before the next
-# one counts, so a hand that stays over the text is not counted frame by frame.
-CROSS_QUIET = 0.3
 # Cost of one LaMa run per pixel it reads, as a share of a 512 square, and of
 # reading, pasting and writing one frame.
 LAMA_FRAME_UNITS = 0.02
@@ -141,6 +133,23 @@ def custom_fill_model(data_root: Path | str) -> tuple[Path | None, str | None]:
 
 def custom_fill_path(data_root: Path | str) -> Path | None:
     return custom_fill_model(data_root)[0]
+
+
+def engine_choice(data_root: Path | str) -> tuple[Path | None, str]:
+    """The engine both the estimate and the render will use.
+
+    A custom model is only chosen when it really loads; a file that fails is
+    the fallback reason, exactly as the render will see it. Without this, the
+    estimate could count a custom stamp for a span the render fills with LaMa.
+    """
+    path, reason = custom_fill_model(data_root)
+    if path is None:
+        return None, reason or ""
+    try:
+        _custom_filler(path)
+    except FillError as exc:
+        return None, str(exc)
+    return path, ""
 
 
 def seed_models(data_root: Path | str) -> None:
@@ -376,132 +385,21 @@ def _planned_units(
     return round(total, 2)
 
 
-def _crossings_key(meta: dict, layers: Iterable[dict], start: float, duration: float) -> str:
+def units_key(meta: dict, layers: Iterable[dict], start: float, duration: float) -> str:
+    """What identifies a span's fill work, for a cache of estimated units."""
     payload = {
+        "version": VERSION,
         "start": round(float(start), 3),
         "duration": round(float(duration), 3),
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": float(meta.get("fps") or 0.0),
         "layers": [
-            {
-                "id": layer.get("id"),
-                "ranges": layer.get("ranges") or [],
-                "ink_key": layer.get("ink_key"),
-            }
+            {"id": layer.get("id"), "ink_key": layer.get("ink_key"),
+             "ink_rect": layer.get("ink_rect"), "ranges": layer.get("ranges") or []}
             for layer in layers
         ],
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
-
-
-def count_crossings(
-    source: str,
-    meta: dict,
-    layers: Iterable[dict],
-    *,
-    start: float,
-    duration: float,
-    data_root: Path | str | None = None,
-    frames: Iterable[np.ndarray] | None = None,
-) -> int:
-    """Frames where the picture beside the text changes enough to end a blend.
-
-    Measured, not guessed: the predicate is the one the fill uses
-    (``_picture_moved``), read on a quarter-size picture at
-    ``CROSS_SAMPLE_FPS``. Each crossing starts a new run, which is one extra
-    fill per spot in the estimate. ``frames`` lets a test supply the pictures.
-    """
-    width = int(meta.get("width") or 0)
-    height = int(meta.get("height") or 0)
-    fps = float(meta.get("fps") or 0.0)
-    if width < 2 or height < 2 or fps <= 0 or duration <= 0.2:
-        return 0
-    count = max(1, int(round(float(duration) * fps)) + 1)
-    table = masks.frame_rects(
-        layers, start=start, fps=fps, frames=count, width=width, height=height,
-    )
-    if not any(table):
-        return 0
-    key = _crossings_key(meta, layers, start, duration)
-    store = Path(data_root) / "render_crossings.json" if data_root else None
-    if frames is None and store is not None:
-        try:
-            cached = json.loads(store.read_text(encoding="utf-8"))
-            if key in cached:
-                return int(cached[key])
-        except (OSError, ValueError):
-            pass
-    small_w = max(2, width // CROSS_SCALE)
-    small_h = max(2, height // CROSS_SCALE)
-    # A supplied sequence is already at the sample rate; the reader is not.
-    step = 1 if frames is not None else max(1, int(round(fps / CROSS_SAMPLE_FPS)))
-    sink = frames
-    reader = None
-    if sink is None:
-        from duckcore import media
-
-        reader = _Reader(media.ffmpeg(), str(source), start, float(duration), fps, small_w, small_h)
-
-        def read_frames():
-            while True:
-                frame = reader.read()
-                if frame is None:
-                    return
-                yield frame
-
-        sink = read_frames()
-    total = 0
-    previous = None
-    quiet = 0
-    quiet_frames = max(1, int(round(CROSS_QUIET * CROSS_SAMPLE_FPS)))
-    try:
-        for index, frame in enumerate(sink):
-            if index % step:
-                continue
-            if frame is None:
-                break
-            at = min(len(table) - 1, int(round(index)))
-            rects = table[at]
-            if not rects:
-                previous = None
-                quiet = 0
-                continue
-            grey = np.asarray(frame, dtype=np.uint8)
-            if grey.ndim == 3:
-                grey = grey.mean(axis=2)
-            if grey.shape != (small_h, small_w):
-                grey = np.asarray(
-                    Image.fromarray(grey.astype(np.uint8)).resize(
-                        (small_w, small_h), Image.BILINEAR,
-                    ),
-                    dtype=np.uint8,
-                )
-            hole = np.zeros((small_h, small_w), dtype=bool)
-            for x0, y0, x1, y1 in rects:
-                hole[
-                    max(0, y0 // CROSS_SCALE):max(0, y1 // CROSS_SCALE),
-                    max(0, x0 // CROSS_SCALE):max(0, x1 // CROSS_SCALE),
-                ] = True
-            if previous is not None and not hole.all():
-                if _picture_moved(previous, grey, hole):
-                    if quiet == 0:
-                        total += 1
-                    quiet = quiet_frames
-            quiet = max(0, quiet - 1)
-            previous = grey
-    finally:
-        if reader is not None:
-            _stop(reader.proc)
-    if store is not None:
-        try:
-            cached = json.loads(store.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            cached = {}
-        cached[key] = int(total)
-        temporary = store.with_suffix(".tmp")
-        temporary.write_text(json.dumps(cached, indent=1), encoding="utf-8")
-        temporary.replace(store)
-    return total
 
 
 def estimate_span(
@@ -515,7 +413,9 @@ def estimate_span(
     data_root: Path,
     device: str = DEFAULT_DEVICE,
     follow_motion: bool = False,
-    crossings: int = 0,
+    strokes: dict | None = None,
+    source: str = "",
+    units_override: float | None = None,
 ) -> dict:
     """What one beat's fill will cost, without running anything.
 
@@ -528,34 +428,38 @@ def estimate_span(
     directory = models_dir(data_root)
     device = chosen_device(method, device, directory)
     follow_motion = _follow_on(method, follow_motion)
-    row = {"method": method, "device": device, "frames": 0, "units": 0, "cached": False}
+    row = {"method": method, "device": device, "frames": 0, "units": 0,
+           "cached": False, "start": round(float(start), 3),
+           "duration": round(float(duration), 3)}
     if width < 2 or height < 2 or fps <= 0:
         return row
     expected = max(1, int(round(duration * fps)))
     table = masks.frame_rects(layers, start=start, fps=fps, frames=expected, width=width, height=height)
     row["frames"], row["units"] = _span_units(table, expected, width, height, method)
-    if method in KEYED_METHODS:
-        row["units"] = _planned_units(
-            table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
-            method=method, device=device,
-        )
-    if crossings > 0 and table:
-        # Each crossing starts a new run: one fill over the areas that hold text.
-        first = table[0]
-        area_cost = sum(
-            _run_units(method, spot[3] - spot[1], spot[2] - spot[0])
-            for spot in masks.lama_areas(first, width, height)
+    if units_override is not None:
+        row["units"] = float(units_override)
+    elif strokes is not None and source and method in KEYED_METHODS:
+        # The same walk the render does, with a filler that only counts.
+        runs, units = dry_units(
+            meta, layers, source=source, start=start, duration=duration,
+            strokes=strokes, method=method, device=device,
         )
         row["units"] = round(
-            row["units"] + crossings * (area_cost + frame_units(method, device)), 2,
+            units + int(row.get("frames") or 0) * frame_units(method, device), 2,
         )
-        row["crossings"] = int(crossings)
+        row["runs"] = int(runs)
+    else:
+        if method in KEYED_METHODS:
+            row["units"] = _planned_units(
+                table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
+                method=method, device=device,
+            )
     if not missing_model(method, directory):
         key = span_key(
             meta=meta, start=start, duration=duration, layers=layers,
             method=method,
             model_stamp=method_stamp(
-                method, directory, device, custom=custom_fill_path(data_root),
+                method, directory, device, custom=engine_choice(data_root)[0],
             ),
             follow_motion=follow_motion,
         )
@@ -760,10 +664,18 @@ def _custom_filler(path: Path):
         if filler is None:
             try:
                 filler = custom.open_filler(Path(path).parent)
-            except (ValueError, ImportError, OSError, RuntimeError) as exc:
+            except Exception as exc:  # noqa: BLE001 - any bad file is one plain message
                 raise FillError(f"Your fill model did not load: {exc}.") from exc
             _FILLERS[key] = filler
         return filler
+
+
+def _learn_rate(data_root: Path | str, method: str, units: float, took: float,
+                device: str, *, custom: Path | None = None, reused: bool = False) -> None:
+    """Teach the fill rate, unless a user model or a resumed clip did this run."""
+    if custom is not None or reused:
+        return
+    record_rate(data_root, method, units, took, device)
 
 
 def busy() -> bool:
@@ -1161,7 +1073,7 @@ def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limi
     return float((worst > LAMA_CROSS_LEVEL).mean()) > LAMA_CROSS_SHARE
 
 
-def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None, follow=False):
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None, follow=False, moved_at=None):
     """Run the engine on key frames, on just the areas that hold text.
 
     A run is frames that share the same boxes, up to the step, while the picture
@@ -1196,6 +1108,18 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         alpha = masks.feather(hole)
         softened[spot] = (hole, alpha)
         return alpha
+
+    def moved(first_item, item, spots, ring, limit):
+        # The estimate supplies the frames that moved, measured once from the
+        # source, so it plans runs without decoding the span again.
+        if moved_at is not None:
+            return bool(moved_at(item[0]))
+        return any(
+            _picture_moved(
+                first_item[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], limit,
+            )
+            for x0, y0, x1, y1 in spots
+        )
 
     def next_frame():
         nonlocal waiting
@@ -1298,12 +1222,8 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
                         if still:
                             current = moved_on
                 else:
-                    still = item[2] == rects and not any(
-                        _picture_moved(
-                            first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)],
-                            LAMA_MOTION_LIMIT,
-                        )
-                        for x0, y0, x1, y1 in spots
+                    still = item[2] == rects and not moved(
+                        first, item, spots, ring, LAMA_MOTION_LIMIT,
                     )
                     found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
                 if not still or not any(hole.any() for hole in found.values()):
@@ -1337,15 +1257,10 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             if item is None:
                 break
             limit = LAMA_CUT_LIMIT if len(run) < shortest_run else run_limit
-            moved = any(
-                _picture_moved(
-                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], limit,
-                )
-                for x0, y0, x1, y1 in spots
-            )
-            if item[2] != rects or moved:
+            moved_here = moved(first, item, spots, ring, limit)
+            if item[2] != rects or moved_here:
                 waiting = item
-                crossed = moved
+                crossed = moved_here
                 break
             found = {spot: hole_on(item[0], rects, spot) for spot in spots}
             if not any(hole.any() for hole in found.values()):
@@ -1397,7 +1312,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None, follow=False):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None, follow=False, moved_at=None):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
@@ -1409,6 +1324,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
         yield from _fill_frames_by_runs(
             frames, rects_for, filler, area, step,
             on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, plan_for=plan_for, follow=follow,
+            moved_at=moved_at,
         )
         return
     x0, y0, x1, y1 = area
@@ -1576,6 +1492,112 @@ def fill_frame(
     return out
 
 
+def _finder_for(layers: list[dict], *, start: float, fps: float, frames: int,
+                width: int, height: int, strokes: dict | None):
+    """The per-frame holes: the same ``TextMasks`` the render fills through."""
+    if not text_mask_enabled():
+        return None
+    tight_layers = [layer for layer in layers if masks.uses_text_mask(layer, width, height)]
+    if not tight_layers:
+        return None
+    exact_layers = [layer for layer in layers if layer not in tight_layers]
+    size = {"start": start, "fps": fps, "frames": frames, "width": width, "height": height}
+    exact_rows = masks.frame_rects(exact_layers, **size)
+    # A text box wholly inside a drawn box or brush needs no second look.
+    tight_rows = [
+        [
+            rect for rect in masks.without_contained(row)
+            if rect in masks.without_contained([rect, *exact])
+        ]
+        for row, exact in zip(masks.frame_rects(tight_layers, **size), exact_rows)
+    ]
+    return masks.TextMasks(
+        tight_rows, exact_rows, width, height,
+        strokes=strokes, base=int(round(masks.frame_start(start, fps) * fps)),
+    )
+
+
+class _CountingFiller:
+    """Counts the model runs and their work without running a model."""
+
+    def __init__(self, method: str):
+        self.method = method
+        self.runs = 0
+        self.units = 0.0
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        self.runs += 1
+        self.units += _run_units(self.method, *mask.shape)
+        return area
+
+
+def dry_units(
+    meta: dict,
+    layers: list[dict],
+    *,
+    source: str,
+    start: float,
+    duration: float,
+    strokes: dict | None,
+    method: str = "lama",
+    device: str = DEFAULT_DEVICE,
+) -> tuple[int, float]:
+    """What the fill will do on this span, from the plan it will execute.
+
+    It walks the same ``fill_frames_lama`` the render walks, on the decoded
+    span, with the same holes, the same run rules and the same motion test, and
+    a filler that only counts. No model runs.
+    """
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    if width < 2 or height < 2 or fps <= 0 or duration <= 0:
+        return 0, 0.0
+    expected = max(1, int(round(duration * fps)))
+    table = masks.frame_rects(
+        layers, start=start, fps=fps, frames=expected + int(fps) + 2,
+        width=width, height=height,
+    )
+    if not any(table):
+        return 0, 0.0
+    finder = _finder_for(
+        layers, start=start, fps=fps, frames=len(table),
+        width=width, height=height, strokes=strokes,
+    )
+
+    def rects_for(index: int):
+        if finder is not None:
+            return finder.rects_for(index)
+        return table[min(index, len(table) - 1)]
+
+    def hole_for(index: int, x0: int, y0: int, x1: int, y1: int):
+        return finder.hole(index, x0, y0, x1, y1)
+
+    from duckcore import media
+
+    reader = _Reader(media.ffmpeg(), str(source), start, float(duration), fps, width, height)
+
+    def read_frames():
+        while True:
+            frame = reader.read()
+            if frame is None:
+                return
+            yield frame
+
+    counter = _CountingFiller(method)
+    try:
+        stream = fill_frames_lama(
+            read_frames(), rects_for, counter, None,
+            hole_for=hole_for if finder is not None else None, step=lama_step(fps),
+            plan_for=lama_plan(layers, start=start, fps=fps, frames=len(table)),
+        )
+        for _frame in stream:
+            pass
+    finally:
+        _stop(reader.proc)
+    return counter.runs, round(counter.units, 2)
+
+
 def prepare_span(
     *,
     source: str,
@@ -1623,7 +1645,7 @@ def prepare_span(
         return None
 
     directory = models_dir(data_root)
-    custom_path, custom_reason = custom_fill_model(data_root)
+    custom_path, custom_reason = engine_choice(data_root)
     if custom_reason:
         LOGGER.warning("Your fill model is not usable: %s Using the default engine.", custom_reason)
     custom_filler = None
@@ -1666,25 +1688,10 @@ def prepare_span(
     part = cache_dir / f".{key}.part.mp4"
     saved = counted = None
 
-    finder = None
-    if text_mask_enabled():
-        tight_layers = [layer for layer in layers if masks.uses_text_mask(layer, width, height)]
-        if tight_layers:
-            exact_layers = [layer for layer in layers if layer not in tight_layers]
-            size = {"start": start, "fps": fps, "frames": len(rect_table), "width": width, "height": height}
-            exact_rows = masks.frame_rects(exact_layers, **size)
-            # A text box wholly inside a drawn box or brush needs no second look.
-            tight_rows = [
-                [
-                    rect for rect in masks.without_contained(row)
-                    if rect in masks.without_contained([rect, *exact])
-                ]
-                for row, exact in zip(masks.frame_rects(tight_layers, **size), exact_rows)
-            ]
-            finder = masks.TextMasks(
-                tight_rows, exact_rows, width, height,
-                strokes=strokes, base=int(round(masks.frame_start(start, fps) * fps)),
-            )
+    finder = _finder_for(
+        layers, start=start, fps=fps, frames=len(rect_table),
+        width=width, height=height, strokes=strokes,
+    )
 
     def rects_for(index: int) -> list[masks.Rect]:
         if finder is not None:
@@ -1790,12 +1797,16 @@ def prepare_span(
                 "custom" if custom_path is not None else method, device, follow_motion,
             )
         # A resumed clip spent little time on what it reused: not a speed to learn.
-        if written >= RATE_MIN_FRAMES and not (saved is not None and saved.hits):
+        # A user model is not LaMa either: its speed must not teach the default.
+        if written >= RATE_MIN_FRAMES:
             if counted is not None:
                 units = counted.units + written * frame_units(method, device)
             else:
                 _frames, units = _span_units(rect_table, expected, width, height, method)
-            record_rate(data_root, method, units, took, device)
+            _learn_rate(
+                data_root, method, units, took, device,
+                custom=custom_path, reused=bool(saved is not None and saved.hits),
+            )
     except BaseException:
         _stop(reader.proc if reader is not None else None)
         _stop(writer.proc if writer is not None else None)
