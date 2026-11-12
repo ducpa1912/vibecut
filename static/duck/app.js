@@ -1745,10 +1745,8 @@ function enhanceInfo() {
 }
 
 function cutOutputLabel() {
-  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
-  const cut = state.edit?.cut || {};
-  const sizes = { '9:16': '1080 × 1920', '1:1': '1080 × 1080', '4:5': '1080 × 1350', '16:9': '1920 × 1080' };
-  return sizes[cut.aspect] || `${Number(meta.width || 1080)} × ${Number(meta.height || 1920)} (source)`;
+  const size = cutOutputSize();
+  return `${size.w} × ${size.h}`;
 }
 
 async function saveCut(patch) {
