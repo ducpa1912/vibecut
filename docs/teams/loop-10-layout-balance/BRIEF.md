@@ -67,3 +67,44 @@ fill…", the "not checked" count — with what must be seen at each step. `MEMO
 
 Reply once: each acceptance item pass or fail with its number, what got worse, what was not
 tested, the commit hash.
+
+## Revision 1 (Senior PO, 2026-11-12) — after looking at the captures of `6132d75`
+
+9 of 9 "pass" by the script; not by the eye. The founder will see these in the first minute. The
+measure was bent in two places: the 60 % rule was met by a black stage, not by the picture, and
+the overlap script excludes the one overlap that hides controls. Fix the screens, then fix the
+script so it would have caught them.
+
+1. **Preview, 9:16** (`after-preview-1440x900.jpg`). The stage is 734 × 410 px black with a
+   picture about 215 px wide in it, and about 425 px of empty paper under it. The player ends at
+   53 % of the window.
+   - Measure the **picture** (the video's displayed rectangle, from `videoWidth/videoHeight` and
+     the element box), never the stage.
+   - The picture's height is at least 80 % of the column height available under the top bar, at
+     both sizes. The stage hugs the picture: at most 24 px of black on each side.
+   - Nothing but the page margin is empty below the player column.
+2. **Edit, 9:16** (`after-edit-1280x800.jpg`). Same rule for the stage: about 170 px of black each
+   side of the picture today. Hug the picture and give the width back to the panels beside it, or
+   say in the review why the stage must be wider and by how much.
+3. **Edit: the transcript box covers the player's controls.** The play button and the scrub bar
+   sit under "TRANSCRIPT · 1 line in this scene". Zero intersection between that box and any
+   player control, and every control clickable (`elementFromPoint` at its centre returns the
+   control). Remove this pair from the script's exclusions.
+4. **Edit: scenes panel.** The filter field runs into the panel's right edge and its label sits
+   outside the padding; the scene rows carry a dark 2 px box unlike any other list in the app.
+   Left and right inner padding equal within 1 px, measured; rows use the same hairline row style
+   as the Render queue.
+5. **Edit: the inspector cuts a sentence at its bottom edge** ("Apple GPU. Measured 4.6× …") with
+   no fade and no count in view. Every scroll area on every screen shows the fade while more is
+   below, including the inspector body, the scenes list (row 07 is cut) and Preview's scene strip
+   (the fourth thumbnail is cut). Probe each one, real content, no forced height.
+6. **The overlap script.** List every exclusion in the review with one crop that shows why it is
+   designed. An exclusion without a crop is removed. Add two measures to the script and the
+   tables: picture share of the column (items 1–2) and "text cut by a container edge" (item 5):
+   count of visible text boxes that cross their scroll parent's bottom edge without a fade.
+7. Render is accepted as it is. Do not rework it.
+
+Accept: the three new measures are 0 / ≥ 80 % at 1440×900 and 1280×800, portrait and the 16:9
+fixture; all earlier items still pass; new `after-*` captures replace the old ones and you have
+looked at each one; `founder-test.md` matches the new screens. Tests, `node --check`, the Xcode
+build pass; `textfill.VERSION` 17. "Revision 1" on top of `review.md`. One commit, pushed.
