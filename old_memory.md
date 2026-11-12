@@ -395,3 +395,11 @@ bands; Cut 1:1 -> frame ratio 1.000 without reload; YouTube on a 1:1 Cut draws n
 full edit, Play story order on a story edit; image beats skipped and counted.
 **Numbers:** 35 segments / 02:40 on the fixture; 50 % seek -> Scene 15 at 01:20; a 3-clip story
 (5,1,3) plays source 26.5 s then 5.3 s, proving clip order over source order.
+
+### REQ-20261112-07 · 2026-11-12 · loop 17 closed
+**Request:** story from the whole video, beats that fit, any order, one thesis.
+**Shipped:** transcript scene context + on-device story helper (batched at 20 scenes) + validated
+non-contiguous story edit; thesis bar with model chip and beat cues; deterministic fallback.
+**Numbers:** fallback 200 in 0.08 s, 4 beats, 18.5 s, ids 17/18/20/23; model order [2,0,5] kept with
+a fake; bad ids fall back; every cue verbatim from the transcript. Apple Intelligence not enabled on
+this Mac, so the real model path is unproven.

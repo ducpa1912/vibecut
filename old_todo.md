@@ -338,3 +338,8 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 ## Loop 16 — preview sequence (closed 2026-11-12)
 
 - [x] REQ-20261112-06 · loop 16: preview plays all scenes in source order, or the story beats in story order
+
+## Loop 17 — story v1 (closed 2026-11-12)
+
+- [x] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels
+- [x] REQ-20261112-07 · loop 17: visible no-model fallback; every beat traceable to a source cue

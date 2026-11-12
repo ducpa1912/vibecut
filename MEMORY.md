@@ -70,9 +70,3 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 Only requests whose loop is still open stay here. A new request appends one entry before code; a
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
-
-### REQ-20261112-07 · 2026-11-12
-**Request:** "Story is not fixed. The story should be to understand the whole context of the video then select several beat and scene that fit together and no need to be in the same consequence or timely order, and to rewrite or focus on 1 specific narrative or bold statement."
-**Read as:** Story picks fitting beats anywhere in the source, orders them by narrative, and writes one thesis; local model, transcript context.
-**Response:** Loop 17: FoundationModels over per-scene summaries, non-contiguous beats, deterministic fallback.
-**Outcome:** open.

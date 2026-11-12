@@ -101,6 +101,7 @@ const state = {
   sequenceSkipped: 0,
   sequenceTotal: 0,
   sequencePlaying: false,
+  storyWriting: false,
   cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
@@ -1218,6 +1219,20 @@ function storyBanner() {
   });
 }
 
+function storyThesisBar(story) {
+  if (!story || !story.thesis) return '';
+  return `<div class="story-thesis">
+    <span class="chip ${story.model === 'apple' ? 'green' : 'amber'}">${story.model === 'apple' ? 'Apple Intelligence' : 'No model · basic story'}</span>
+    <strong>${esc(story.thesis)}</strong>
+    <span class="small muted">${(story.beats || []).length} beats · ${fmtDuration(Number(story.runtime || 0))}</span>
+    <span class="spacer"></span>
+    <button class="btn small" type="button" data-action="write-story" ${state.storyWriting ? 'disabled' : ''}>Write again</button>
+    <div class="story-beats">
+      ${(story.beats || []).map((beat, index) => `<span class="story-beat" title="${esc(beat.reason || '')}">${index + 1}. ${esc(String(beat.cue || '').slice(0, 72))}</span>`).join('')}
+    </div>
+  </div>`;
+}
+
 function storyContextBar() {
   if (!isStoryEdit()) return '';
   const clips = state.edit?.clips || [];
@@ -1433,7 +1448,7 @@ function screenEditor() {
   const mediaClip = story?.clip?.kind === 'media' ? story.clip : null;
   const sourceMeta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
   const cutView = cutPreview();
-  return `<main class="screen">${storyBanner()}
+  return `<main class="screen">${storyBanner()}${storyThesisBar(state.edit?.story)}
     <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
         <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} scenes</span><button class="btn small story-toggle" type="button" data-action="toggle-story-select">${state.storySelect ? 'Cancel' : 'Story'}</button></div>
@@ -1442,6 +1457,7 @@ function screenEditor() {
           <button class="proof-tab${state.proofTab === 'scenes' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="scenes">Scenes ${scenes.length}</button>
           <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${getStories().length}</button>
         </div>
+        ${state.proofTab === 'stories' ? `<button class="btn wide story-write" type="button" data-action="write-story" ${state.storyWriting ? 'disabled' : ''}>${icon('sparkle', 13)} ${state.storyWriting ? 'Writing a story…' : 'Write a story'}</button>` : ''}
         ${editSwitch()}
         <label class="scene-filter"><span class="small muted">Filter</span><input id="scene-search" type="search" placeholder="Scene title or number" value="${esc(state.sceneQuery)}"></label>
         <div class="proof-list compact">
@@ -1511,6 +1527,37 @@ function screenEditor() {
     <input id="story-image-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif" hidden>
     <input id="story-video-input" type="file" accept="video/*,.mp4,.mov,.m4v,.webm" hidden>
   </main>`;
+}
+
+async function writeStory() {
+  if (!state.project || state.storyWriting) return;
+  state.storyWriting = true;
+  render();
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/story/write`, {
+      method: 'POST',
+      body: JSON.stringify({ count: 4 }),
+    });
+    state.edit = data.edit;
+    state.edits = [{ ...data.edit }, ...(state.edits || []).filter((item) => item.id !== data.edit.id)];
+    state.selectedScene = 0;
+    state.selectedLayerId = '';
+    state.timelineTime = 0;
+    state.previewTime = 0;
+    state.focusMode = '';
+    state.storySelect = false;
+    state.storyScenes = [];
+    state.proofTab = 'stories';
+    await ensureCaptions();
+    render();
+    const model = data.story?.model === 'apple' ? 'Apple Intelligence' : 'no model, basic story';
+    toast(`Story written · ${model} · ${(data.story?.beats || []).length} beats.`);
+  } catch (error) {
+    toast(`Story: ${error.message}`, 'bad');
+  } finally {
+    state.storyWriting = false;
+    render();
+  }
 }
 
 async function buildStory() {
@@ -3364,7 +3411,7 @@ function screenPreview() {
   const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
   const portrait = Number(meta.height || 0) > Number(meta.width || 0);
   const ratio = Number(meta.width || 0) && Number(meta.height || 0) ? (Number(meta.width) / Number(meta.height)).toFixed(4) : '1.7778';
-  return `<main class="screen">${storyContextBar()}
+  return `<main class="screen">${storyContextBar()}${storyThesisBar(state.edit?.story)}
     <div class="workspace preview${portrait ? ' portrait' : ''}">
       <section class="preview-main">
         <section class="panel preview-stage${portrait ? ' portrait-stage' : ''}" style="overflow:hidden;--stage-ratio:${ratio}">
@@ -4802,6 +4849,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'audio-mute' || action === 'audio-solo') await toggleAudioTrack(target.dataset.track || '', action === 'audio-mute' ? 'muted' : 'solo');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
+    else if (action === 'write-story') { await writeStory(); }
     else if (action === 'play-sequence') { startSequence(); }
     else if (action === 'sequence-play') {
       const video = document.querySelector('[data-sequence-player]');

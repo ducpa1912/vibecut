@@ -13,8 +13,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
 
-- [ ] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels
-- [ ] REQ-20261112-07 · loop 17: visible no-model fallback; every beat traceable to a source cue
 
 ## Native UI (planned 2026-11-12)
 

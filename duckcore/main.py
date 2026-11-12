@@ -64,6 +64,10 @@ class ProjectAppend(BaseModel):
     cleanup: bool = False
 
 
+class StoryWriteBody(BaseModel):
+    count: int = Field(default=4, ge=3, le=6)
+
+
 class StoryEditBody(BaseModel):
     story_id: str = ""
     start: float | None = None
@@ -915,6 +919,31 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except edits.EditError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/story/write")
+    def write_story_edit(
+        project_id: str, body: StoryWriteBody, _: None = Depends(require_token)
+    ) -> dict:
+        from duckcore import story as story_mod
+        from duckcore.engine import stt
+
+        try:
+            check = completed_check(project_id)
+        except HTTPException:
+            raise
+        transcript = stt.load_latest_transcript(data_root / "projects" / project_id)
+        try:
+            doc = story_mod.write_story(check, transcript, count=body.count)
+            edit = edits.create_story_from_scenes(
+                project_id, check, data_root,
+                scene_ids=doc["scene_ids"], title=doc.get("title") or "Story",
+            )
+        except (story_mod.StoryError, edits.EditError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        edit["story_id"] = "written"
+        edit["story"] = doc
+        edits.save_edit(edit, data_root)
+        return {"edit": edit, "story": doc}
 
     @app.post("/api/projects/{project_id}/edits/story/scenes")
     def create_scene_story(
