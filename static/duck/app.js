@@ -2968,13 +2968,22 @@ function renderEstimateKey() {
 
 async function fetchRenderEstimate() {
   const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/render/estimate`);
-  return data.estimate;
+  return data;
 }
 
 function renderEstimateHtml() {
-  const estimate = state.renderEstimate;
-  if (!estimate) return `<p class="render-cost-line muted">Working out the AI fill time…</p>`;
-  if (estimate.failed) return `<p class="render-cost-line muted">AI fill time could not be worked out.</p>`;
+  const payload = state.renderEstimate;
+  if (!payload) return `<p class="render-cost-line muted">Working out the AI fill time…</p>`;
+  if (payload.failed) return `<p class="render-cost-line muted">AI fill time could not be worked out.</p>`;
+  const working = payload.state === 'working';
+  const measuring = working
+    ? `<p class="render-cost-line muted">Measuring the fill… ${Math.round(Math.max(0, Math.min(1, payload.progress || 0)) * 100)}%</p>`
+    : '';
+  const estimate = payload.estimate || null;
+  if (!estimate) {
+    return measuring || `<p class="render-cost-line muted">Working out the AI fill time…</p>`;
+  }
+  const oldNote = working ? ' Old figure: the edit changed since it was measured.' : '';
   const layers = estimate.layers || {};
   const disk = estimate.disk?.low ? `<p class="render-cost-warn">${esc(estimate.disk.text)}</p>` : '';
   if (!estimate.beats) return `<p class="render-cost-line muted">No AI fill in this render.</p>${disk}`;
@@ -2988,13 +2997,16 @@ function renderEstimateHtml() {
     estimate.beats_cached && left ? `${estimate.beats_cached} of ${estimate.beats} clips already filled` : '',
     basis,
   ].filter(Boolean).join(' · ');
-  const whole = estimate.total_seconds
-    ? `<p class="render-cost-note">Whole render ≈ ${esc(fmtDuration(estimate.total_seconds))}, measured on this Mac, fill and the leftover-text check included.</p>`
-    : `<p class="render-cost-note">Whole render time is not measured on this Mac yet.</p>`;
+  const span = estimate.total_range && estimate.total_range.length === 2
+    ? `${esc(fmtDuration(estimate.total_range[0]))}–${esc(fmtDuration(estimate.total_range[1]))}`
+    : estimate.total_seconds ? esc(fmtDuration(estimate.total_seconds)) : '';
+  const whole = span
+    ? `<p class="render-cost-note">Whole render ≈ ${span}, measured on this Mac, fill and the leftover-text check included. The range is this Mac's own spread.${esc(oldNote)}</p>`
+    : `<p class="render-cost-note">Whole render time is not measured on this Mac yet.${esc(oldNote)}</p>`;
   const checkNote = estimate.check_seconds
     ? `<p class="render-cost-note">The leftover-text check reads ${estimate.check_layers} layers, ≈ ${esc(fmtDuration(estimate.check_seconds))}. It judges each letter on every frame near its line. A line under 5 frames long cannot be told from scenery; it is counted as not checked, not as clean.</p>`
     : '';
-  return `<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${whole}${checkNote}${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
+  return `${measuring}<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${whole}${checkNote}${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
 }
 
 function paintRenderEstimate() {
@@ -3008,9 +3020,25 @@ function ensureRenderEstimate() {
   state.renderEstimateKey = key;
   state.renderEstimate = null;
   fetchRenderEstimate()
-    .then((estimate) => { if (state.renderEstimateKey === key) state.renderEstimate = estimate; })
-    .catch(() => { if (state.renderEstimateKey === key) state.renderEstimate = { failed: true }; })
-    .finally(() => { if (state.renderEstimateKey === key) paintRenderEstimate(); });
+    .then((payload) => {
+      if (state.renderEstimateKey !== key) return;
+      state.renderEstimate = payload;
+      paintRenderEstimate();
+      if (payload.state === 'working') {
+        window.setTimeout(() => {
+          if (state.renderEstimateKey === key) {
+            state.renderEstimateKey = '';
+            ensureRenderEstimate();
+          }
+        }, 700);
+      }
+    })
+    .catch(() => {
+      if (state.renderEstimateKey === key) {
+        state.renderEstimate = { failed: true };
+        paintRenderEstimate();
+      }
+    });
 }
 
 function fillEngineControl() {
@@ -3762,10 +3790,11 @@ async function cleanAll() {
     // The new layers have a new cost; say it with the counts.
     let cost = '';
     try {
-      const estimate = await fetchRenderEstimate();
+      const payload = await fetchRenderEstimate();
       state.renderEstimateKey = renderEstimateKey();
-      state.renderEstimate = estimate;
+      state.renderEstimate = payload;
       paintRenderEstimate();
+      const estimate = payload.estimate || {};
       cost = estimate.text ? ` ${estimate.text}` : '';
     } catch (_) { /* the Render screen asks again */ }
     toast(`${parts.join(' · ')}.${plan.moving ? ` ${plan.moving} sit over a moving background.` : ''}${cost}`);

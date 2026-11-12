@@ -1,3 +1,72 @@
+# Loop 8 review — revision 2 (Senior PO, 2026-11-12)
+
+The estimate was right and slow: 66.7 s inside the request, 24 s every later call, and again in
+the queue. It is now stored, shared, and answered at once. Measured on `prj_e95348a97316` through
+the built app's server (`build/DuckSuite-Xcode.app/Contents/Resources/duckcore/duckcore`), no app
+window, no re-Check.
+
+## Acceptance
+
+| Item | Number | Result |
+|---|---|---|
+| Warm call (nothing changed) | **0.084 s, 0.092 s, 0.257 s** (three calls, and one 0.28 s on the run before) | pass |
+| First call ever (ink store and units cleared) | request **0.669 s**; background work **144.8 s** | pass |
+| One layer's range changed | ready in **19.7 s**; cold 144.8 s, one third is 48.3 s | pass |
+| Queue to first fill frame | **8.2 s** (the estimate was ready); before this revision the queue ran the estimate itself: 66.7 s + a 24 s ink build ≈ 90 s | pass |
+| Unchanged edit total | **790.4 s**, the same figure as `85482ac` at the same stored rate | pass |
+| Fill output / `VERSION` | no change; **17** | pass |
+| Tests / JS / build | **173 passed**, `node --check` clean, `./scripts/build-xcode-dev.sh` builds | pass |
+
+The range shown: **549.0–843.9 s**, from the recent rate samples (this Mac rendered the same edit
+cold in 620.6 s and 847.2 s). The estimate itself is 790.4 s.
+
+## What changed
+
+1. **One ink store.** `inkcheck.build_inks(..., data_root=...)` stores each layer's ink as
+   `.npz` under `<data root>/ink/`, keyed by `ink.STORE_VERSION`, the source stamp, the size, and
+   that layer alone. The estimate, the queue and the render read the same store. Test: a second
+   call reads no frame; a changed layer rebuilds only itself (2 builds for 2 versions).
+2. **The dry run is paid once.** `units_key()` now hashes only the layers on screen in a span. A
+   changed layer re-plans the spans it touches; every other span's units stay stored and are never
+   decoded. Test: `units_override` returns without calling `dry_units`.
+3. **The request does not block.** `GET …/render/estimate` answers in at most 0.3 s: `ready`, or
+   `working` with progress. One daemon worker thread and one queue; a second request joins the job;
+   the render queue calls `wait_for_estimate()` and takes the result instead of measuring again.
+4. **The UI says it.** `Measuring the fill… N%` while working, the last figure marked as old, and a
+   range instead of one number. No model name. Polled every 0.7 s.
+5. **No fill lock, no GPU.** The estimate only decodes and counts; it never enters `prepare_span`,
+   so the fill lock and the model are untouched while a render runs.
+
+## The measurement, in order
+
+- Cleared `ink/` and `render_estimate_units.json`, started the built server, `GET` once: 0.669 s,
+  `working`; polled to `ready` at 144.8 s (42 layers of ink, 24 spans decoded once).
+- Three warm `GET`s: 0.084–0.257 s, all `ready`, total 790.4 s.
+- Changed one layer's end by +0.05 s through the edit file (the layer API has no range patch): the
+  first response was `working`, `stale: true`, old figure 790.4 s; ready in **19.7 s**.
+- Submitted a render with the estimate ready: first fill frame at **8.2 s**, render finished in
+  492.3 s, estimate 790.4 s, check 2,919 frames, 0 hits.
+- The two test layers were restored to their original ranges afterwards.
+
+## What got worse
+
+- The first-ever work is **144.8 s** (it was 66.7 s blocking). It now runs in the background, but a
+  project with no store waits that long for its first figure.
+- A changed layer still costs **19.7 s** (one ink rebuild + the spans it touches decoded), not 0.
+- Every server restart re-reads the ink store (~1 s) and keeps job results in memory (capped at 16).
+- The range is wide (549–844 s) because the two cold renders on this Mac were 620.6 s and 847.2 s.
+
+## Not tested
+
+- The Render screen in the app window: the JS is syntax-checked and the payload shape is covered by
+  the endpoint, but the "Measuring the fill…" line and the range were not read on screen.
+- Two edits estimated at once (one worker serialises them; only one project is open in v1).
+- A server restart while a job runs; the job is lost and the next call starts it again.
+- The estimate during a heavy render on the same machine: it decodes only, but CPU contention was
+  not measured.
+
+---
+
 # Loop 8 review — revision 1 (Senior PO, 2026-11-12)
 
 Three faults from the review of `7bda48d`, and the founder script. All fixed in the commit that

@@ -21,6 +21,16 @@ Prepare two folders on the Desktop:
 6. **Must see:** the estimate still shows a time, and the progress message during a render says
    **Your fill model** instead of **AI fill (per frame)**. Do not start a full render for this test.
 
+## 1b. The estimate while it measures
+
+1. Set a good folder (step 1), then open **Render** and change one layer's range in Clean.
+2. Go back to **Render**.
+3. **Must see:** **Measuring the fill… N%** while the figure is worked out, and, if a figure
+   exists, it is marked **Old figure: the edit changed since it was measured.**
+4. When it finishes, **Must see:** one line with the whole-render time as a **range**
+   (≈ a–b), and no model name.
+5. Leave the screen and come back: the figure must appear at once, without the measuring line.
+
 ## 2. A wrong folder
 
 1. **Settings → Your fill model → Choose**, pick `WrongFill`.

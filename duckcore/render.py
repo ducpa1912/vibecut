@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -15,6 +17,8 @@ from typing import Any, Callable
 
 from duckcore import caption_burn, captions, edits, effects, media
 from duckcore.store import ProjectStore
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RenderError(RuntimeError):
@@ -419,7 +423,152 @@ def _render_ratio(data_root: Path) -> float | None:
     return ratios[len(ratios) // 2]
 
 
-def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
+_ESTIMATE_LOCK = threading.Lock()
+_ESTIMATE_JOBS: dict[str, dict] = {}
+_ESTIMATE_QUEUE: list[tuple] = []
+_ESTIMATE_WAKE = threading.Event()
+_ESTIMATE_THREAD: threading.Thread | None = None
+_ESTIMATE_LAST: dict[str, dict] = {}
+
+
+def _estimate_key(edit: dict, meta: dict) -> str:
+    payload = {
+        "edit": edit.get("id"),
+        "updated": edit.get("updated"),
+        "fill_device": None,
+        "clean": [
+            {
+                "id": layer.get("id"), "kind": layer.get("kind"),
+                "enabled": layer.get("enabled"), "box": layer.get("box"),
+                "ranges": layer.get("ranges"), "quality": layer.get("quality"),
+            }
+            for layer in edit.get("clean") or [] if isinstance(layer, dict)
+        ],
+        "size": [meta.get("width"), meta.get("height")],
+        "fps": meta.get("fps"),
+        "path": meta.get("path"),
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:20]
+
+
+def _ensure_estimate_worker() -> None:
+    global _ESTIMATE_THREAD
+    if _ESTIMATE_THREAD is None or not _ESTIMATE_THREAD.is_alive():
+        _ESTIMATE_THREAD = threading.Thread(
+            target=_estimate_worker, name="estimate", daemon=True,
+        )
+        _ESTIMATE_THREAD.start()
+
+
+def _estimate_worker() -> None:
+    """One worker: it takes one estimate job at a time, in order."""
+    while True:
+        job = None
+        with _ESTIMATE_LOCK:
+            if _ESTIMATE_QUEUE:
+                job = _ESTIMATE_QUEUE.pop(0)
+        if job is None:
+            _ESTIMATE_WAKE.wait(0.5)
+            _ESTIMATE_WAKE.clear()
+            continue
+        key, edit, meta, data_root = job
+        try:
+            result = estimate_edit(
+                edit, meta, data_root,
+                progress=(lambda fraction, message: _set_estimate_progress(key, fraction, message)),
+            )
+        except Exception as exc:  # noqa: BLE001 - the endpoint reports it, never crashes
+            LOGGER.warning("estimate failed: %s", exc)
+            with _ESTIMATE_LOCK:
+                _ESTIMATE_JOBS[key].update(
+                    state="ready", progress=1.0, error=str(exc)[:300],
+                    message="The fill time could not be measured.",
+                )
+            continue
+        with _ESTIMATE_LOCK:
+            _ESTIMATE_JOBS[key].update(
+                state="ready", progress=1.0, estimate=result,
+                message="Fill time measured.", finished=time.time(),
+            )
+            _ESTIMATE_LAST[str(edit.get("id"))] = result
+
+
+def _set_estimate_progress(key: str, fraction: float, message: str) -> None:
+    with _ESTIMATE_LOCK:
+        job = _ESTIMATE_JOBS.get(key)
+        if job is not None and job["state"] == "working":
+            job["progress"] = max(job["progress"], min(0.99, float(fraction)))
+            job["message"] = message
+
+
+def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.3) -> dict:
+    """Answer now. A cold estimate runs in the background; a warm one is ready.
+
+    The request never blocks for more than ``wait`` seconds. One worker takes
+    the jobs; a second request for the same edit joins the running one.
+    """
+    key = _estimate_key(edit, meta)
+    with _ESTIMATE_LOCK:
+        job = _ESTIMATE_JOBS.get(key)
+        if job is None:
+            previous = _ESTIMATE_LAST.get(str(edit.get("id")))
+            job = {
+                "state": "working", "progress": 0.0, "message": "Measuring the fill…",
+                "estimate": previous, "stale": bool(previous), "error": "",
+                "started": time.time(),
+            }
+            _ESTIMATE_JOBS[key] = job
+            # Keep the map small: a project is edited all day.
+            if len(_ESTIMATE_JOBS) > 16:
+                for stale in list(_ESTIMATE_JOBS)[:-8]:
+                    _ESTIMATE_JOBS.pop(stale, None)
+            _ESTIMATE_QUEUE.append((key, edit, meta, Path(data_root)))
+            _ensure_estimate_worker()
+            _ESTIMATE_WAKE.set()
+    if job["state"] != "ready" and wait > 0:
+        deadline = time.monotonic() + float(wait)
+        while time.monotonic() < deadline:
+            with _ESTIMATE_LOCK:
+                if _ESTIMATE_JOBS[key]["state"] == "ready":
+                    break
+            time.sleep(0.02)
+    with _ESTIMATE_LOCK:
+        job = dict(_ESTIMATE_JOBS[key])
+    return {
+        "state": job["state"],
+        "progress": round(float(job.get("progress") or 0.0), 3),
+        "message": job.get("message") or "",
+        "estimate": job.get("estimate") or None,
+        "stale": bool(job.get("stale")),
+        "error": job.get("error") or "",
+        "working_seconds": round(time.time() - float(job.get("started") or time.time()), 1)
+        if job["state"] == "working" else 0.0,
+    }
+
+
+def wait_for_estimate(edit: dict, meta: dict, data_root: Path, *,
+                      timeout: float = 900.0) -> dict:
+    """A render asks the same worker for the estimate and takes its result."""
+    key = _estimate_key(edit, meta)
+    with _ESTIMATE_LOCK:
+        job = _ESTIMATE_JOBS.get(key)
+        state = job["state"] if job else None
+    if state != "ready":
+        estimate_status(edit, meta, data_root, wait=0.0)
+        deadline = time.monotonic() + float(timeout)
+        while time.monotonic() < deadline:
+            with _ESTIMATE_LOCK:
+                job = _ESTIMATE_JOBS.get(key)
+                if job and job["state"] == "ready":
+                    return job.get("estimate") or {}
+            time.sleep(0.2)
+        # Nothing came back: measure here rather than start the render blind.
+        return estimate_edit(edit, meta, data_root)
+    return (job or {}).get("estimate") or {}
+
+
+def estimate_edit(edit: dict, meta: dict, data_root: Path,
+                  progress: Callable[[float, str], None] | None = None) -> dict:
     """What a render of this edit will cost in AI fill, without running anything.
 
     Walks the same clips and fill layers as :func:`render_edit`, so the figure
@@ -440,7 +589,12 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
     if layers and source:
         from duckcore import inkcheck
 
-        inks = inkcheck.build_inks(edit, meta, source=source)
+        inks = inkcheck.build_inks(
+            edit, meta, source=source, data_root=data_root,
+            progress=(lambda fraction, message: progress(
+                0.4 * max(0.0, min(1.0, float(fraction))), message,
+            )) if progress else None,
+        )
         layers, strokes = _inked_layers(layers, inks, meta)
     store = data_root / "render_estimate_units.json"
     try:
@@ -490,9 +644,18 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path) -> dict:
         # hide most of the wait. Take the fill estimate plus encoding instead.
         total = max(total, round(float(summary.get("seconds") or 0.0) + check_seconds
                                  + timeline * 0.25, 1))
+    total_range = None
+    spread = summary.get("rate_spread") or []
+    fill_seconds = float(summary.get("seconds") or 0.0)
+    if total is not None and spread and fill_seconds:
+        low = sum(units * low_rate for units, low_rate, _high in spread)
+        high = sum(units * high_rate for units, _low, high_rate in spread)
+        overhead = total - fill_seconds
+        total_range = [round(low + overhead, 1), round(high + overhead, 1)]
     return {
         **summary,
         "spans": rows,
+        "total_range": total_range,
         "total_seconds": total,
         "total_measured": bool(total),
         "timeline_seconds": round(timeline, 1),
@@ -552,7 +715,7 @@ def render_edit(
 
         if progress:
             progress(0.0, "Reading the text strokes")
-        inks = inkcheck.build_inks(edit, meta, source=source)
+        inks = inkcheck.build_inks(edit, meta, source=source, data_root=data_root)
         layers, strokes = _inked_layers(layers, inks, meta)
     segments: list[Path] = []
     ffmpeg = media.ffmpeg()
@@ -1265,7 +1428,7 @@ class RenderQueue:
 
                     meta = pipeline.probe(str(project["source_path"]))
                     meta["path"] = str(project["source_path"])
-                    guess = estimate_edit(edit, meta, self.data_root)
+                    guess = wait_for_estimate(edit, meta, self.data_root)
                     seconds = guess.get("total_seconds") or guess.get("seconds") or 0
                     self._update(item["id"], estimate_seconds=float(seconds))
                 except Exception:  # noqa: BLE001 - the estimate never blocks a render

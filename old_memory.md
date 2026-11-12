@@ -282,3 +282,12 @@ custom engine and resumed clips; both sides call `textfill.engine_choice()`. Fou
 slow copy (>= 8 s at >= 1.2 s a word) is dropped; the same line elsewhere stays. Four tests.
 The stored transcript still holds the cues: the founder must re-Check, which can move layer ranges.
 170 tests; `VERSION` stays 17.
+
+### Loop 8 revision 2 · 2026-11-12
+**Fault:** the estimate was right but slow: 66.7 s in the request, 24 s after, repeated by the queue.
+**Fixed:** one ink store on disk (per layer, keyed by source stamp/size/layer, `ink.STORE_VERSION`),
+per-span units keyed by the layers on screen, a non-blocking endpoint with one background worker and
+progress, a render that waits/takes the result, UI "Measuring the fill…" and a range. Measured
+through the built server: warm 0.084-0.257 s, first request 0.669 s with 144.8 s of background work,
+one layer changed 19.7 s, queue to first fill 8.2 s (about 90 s before), total 790.4 s unchanged.
+173 tests; `VERSION` stays 17.

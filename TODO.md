@@ -51,6 +51,8 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] Portrait Preview width: scene strip in a 300 px column beside the player.
 - [ ] Verify a 9:16 project at 1440×900 and 1280×800.
 
+- [ ] **Estimate the first-ever run.** 144.8 s of background work on a project with no ink store; consider building the store during Check, where the frames are already decoded.
+
 ## Later
 
 - [ ] Cold render cost beyond the estimate: warm the cache after Clean all, or cap fill work by plan.

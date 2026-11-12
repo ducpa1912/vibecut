@@ -1764,7 +1764,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except (pipeline.PipelineError, OSError):
             meta = dict(edit.get("source") or {})
         meta = {**meta, "path": str(project["source_path"])}
-        return {"estimate": render.estimate_edit(edit, meta, data_root)}
+        return render.estimate_status(edit, meta, data_root)
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/render/cancel")
     def cancel_render(

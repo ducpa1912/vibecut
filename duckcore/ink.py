@@ -52,6 +52,8 @@ MIN_FRAMES = 5
 MIN_PIXELS = 24
 # Grown around the strokes for the fill hole: letter body, outline, soft shadow.
 GROW_PX = 6
+# Bump when the ink a line owns changes shape: the on-disk store is rebuilt then.
+STORE_VERSION = 1
 # Columns with no ink for this many pixels split two glyphs.
 GLYPH_GAP = 3
 # A glyph smaller than this joins its neighbour; a dot is not judged alone.

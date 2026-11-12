@@ -295,11 +295,12 @@ def fill_rate(data_root: Path | str, method: str, device: str = DEFAULT_DEVICE) 
         # samples) is trusted; anything else is a first guess.
         if isinstance(item, dict) and item.get("recent"):
             seconds = float(item["seconds"])
+            recent = [float(value) for value in item.get("recent") or [] if float(value) > 0]
             if seconds > 0:
-                return {"seconds": seconds, "measured": True}
+                return {"seconds": seconds, "measured": True, "recent": recent}
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return {"seconds": _seed_rate(method, device), "measured": False}
+    return {"seconds": _seed_rate(method, device), "measured": False, "recent": []}
 
 
 def record_rate(
@@ -386,7 +387,19 @@ def _planned_units(
 
 
 def units_key(meta: dict, layers: Iterable[dict], start: float, duration: float) -> str:
-    """What identifies a span's fill work, for a cache of estimated units."""
+    """What identifies a span's fill work, for a cache of estimated units.
+
+    Only the layers that are on screen in this span are part of the key, so a
+    changed layer re-plans the spans it touches and leaves the rest stored.
+    """
+    end = float(start) + float(duration)
+    active = [
+        layer for layer in layers
+        if any(
+            float(item.get("start") or 0.0) < end and float(item.get("end") or 0.0) > float(start)
+            for item in layer.get("ranges") or []
+        )
+    ]
     payload = {
         "version": VERSION,
         "start": round(float(start), 3),
@@ -396,7 +409,7 @@ def units_key(meta: dict, layers: Iterable[dict], start: float, duration: float)
         "layers": [
             {"id": layer.get("id"), "ink_key": layer.get("ink_key"),
              "ink_rect": layer.get("ink_rect"), "ranges": layer.get("ranges") or []}
-            for layer in layers
+            for layer in active
         ],
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
@@ -486,6 +499,7 @@ def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
     seconds = 0.0
     unknown = []
     measured = True
+    spread: list[tuple[float, float, float]] = []
     for method in METHODS:
         for device in DEVICES:
             units = sum(
@@ -500,6 +514,10 @@ def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
                 continue
             seconds += units * rate["seconds"]
             measured = measured and rate["measured"]
+            recent = [float(value) for value in rate.get("recent") or [] if float(value) > 0]
+            if len(recent) > 1:
+                # This Mac measured the same edit at both ends of this spread.
+                spread.append((float(units), min(recent), max(recent)))
     frames = sum(row["frames"] for row in to_run)
     if not planned:
         text = ""
@@ -520,6 +538,7 @@ def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
         "frames": frames,
         "seconds": round(seconds, 1),
         "measured": measured,
+        "rate_spread": spread,
         "unmeasured": unknown,
         "text": text,
     }

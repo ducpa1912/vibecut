@@ -25,6 +25,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import hashlib
+import json
+import os
+
 import numpy as np
 
 from duckcore import ink as inkmod
@@ -110,13 +114,101 @@ def layer_inks(layer: dict, meta: dict, *, source: str | Path,
     return [], "no steady strokes were found"
 
 
+def _store_key(layer: dict, meta: dict, source: str | Path,
+               size: tuple[int, int] | None) -> str:
+    """What the stored ink depends on: the source, the size, and the layer."""
+    stat = os.stat(source)
+    payload = {
+        "v": inkmod.STORE_VERSION,
+        "source": [Path(source).name, stat.st_size, stat.st_mtime_ns],
+        "size": [int(size[0]), int(size[1])] if size else [
+            int(meta.get("width") or 0), int(meta.get("height") or 0),
+        ],
+        "fps": float(meta.get("fps") or 0.0),
+        "layer": {
+            "id": layer.get("id"),
+            "box": layer.get("box"),
+            "track": layer.get("track"),
+            "mask": layer.get("mask"),
+            "ink_rect": layer.get("ink_rect"),
+            "ranges": layer.get("ranges") or [],
+        },
+    }
+    return hashlib.sha1(
+        json.dumps(payload, sort_keys=True, default=str).encode(),
+    ).hexdigest()[:24]
+
+
+def _load_ink(path: Path) -> tuple[list[inkmod.Ink], str] | None:
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            count = int(data["count"])
+            if count <= 0:
+                return [], str(data["reason"].item() or "")
+            out = []
+            for index in range(count):
+                rect = tuple(int(value) for value in data[f"rect_{index}"])
+                out.append(inkmod.Ink(
+                    mask=data[f"mask_{index}"], rect=rect,
+                    first=int(data[f"first_{index}"]), last=int(data[f"last_{index}"]),
+                    fps=float(data[f"fps_{index}"]),
+                ))
+            return out, ""
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _save_ink(path: Path, inks: list[inkmod.Ink], reason: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    payload = {"count": np.array(len(inks)), "reason": np.array(reason)}
+    for index, item in enumerate(inks):
+        payload[f"rect_{index}"] = np.array(item.rect, dtype=np.int32)
+        payload[f"mask_{index}"] = item.mask
+        payload[f"first_{index}"] = np.array(item.first, dtype=np.int32)
+        payload[f"last_{index}"] = np.array(item.last, dtype=np.int32)
+        payload[f"fps_{index}"] = np.array(float(item.fps), dtype=np.float32)
+    with open(temporary, "wb") as handle:
+        np.savez_compressed(handle, **payload)
+    temporary.replace(path)
+
+
 def build_inks(edit: dict, meta: dict, *, source: str | Path,
-               size: tuple[int, int] | None = None) -> dict:
-    """``{layer id: {"inks": [...], "reason": str}}`` for every clean layer."""
+               size: tuple[int, int] | None = None,
+               data_root: str | Path | None = None,
+               progress=None) -> dict:
+    """``{layer id: {"inks": [...], "reason": str}}`` for every clean layer.
+
+    With ``data_root`` each layer's ink is stored on disk, keyed by the source
+    stamp, the size and that layer alone. The estimate, the queue and the render
+    read the same store, so a second call reads no frame, and a changed layer
+    rebuilds only itself.
+    """
     out: dict = {}
-    for layer in _clean_layers(edit):
-        inks, reason = layer_inks(layer, meta, source=source, size=size)
+    directory = Path(data_root) / "ink" if data_root is not None else None
+    layers = _clean_layers(edit)
+    for done, layer in enumerate(layers):
+        if progress is not None:
+            progress(done / max(1, len(layers)), f"Reading the text strokes · {done + 1}/{len(layers)}")
+        path = None
+        if directory is not None:
+            try:
+                path = directory / f"{_store_key(layer, meta, source, size)}.npz"
+            except OSError:
+                path = None
+        stored = _load_ink(path) if path is not None and path.is_file() else None
+        if stored is not None:
+            inks, reason = stored
+        else:
+            inks, reason = layer_inks(layer, meta, source=source, size=size)
+            if path is not None:
+                try:
+                    _save_ink(path, inks, reason)
+                except OSError:
+                    pass
         out[str(layer.get("id"))] = {"inks": inks, "reason": reason}
+    if progress is not None:
+        progress(1.0, "Text strokes ready")
     return out
 
 
