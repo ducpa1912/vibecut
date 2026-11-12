@@ -324,3 +324,12 @@ inspector count and fade, empty timeline lanes as 32 px `+` rows, portrait Previ
 **Outcome:** 9/9 acceptance. Bottoms 87.3–100 %; 0 layout overlaps; every scroll list has a count or
 fade; portrait stage 70 % / 64.6 %; no horizontal scroll; 36 captures; 16:9 fixture measured the
 same; 178 tests; `VERSION` stays 17.
+
+### Loop 10 revision 1 · 2026-11-12
+**Faults:** the 60 % rule was met by a black stage; the overlaps script excluded the transcript
+over the controls; the filter ran to the panel edge; no fade on cut text.
+**Fixed:** the measure uses the picture rectangle and its share of the column; the player hugs the
+picture (Preview 15 px black, Edit 0); the transcript sits above the controls (0 overlap, clickable);
+filter insets 14/14; hairlines; fades on every scroll area; five exclusions with crops.
+**Numbers:** Preview 95.8/95.2 % (height 90.5/89.2 %), Edit 99.4/99.3 %, 16:9 100/99.7 %; cut text 0;
+layout overlaps 0. 178 tests; `VERSION` 17.

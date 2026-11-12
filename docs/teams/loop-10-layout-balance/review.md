@@ -1,3 +1,79 @@
+# Loop 10 review — Revision 1 (Senior PO, 2026-11-12)
+
+The first pass met the numbers with a black stage and a script that hid the transcript-over-controls
+pair. Both the screens and the script are fixed.
+
+## Item 1–2 — the picture, not the stage
+
+The 60 % rule is gone: it is replaced by the picture's own rectangle (natural size fitted into the
+element box) and the black beside it.
+
+| Screen | 1440×900 | 1280×800 |
+|---|---|---|
+| Preview, 9:16 picture | **410 × 728**, share of its column **95.8 %** (height 728 / 804 = 90.5 %), black each side **15 px** | **353 × 628**, share **95.2 %** (height 628 / 704 = 89.2 %), black **15 px** |
+| Edit, 9:16 picture | **303 × 537**, share **99.4 %**, black **0 px** | **269 × 477**, share **99.3 %**, black **0 px** |
+| Preview, 16:9 fixture | share **100.2 %**, black **−1 px** | share **100.2 %**, black **−1 px** |
+| Edit, 16:9 fixture | share **99.7 %**, black **0 px** | share **99.7 %**, black **0 px** |
+
+The stage hugs the picture in both screens; Preview's strip column runs beside it to the bottom, so
+nothing but the page margin is empty below the player column.
+
+## Item 3 — the transcript box and the controls
+
+- Transcript box against the player's bottom 52 px (the native control strip): **0 px² at both
+  sizes**.
+- `elementFromPoint` at the play button's centre returns the **video**; the control is clickable
+  (`media-overlay` was swallowing clicks and now has `pointer-events: none`).
+- The `.transcript-overlay` exclusion is **removed** from the script; player overlays are only a
+  designed pair with their own media, and the controls pair is measured on its own.
+
+## Item 4 — the scenes panel
+
+- Filter insets: **14 px left, 14 px right** at both sizes (measured to the panel's inner edge).
+- Rows use the Render queue's hairline style: `border-bottom: 1px solid var(--line)`, no inset
+  shadow, no box; the list scrollbar is the thin styled bar the rest of the app uses.
+
+## Item 5 — every scroll area fades while more is below
+
+| Area | State | Probe |
+|---|---|---|
+| Inspector body | has-more mask, 30 px | real content longer than the rail; mask present |
+| Scenes list (row 07 cut) | has-more mask | mask present at the top, cleared by `syncLayerFades()` at the end |
+| Preview strip (4th tile cut) | has-more / has-more-x mask | vertical in portrait, right edge in landscape |
+| Clean scene list | has-more mask | probe passes |
+
+Script measure “text cut by a container edge”: **0** on every screen at both sizes, portrait and
+16:9.
+
+## Item 6 — exclusions, each with a crop
+
+Only five exclusions remain; each file shows the designed overlay:
+
+| Exclusion | Why | Crop |
+|---|---|---|
+| `.tc` | timecode chip on a thumbnail | `exclusion-tc.jpg` |
+| `.duration` | resolution badge on the latest-render thumbnail | `exclusion-duration.jpg` |
+| `.media-badge` | resolution badge in the player corner | `exclusion-media-badge.jpg` |
+| `.split-tag` | Before/After tag on the player | `exclusion-split-tag.jpg` |
+| `.media-overlay` | play glyph and time on the player | `exclusion-media-overlay.jpg` |
+
+Removed: `.chip`, `.scene-label`, `.layer-flag`, `.status`, `.badge`, `.thumb .label`,
+`.transcript-overlay`, `.transcript-panel`, `.cleaning-pill` — no crop, so no exclusion. The
+transcript-over-controls pair is now measured, not excluded.
+
+## Item 7 — Render
+
+Untouched since `6132d75`; accepted as it is.
+
+## Gates
+
+All earlier items still pass: bottoms **87.3–100 %**, layout overlaps **0**, every scroll list has a
+count or fade, no horizontal scroll, **0** clipped buttons, 16:9 the same. **178 tests**,
+`node --check` clean, app builds. `textfill.VERSION` stays 17. New `after-*` and `landscape-*`
+captures replace the old ones and were each looked at; `founder-test.md` matches the new screens.
+
+---
+
 # Loop 10 review — layout balance
 
 Brief: `BRIEF.md`. Source review: `docs/teams/uiux-balance-01.md` (P1–P4). Measured with headless

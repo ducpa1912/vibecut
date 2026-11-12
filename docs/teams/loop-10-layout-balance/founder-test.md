@@ -41,10 +41,17 @@ try Import.
 ## 5. Preview
 
 1. Open **Preview** at 1440×900 and 1280×800.
-2. **Must see:** the player on the left and the **Scenes** strip in a narrow column beside it (the
-   strip scrolls); the stage takes at least 60 % of the middle column (`70 %` at 1440, `64.6 %` at
-   1280), no paper band under the player.
-3. Rotate the window narrow (below ~1000 px) and widen it: the side panels stack, nothing overlaps.
+2. **Must see:** the player is as tall as the window allows and shows only a thin black edge
+   (15 px) around the picture, not a wide black box; the **Scenes** strip sits in a narrow column
+   beside it and runs to the bottom; no empty paper band under the player.
+3. Switch to **Edit**: the video there also hugs the picture (no black bars at the sides). The
+   **Filter** field has the same space on its left and right; the scene rows are hairlines.
+4. In Edit, find the transcript box over the video.
+5. **Must see:** the box sits **above** the player's play button and scrub bar; both are visible and
+   clicking the play glyph starts playback.
+6. Scroll the scenes list and the inspector: each shows a soft fade at the bottom while more is
+   below, and the fade goes away at the end.
+7. Rotate the window narrow (below ~1000 px) and widen it: the side panels stack, nothing overlaps.
 
 ## 6. Render, the estimate, the not-checked count
 

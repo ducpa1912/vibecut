@@ -42,7 +42,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 | Cold render | 620–847 s on this Mac (was 418 s): every frame is filled alone where something crosses the text. Model time is ≈ 64 % of it |
 | Estimate | from the fill's own run plan: 790.4 s against 847.2 s real (6.7 % low), shown as a range. Warm call < 0.3 s; first ever for a project 144.8 s in the background |
 | Ink store | `<data root>/ink`, one file per line with every `Ink` field, `ink.STORE_VERSION` 2, shared by estimate, queue and render, capped at 512 MiB |
-| Layout | Render is two columns (320 px settings/start/estimate, queue right with finished cards); inspector shows `N of M layers` with a fade; empty timeline lanes are 32 px with a `+`; a 9:16 Preview puts the strip in a 300 px column (stage 70 % / 64.6 % of the middle column) |
+| Layout | Render is two columns (320 px settings/start/estimate, queue right with finished cards); inspector shows `N of M layers` with a fade; empty timeline lanes are 32 px with a `+`; the player hugs the picture (9:16: 410x728 / 353x628, 15 px black; Edit 303x537 / 269x477, 0 black); the transcript sits above the player controls; every scroll area fades while more is below |
 
 ## Known limits that shape the next loops
 

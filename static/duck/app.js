@@ -1417,6 +1417,7 @@ function screenEditor() {
   const focusLabel = { clean: 'Clean', script: 'Script', audio: 'Audio', sfx: 'SFX' }[tab];
   const story = isStoryEdit() ? storyClipAt(state.timelineTime || 0) : null;
   const mediaClip = story?.clip?.kind === 'media' ? story.clip : null;
+  const sourceMeta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
   return `<main class="screen">${storyBanner()}
     <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
@@ -1436,7 +1437,7 @@ function screenEditor() {
       <section class="editor-center">
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
-          <div class="media-card preview-large">
+          <div class="media-card preview-large" style="--media-ratio:${(Number(sourceMeta.width) && Number(sourceMeta.height)) ? (Number(sourceMeta.width) / Number(sourceMeta.height)).toFixed(4) : '1.7778'}">
             ${mediaClip
               ? mediaClip.media === 'image'
                 ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
@@ -1444,7 +1445,7 @@ function screenEditor() {
               : `<video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
             <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
             <div class="media-overlay"><span class="tc">${fmtTC(mediaClip ? state.timelineTime : (state.previewTime || scene.start))} / ${fmtTC(mediaClip ? timelineDuration() : (state.edit?.end || state.check?.result?.meta?.duration || 0))}</span><span class="spacer"></span></div>
-            ${mediaClip || !overlayCues.length ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
+            ${mediaClip || !overlayCues.length ? '' : `<div class="transcript-overlay above-controls${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
               <button class="overlay-toggle overlay-move" type="button" data-action="overlay-position" title="Move transcript between bottom and top">⇕</button>
               <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
@@ -4440,17 +4441,22 @@ document.addEventListener('input', (event) => {
 /* ------------------------------------------------------------------ after render */
 
 function syncLayerFades() {
-  document.querySelectorAll('[data-layer-list]').forEach((el) => {
-    el.classList.toggle(
-      'has-more',
-      el.scrollHeight > el.clientHeight + 4 && el.scrollTop + el.clientHeight < el.scrollHeight - 4,
-    );
+  const more = (el, axis) => axis === 'x'
+    ? el.scrollWidth > el.clientWidth + 4 && el.scrollLeft + el.clientWidth < el.scrollWidth - 4
+    : el.scrollHeight > el.clientHeight + 4 && el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+  document.querySelectorAll('[data-layer-list]').forEach((el) => el.classList.toggle('has-more', more(el, 'y')));
+  document.querySelectorAll('.inspector-body, .proof-list, .clean-scene-list').forEach((el) => {
+    el.classList.toggle('has-more', more(el, 'y'));
+  });
+  document.querySelectorAll('.scene-strip').forEach((el) => {
+    el.classList.toggle('has-more-x', more(el, 'x'));
+    el.classList.toggle('has-more', more(el, 'y'));
   });
 }
 
 document.addEventListener('scroll', (event) => {
   const target = event.target;
-  if (target && target.matches && target.matches('[data-layer-list]')) syncLayerFades();
+  if (target && target.matches && target.matches('[data-layer-list], .inspector-body, .proof-list, .clean-scene-list, .scene-strip')) syncLayerFades();
 }, true);
 
 function afterRender() {

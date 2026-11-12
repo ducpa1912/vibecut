@@ -103,7 +103,7 @@ const MEASURE = String.raw`(() => {
     return r;
   };
   // Chips, timecodes and scene labels sit on media by design: not layout overlaps.
-  const designed = (el) => Boolean(el.closest('.tc, .chip, .scene-label, .layer-flag, .transcript-overlay, .transcript-panel, .status, .badge, .thumb .label, .duration, .media-badge, .split-tag, .media-overlay, .cleaning-pill'));
+  const designed = (el) => Boolean(el.closest('.tc, .duration, .media-badge, .split-tag, .media-overlay'));
   const screen = document.querySelector('main.screen') || document.body;
   let bottom = 0, who = '';
   const visibleBottom = (el, r) => {
@@ -143,10 +143,27 @@ const MEASURE = String.raw`(() => {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i], b = boxes[j];
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
-      const ix = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
-      const iy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+      const clamp = (el, r) => {
+        let box = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        let node = el.parentElement;
+        while (node) {
+          const s = getComputedStyle(node);
+          if (['auto', 'scroll', 'hidden'].includes(s.overflowY) || ['auto', 'scroll', 'hidden'].includes(s.overflowX)) {
+            const n = node.getBoundingClientRect();
+            box = { left: Math.max(box.left, n.left), right: Math.min(box.right, n.right), top: Math.max(box.top, n.top), bottom: Math.min(box.bottom, n.bottom) };
+          }
+          node = node.parentElement;
+        }
+        return box;
+      };
+      const ca = clamp(a.el, a.r), cb = clamp(b.el, b.r);
+      const ix = Math.min(ca.right, cb.right) - Math.max(ca.left, cb.left);
+      const iy = Math.min(ca.bottom, cb.bottom) - Math.max(ca.top, cb.top);
       if (ix > 2 && iy > 2) {
-        const intended = designed(a.el) || designed(b.el);
+        const stageOf = (el) => el.closest('.media-card, .split-stage');
+        const playerPair = (a.kind === 'img' || b.kind === 'img')
+          && stageOf(a.el) && stageOf(a.el) === stageOf(b.el);
+        const intended = designed(a.el) || designed(b.el) || playerPair;
         overlaps.push({
           a: a.kind + ':' + a.text, b: b.kind + ':' + b.text, area: Math.round(ix * iy),
           aCls: String(a.el.className || a.el.tagName).split(' ')[0],
@@ -186,6 +203,77 @@ const MEASURE = String.raw`(() => {
       clipped.push({ cls: String(el.className || el.tagName).split(' ')[0], text: (el.textContent || '').trim().slice(0, 24) });
     }
   }
+  let media = null;
+  let mediaArea = 0;
+  for (const el of document.querySelectorAll('.preview-stage img, .preview-stage video, .preview-block img, .preview-block video, .media-card img, .media-card video')) {
+    const b = el.getBoundingClientRect();
+    const nw = Number(el.naturalWidth || el.videoWidth || 0);
+    const nh = Number(el.naturalHeight || el.videoHeight || 0);
+    const area = b.width * b.height;
+    if (nw > 0 && nh > 0 && area > mediaArea) { media = el; mediaArea = area; }
+  }
+  const stageBox = document.querySelector('.preview-stage') || document.querySelector('.media-card.preview-large');
+  let picture = null, pictureShare = null, stageBlack = null;
+  if (media && stageBox) {
+    const box = media.getBoundingClientRect();
+    const nw = Number(media.naturalWidth || media.videoWidth || 0);
+    const nh = Number(media.naturalHeight || media.videoHeight || 0);
+    let pw = box.width, ph = box.height;
+    if (nw > 0 && nh > 0) {
+      const fit = Math.min(box.width / nw, box.height / nh);
+      pw = nw * fit; ph = nh * fit;
+    }
+    const stage = stageBox.getBoundingClientRect();
+    picture = { w: Math.round(pw), h: Math.round(ph), box: [Math.round(box.x), Math.round(box.y)] };
+    const column = (stageBox.closest('.preview-main') || stageBox.parentElement || stageBox).getBoundingClientRect();
+    // A portrait picture is judged on height, a landscape one on width: its dominant fit.
+    const share = Math.max(pw / Math.max(1, column.width), ph / Math.max(1, column.height));
+    pictureShare = Math.round(share * 1000) / 10;
+    stageBlack = Math.round((stage.width - pw) / 2);
+  }
+  let controls = null;
+  const overlay = document.querySelector('.transcript-overlay');
+  if (overlay && media) {
+    const o = overlay.getBoundingClientRect();
+    const m = media.getBoundingClientRect();
+    const barTop = m.bottom - 52;
+    const ix = Math.min(o.right, m.right) - Math.max(o.left, m.left);
+    const iy = Math.min(o.bottom, m.bottom) - Math.max(o.top, barTop);
+    const hit = document.elementFromPoint(Math.round(m.left + 20), Math.round(m.bottom - 26));
+    controls = {
+      overlap: ix > 1 && iy > 1 ? Math.round(ix * iy) : 0,
+      hit: hit ? String(hit.className || hit.tagName).split(' ')[0] : 'none',
+      clickable: Boolean(hit && (hit === media || media.contains(hit))),
+    };
+  }
+  const cut = [];
+  for (const el of document.body.querySelectorAll('*')) {
+    const s = getComputedStyle(el);
+    if (!['auto', 'scroll'].includes(s.overflowY)) continue;
+    const fade = el.classList.contains('has-more') || s.maskImage !== 'none' || s.webkitMaskImage !== 'none';
+    if (fade) continue;
+    const box = el.getBoundingClientRect();
+    for (const child of el.querySelectorAll('*')) {
+      const own = [...child.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('').trim();
+      if (own.length < 2) continue;
+      const c = child.getBoundingClientRect();
+      if (c.height < 4 || c.bottom > box.bottom + 1 || c.top < box.top) continue;
+      if (c.bottom > box.bottom - 1 && c.top < box.bottom) { cut.push({ cls: String(child.className || child.tagName).split(' ')[0], text: own.slice(0, 20) }); break; }
+    }
+  }
+  const filter = document.querySelector('.scene-filter input');
+  const filterPanel = filter ? filter.closest('.panel') : null;
+  let filterInsets = null;
+  if (filter && filterPanel) {
+    const f = filter.getBoundingClientRect();
+    const pane = filterPanel.getBoundingClientRect();
+    const style = getComputedStyle(filterPanel);
+    const innerLeft = pane.left + parseFloat(style.borderLeftWidth || 0);
+    const innerRight = pane.right - parseFloat(style.borderRightWidth || 0);
+    const label = document.querySelector('.scene-filter .small');
+    const l = label ? label.getBoundingClientRect() : f;
+    filterInsets = { left: Math.round(Math.min(l.left, f.left) - innerLeft), right: Math.round(innerRight - f.right) };
+  }
   const left = document.querySelector('.render-left');
   const right = document.querySelector('.render-right');
   const stage = document.querySelector('.preview-stage');
@@ -197,6 +285,7 @@ const MEASURE = String.raw`(() => {
     overlaps: overlaps.slice(0, 40), overlapCount: overlaps.length,
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
     scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
+    picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
     renderCols: left && right ? {
       left: Math.round(left.getBoundingClientRect().height),
       right: Math.round(right.getBoundingClientRect().height),

@@ -12,6 +12,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
@@ -101,6 +107,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
@@ -178,41 +190,50 @@
    {
     "a": "img:",
     "b": "text:I'm going to eat a lit",
-    "area": 8209,
+    "area": 6962,
     "aCls": "VIDEO",
     "bCls": "SPAN",
     "intended": true
-   },
-   {
-    "a": "button:CC",
-    "b": "button:⇕",
-    "area": 616,
-    "aCls": "overlay-toggle",
-    "bCls": "overlay-toggle",
-    "intended": true
    }
   ],
-  "overlapCount": 10,
+  "overlapCount": 9,
   "layoutOverlaps": [],
   "layoutOverlapCount": 0,
   "scrolls": [
    {
     "cls": "proof-list",
-    "over": 1390,
+    "over": 1320,
     "head": "Scenes",
     "count": true,
-    "fade": false
+    "fade": true
    },
    {
     "cls": "inspector-body",
     "over": 390,
     "head": "Scene 01 · 抖骨+2",
     "count": true,
-    "fade": false
+    "fade": true
    }
   ],
   "hScroll": false,
   "clipped": [],
+  "picture": {
+   "w": 772,
+   "h": 434,
+   "box": [
+    299,
+    67
+   ]
+  },
+  "pictureShare": 99.7,
+  "stageBlack": 0,
+  "controls": {
+   "overlap": 0,
+   "hit": "VIDEO",
+   "clickable": true
+  },
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null,
   "layerRows": 6
@@ -267,7 +288,7 @@
    {
     "a": "img:",
     "b": "text:01",
-    "area": 287,
+    "area": 272,
     "aCls": "IMG",
     "bCls": "tc",
     "intended": true
@@ -337,19 +358,25 @@
     "over": 1423,
     "head": "Scenes",
     "count": true,
-    "fade": false
+    "fade": true
    }
   ],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
  "preview-1440x900": {
   "vw": 1440,
   "vh": 900,
-  "bottom": 826,
-  "bottomPct": 91.8,
+  "bottom": 832,
+  "bottomPct": 92.4,
   "bottomWho": "workspace",
   "overlaps": [
    {
@@ -455,22 +482,27 @@
     "aCls": "IMG",
     "bCls": "tc",
     "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:09",
-    "area": 287,
-    "aCls": "IMG",
-    "bCls": "tc",
-    "intended": true
    }
   ],
-  "overlapCount": 14,
+  "overlapCount": 13,
   "layoutOverlaps": [],
   "layoutOverlapCount": 0,
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": {
+   "w": 1050,
+   "h": 591,
+   "box": [
+    23,
+    66
+   ]
+  },
+  "pictureShare": 100.2,
+  "stageBlack": -1,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": {
    "portrait": false,
@@ -492,6 +524,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": {
    "left": 660,
    "right": 772,
@@ -512,6 +550,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
@@ -549,7 +593,7 @@
    {
     "a": "img:",
     "b": "text:00:00:00:00",
-    "area": 1038,
+    "area": 678,
     "aCls": "IMG",
     "bCls": "tc",
     "intended": true
@@ -589,7 +633,7 @@
    {
     "a": "img:",
     "b": "text:00:00:25:08",
-    "area": 1038,
+    "area": 450,
     "aCls": "IMG",
     "bCls": "tc",
     "intended": true
@@ -601,6 +645,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
@@ -678,21 +728,13 @@
    {
     "a": "img:",
     "b": "text:I'm going to eat a lit",
-    "area": 5834,
+    "area": 5819,
     "aCls": "VIDEO",
     "bCls": "SPAN",
     "intended": true
-   },
-   {
-    "a": "button:CC",
-    "b": "button:⇕",
-    "area": 616,
-    "aCls": "overlay-toggle",
-    "bCls": "overlay-toggle",
-    "intended": true
    }
   ],
-  "overlapCount": 10,
+  "overlapCount": 9,
   "layoutOverlaps": [],
   "layoutOverlapCount": 0,
   "scrolls": [
@@ -705,21 +747,38 @@
    },
    {
     "cls": "proof-list",
-    "over": 1450,
+    "over": 1380,
     "head": "Scenes",
     "count": true,
-    "fade": false
+    "fade": true
    },
    {
     "cls": "inspector-body",
     "over": 450,
     "head": "Scene 01 · 抖骨+2",
     "count": true,
-    "fade": false
+    "fade": true
    }
   ],
   "hScroll": false,
   "clipped": [],
+  "picture": {
+   "w": 612,
+   "h": 344,
+   "box": [
+    299,
+    67
+   ]
+  },
+  "pictureShare": 99.7,
+  "stageBlack": 0,
+  "controls": {
+   "overlap": 0,
+   "hit": "VIDEO",
+   "clickable": true
+  },
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null,
   "layerRows": 6
@@ -836,19 +895,25 @@
     "over": 1523,
     "head": "Scenes",
     "count": true,
-    "fade": false
+    "fade": true
    }
   ],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": null
  },
  "preview-1280x800": {
   "vw": 1280,
   "vh": 800,
-  "bottom": 739,
-  "bottomPct": 92.4,
+  "bottom": 742,
+  "bottomPct": 92.7,
   "bottomWho": "workspace",
   "overlaps": [
    {
@@ -954,6 +1019,19 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": {
+   "w": 890,
+   "h": 500,
+   "box": [
+    23,
+    66
+   ]
+  },
+  "pictureShare": 100.2,
+  "stageBlack": -1,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": null,
   "preview": {
    "portrait": false,
@@ -975,6 +1053,12 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
   "renderCols": {
    "left": 660,
    "right": 672,
