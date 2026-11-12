@@ -291,3 +291,13 @@ progress, a render that waits/takes the result, UI "Measuring the fill…" and a
 through the built server: warm 0.084-0.257 s, first request 0.669 s with 144.8 s of background work,
 one layer changed 19.7 s, queue to first fill 8.2 s (about 90 s before), total 790.4 s unchanged.
 173 tests; `VERSION` stays 17.
+
+### Loop 8 revision 3, A-C · 2026-11-12
+**Faults:** the ink store dropped `settled/glyphs/spans`; the estimate worker could die on a trimmed
+job; the estimate key ignored the chip and the engine.
+**Fixed:** the store writes every field (`STORE_VERSION` 2, bad files rebuilt, 512 MiB cap); the
+worker trims only ready jobs and survives any error; the key carries the ink-store layer fields,
+the chip and the engine stamp.
+**Proof:** 42/42 ink_keys equal cold vs warm (94.6 s cold, 0.2 s warm, 42 files, 178,666 bytes);
+render 104149: 0 leftovers, 2,964 checks, 40/42 lines, 24/24 spans reused; 24 letterless clips
+deleted by key. 178 tests; `VERSION` stays 17.

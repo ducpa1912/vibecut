@@ -25,9 +25,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import dataclasses
 import hashlib
 import json
 import os
+import zipfile
 
 import numpy as np
 
@@ -139,7 +141,63 @@ def _store_key(layer: dict, meta: dict, source: str | Path,
     ).hexdigest()[:24]
 
 
+def _save_field(payload: dict, name: str, value, index: int) -> None:
+    """One field of ``ink.Ink``, written in a way ``_load_field`` reverses."""
+    key = f"{name}_{index}"
+    if name == "mask":
+        payload[key] = np.asarray(value, dtype=bool)
+    elif name == "rect":
+        payload[key] = np.asarray(value, dtype=np.int32)
+    elif name in {"first", "last"}:
+        payload[key] = np.asarray(int(value), dtype=np.int64)
+    elif name == "fps":
+        payload[key] = np.asarray(float(value), dtype=np.float64)
+    elif name == "settled":
+        payload[key] = np.asarray(bool(value), dtype=bool)
+    elif name in {"glyphs", "spans"}:
+        payload[key] = np.asarray(value, dtype=np.int32).reshape(-1, 2)
+    else:  # a new field needs a line here; the store test says so
+        raise KeyError(name)
+
+
+def _load_field(data, name: str, index: int):
+    key = f"{name}_{index}"
+    if name == "mask":
+        return np.asarray(data[key], dtype=bool)
+    if name == "rect":
+        return tuple(int(value) for value in data[key])
+    if name in {"first", "last"}:
+        return int(data[key])
+    if name == "fps":
+        return float(data[key])
+    if name == "settled":
+        return bool(data[key])
+    if name in {"glyphs", "spans"}:
+        rows = np.asarray(data[key], dtype=np.int32)
+        return tuple((int(a), int(b)) for a, b in rows.reshape(-1, 2))
+    raise KeyError(name)
+
+
+# Every field of ink.Ink. A new field must be added here and in _save_field and
+# _load_field; tests/test_estimate_speed.py fails until it is.
+STORE_FIELDS = ("mask", "rect", "first", "last", "fps", "settled", "glyphs", "spans")
+
+
+def _save_ink(path: Path, inks: list[inkmod.Ink], reason: str) -> None:
+    """Every field of every ink, so a stored line has its letters back."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    payload: dict = {"count": np.array(len(inks)), "reason": np.array(reason)}
+    for index, item in enumerate(inks):
+        for name in STORE_FIELDS:
+            _save_field(payload, name, getattr(item, name), index)
+    with open(temporary, "wb") as handle:
+        np.savez_compressed(handle, **payload)
+    temporary.replace(path)
+
+
 def _load_ink(path: Path) -> tuple[list[inkmod.Ink], str] | None:
+    """The stored inks, or None when the file is old, cut or unreadable."""
     try:
         with np.load(path, allow_pickle=False) as data:
             count = int(data["count"])
@@ -147,30 +205,13 @@ def _load_ink(path: Path) -> tuple[list[inkmod.Ink], str] | None:
                 return [], str(data["reason"].item() or "")
             out = []
             for index in range(count):
-                rect = tuple(int(value) for value in data[f"rect_{index}"])
-                out.append(inkmod.Ink(
-                    mask=data[f"mask_{index}"], rect=rect,
-                    first=int(data[f"first_{index}"]), last=int(data[f"last_{index}"]),
-                    fps=float(data[f"fps_{index}"]),
-                ))
+                values = {
+                    name: _load_field(data, name, index) for name in STORE_FIELDS
+                }
+                out.append(inkmod.Ink(**values))
             return out, ""
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
         return None
-
-
-def _save_ink(path: Path, inks: list[inkmod.Ink], reason: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    payload = {"count": np.array(len(inks)), "reason": np.array(reason)}
-    for index, item in enumerate(inks):
-        payload[f"rect_{index}"] = np.array(item.rect, dtype=np.int32)
-        payload[f"mask_{index}"] = item.mask
-        payload[f"first_{index}"] = np.array(item.first, dtype=np.int32)
-        payload[f"last_{index}"] = np.array(item.last, dtype=np.int32)
-        payload[f"fps_{index}"] = np.array(float(item.fps), dtype=np.float32)
-    with open(temporary, "wb") as handle:
-        np.savez_compressed(handle, **payload)
-    temporary.replace(path)
 
 
 def build_inks(edit: dict, meta: dict, *, source: str | Path,
@@ -207,9 +248,34 @@ def build_inks(edit: dict, meta: dict, *, source: str | Path,
                 except OSError:
                     pass
         out[str(layer.get("id"))] = {"inks": inks, "reason": reason}
+    if directory is not None:
+        _prune_store(directory)
     if progress is not None:
         progress(1.0, "Text strokes ready")
     return out
+
+
+INK_STORE_BYTES = 512 * 1024 ** 2
+
+
+def _prune_store(directory: Path, *, limit: int = INK_STORE_BYTES) -> None:
+    """Oldest files leave past the cap; a project needs one set of them."""
+    try:
+        entries = sorted(
+            ((entry.stat().st_mtime, entry.stat().st_size, entry.path)
+             for entry in os.scandir(directory) if entry.name.endswith(".npz")),
+        )
+    except OSError:
+        return
+    total = sum(size for _changed, size, _path in entries)
+    for _changed, size, path in entries:
+        if total <= limit:
+            break
+        try:
+            os.unlink(path)
+            total -= size
+        except OSError:
+            pass
 
 
 def layer_strokes(inks: list[inkmod.Ink]) -> tuple[inkmod.Rect, list[tuple[int, int, np.ndarray]]] | None:

@@ -50,6 +50,11 @@ Prepare two folders on the Desktop:
 4. **Must see:** the estimate returns to the number it had before step 1, and the fill message says
    **AI fill (per frame)**.
 
+## 4. What a warm store must not change
+
+Nothing to click: a render after the first one must look the same. If you compare two renders of
+the same edit, the leftover-text line must read the same count.
+
 ## What to report back
 
 - The words of every toast you saw.

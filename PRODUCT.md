@@ -1,6 +1,6 @@
 # Product
 
-> Status 2026-11-12: local-only macOS app, about 75 % complete by the founder's estimate. 173 tests.
+> Status 2026-11-12: local-only macOS app, about 75 % complete by the founder's estimate. 178 tests.
 > Brief loops 7–9 (ink check, moving fill, rules) are closed; PLAN loops 7–9 are open. App Store
 > work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
 

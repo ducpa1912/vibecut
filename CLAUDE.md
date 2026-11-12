@@ -33,7 +33,7 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
 ## State
 
 - Branch `ducksuite`; repo root is this directory. Never merge `main`; unrelated histories.
-- 173 tests pass. Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
+- 178 tests pass. Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
   an optional pack.
 - App Store work is paused. Do not start signing or TestFlight.
 - Planning is closed. Brief loops 7–9 are closed (ink check, moving fill, rules). PLAN loops 7–9

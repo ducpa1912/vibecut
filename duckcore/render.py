@@ -431,16 +431,36 @@ _ESTIMATE_THREAD: threading.Thread | None = None
 _ESTIMATE_LAST: dict[str, dict] = {}
 
 
-def _estimate_key(edit: dict, meta: dict) -> str:
+def _estimate_key(edit: dict, meta: dict, data_root: Path | None = None) -> str:
+    """Everything that changes the answer: the layers, the chip, the engine."""
+    from duckcore import app_settings
+    from duckcore.engine import textfill
+
+    engine = ""
+    device = "gpu"
+    if data_root is not None:
+        try:
+            path, _reason = textfill.engine_choice(data_root)
+            engine = textfill.method_stamp(
+                "lama", textfill.models_dir(data_root), "gpu", custom=path,
+            ) if path is not None else ""
+            device = textfill.chosen_device(
+                "lama", app_settings.fill_device(data_root), textfill.models_dir(data_root),
+            )
+        except Exception:  # noqa: BLE001 - a missing model is still a key
+            engine = "missing"
     payload = {
         "edit": edit.get("id"),
         "updated": edit.get("updated"),
-        "fill_device": None,
+        "device": device,
+        "engine": engine,
         "clean": [
             {
                 "id": layer.get("id"), "kind": layer.get("kind"),
                 "enabled": layer.get("enabled"), "box": layer.get("box"),
-                "ranges": layer.get("ranges"), "quality": layer.get("quality"),
+                "track": layer.get("track"), "mask": layer.get("mask"),
+                "ink_rect": layer.get("ink_rect"), "ranges": layer.get("ranges"),
+                "quality": layer.get("quality"),
             }
             for layer in edit.get("clean") or [] if isinstance(layer, dict)
         ],
@@ -480,17 +500,24 @@ def _estimate_worker() -> None:
         except Exception as exc:  # noqa: BLE001 - the endpoint reports it, never crashes
             LOGGER.warning("estimate failed: %s", exc)
             with _ESTIMATE_LOCK:
-                _ESTIMATE_JOBS[key].update(
-                    state="ready", progress=1.0, error=str(exc)[:300],
-                    message="The fill time could not be measured.",
-                )
+                item = _ESTIMATE_JOBS.get(key)
+                if item is not None:
+                    item.update(
+                        state="ready", progress=1.0, error=str(exc)[:300],
+                        message="The fill time could not be measured.",
+                    )
             continue
-        with _ESTIMATE_LOCK:
-            _ESTIMATE_JOBS[key].update(
-                state="ready", progress=1.0, estimate=result,
-                message="Fill time measured.", finished=time.time(),
-            )
-            _ESTIMATE_LAST[str(edit.get("id"))] = result
+        try:
+            with _ESTIMATE_LOCK:
+                item = _ESTIMATE_JOBS.get(key)
+                if item is not None:
+                    item.update(
+                        state="ready", progress=1.0, estimate=result,
+                        message="Fill time measured.", finished=time.time(),
+                    )
+                _ESTIMATE_LAST[str(edit.get("id"))] = result
+        except Exception as exc:  # noqa: BLE001 - the worker must outlive one bad job
+            LOGGER.warning("estimate result dropped: %s", exc)
 
 
 def _set_estimate_progress(key: str, fraction: float, message: str) -> None:
@@ -507,7 +534,7 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
     The request never blocks for more than ``wait`` seconds. One worker takes
     the jobs; a second request for the same edit joins the running one.
     """
-    key = _estimate_key(edit, meta)
+    key = _estimate_key(edit, meta, data_root)
     with _ESTIMATE_LOCK:
         job = _ESTIMATE_JOBS.get(key)
         if job is None:
@@ -518,10 +545,14 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
                 "started": time.time(),
             }
             _ESTIMATE_JOBS[key] = job
-            # Keep the map small: a project is edited all day.
+            # Keep the map small, but never drop a job the worker still needs.
             if len(_ESTIMATE_JOBS) > 16:
-                for stale in list(_ESTIMATE_JOBS)[:-8]:
-                    _ESTIMATE_JOBS.pop(stale, None)
+                ready = [
+                    name for name, item in _ESTIMATE_JOBS.items()
+                    if item.get("state") == "ready" and name != key
+                ]
+                for name in ready[:max(0, len(_ESTIMATE_JOBS) - 8)]:
+                    _ESTIMATE_JOBS.pop(name, None)
             _ESTIMATE_QUEUE.append((key, edit, meta, Path(data_root)))
             _ensure_estimate_worker()
             _ESTIMATE_WAKE.set()
@@ -549,7 +580,7 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
 def wait_for_estimate(edit: dict, meta: dict, data_root: Path, *,
                       timeout: float = 900.0) -> dict:
     """A render asks the same worker for the estimate and takes its result."""
-    key = _estimate_key(edit, meta)
+    key = _estimate_key(edit, meta, data_root)
     with _ESTIMATE_LOCK:
         job = _ESTIMATE_JOBS.get(key)
         state = job["state"] if job else None

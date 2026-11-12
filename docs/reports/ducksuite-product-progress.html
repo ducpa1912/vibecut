@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 8 · rev 3 A–C</strong><span>12 Nov · the store keeps the letters</span></div>
+      <div class="timeline-body">
+        <strong>A correctness fault in the ink store is fixed: stored lines keep their letters.</strong>
+        <ul class="clean">
+          <li>The store wrote 5 of 8 <span class="mono">ink.Ink</span> fields; <span class="mono">settled</span>, <span class="mono">glyphs</span> and <span class="mono">spans</span> were lost, so a warm render filled whole-line holes. It now writes every field, <span class="mono">STORE_VERSION</span> 2, bad files rebuilt, 512 MiB cap.</li>
+          <li>Proof: <b>42/42</b> layer ink_keys equal with an empty store (94.6 s) and a warm one (0.2 s); 42 files, 178,666 bytes.</li>
+          <li>Warm-store render: <b>0 leftovers, 2,964 checks, 40/42 lines, 24/24 spans reused</b>. 24 letterless clips deleted by key.</li>
+          <li>The estimate worker never trims a working job and survives any error; the estimate key now includes the chip and the engine stamp.</li>
+        </ul>
+        <span class="mono">178 tests</span> · <span class="mono">VERSION</span> 17 unchanged
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 8 · rev 2</strong><span>12 Nov · the estimate is instant</span></div>
       <div class="timeline-body">
         <strong>The estimate no longer blocks: ink and units are stored, one worker measures in the background.</strong>

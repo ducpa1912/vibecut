@@ -1,3 +1,45 @@
+# Loop 8 review — revision 3, A–C (Senior PO, 2026-11-12)
+
+## A. The ink store lost the letters — fixed, proof below
+
+`_save_ink` wrote five of the eight fields of `ink.Ink`; `settled`, `glyphs` and `spans` were lost,
+so a stored line had one whole-line hole. The store now writes **every field**, listed in
+`inkcheck.STORE_FIELDS`, and `ink.STORE_VERSION` is **2**. A file that is old, cut or unreadable
+(`zipfile.BadZipFile` included, a new format is rebuilt, not trusted).
+
+- Test: a line with two letters that end on different frames keeps `pieces()`, `reach`, `settled`
+  and the layer's `ink_key` through the store (`test_the_store_keeps_every_letter_of_an_ink`).
+- Test: a new field on `Ink` fails the suite until the store knows it
+  (`test_a_new_ink_field_must_be_stored`, comparing `dataclasses.fields(Ink)` with `STORE_FIELDS`).
+- **Proof, 42 of 42**: with the store deleted, every layer's `ink_key` from the frames (94.6 s) equals
+  the key from the warm store (0.2 s). The store holds 42 files, 178,666 bytes.
+- **One render with the warm store** (`ed_38a4c36a3aae_20261112-104149.mp4`): **0 leftovers, 2,964
+  frame checks, 40 of 42 lines checked**; the two not checked are the same as `20261112-024716`
+  (`cl_7b144258ac` under 5 frames, `cl_a47d0aa1c1` no steady strokes). **24 of 24 filled spans were
+  reused** — the log has no `fill span` line at all; the render took 112 s plus a 192 s check.
+- **Letterless clips deleted: 24.** They were found by key: every `fill/*.mp4` whose key is not
+  reachable with the correct inks. 24 correct-key clips remain, one per filled span.
+- The store is capped at **512 MiB**, oldest files out (`_prune_store`).
+
+## B. The estimate worker could die — fixed
+
+Trimming now only removes **ready** jobs, never a working one; the worker catches any error around
+the result update as well, so a vanished job cannot kill the thread. Tests: 20 jobs leave the
+working one in place; a job that raises does not stop the next one (`wait_for_estimate` returns its
+result).
+
+## C. The estimate key ignored the engine — fixed
+
+`_estimate_key` now carries the same layer fields as the ink store (box, track, mask, ink_rect,
+ranges, kind), the chosen chip and the engine stamp from `engine_choice`. Test: setting a valid user
+model folder changes the key; the old estimate is stale and re-measured.
+
+## Gates for A–C
+
+**178 tests**, `node --check` clean, app builds. No fill output change, `textfill.VERSION` stays 17.
+
+---
+
 # Loop 8 review — revision 2 (Senior PO, 2026-11-12)
 
 The estimate was right and slow: 66.7 s inside the request, 24 s every later call, and again in
