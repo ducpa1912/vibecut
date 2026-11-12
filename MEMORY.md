@@ -33,13 +33,15 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 169 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 178 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
-| Leftover-text check | per letter, per frame, output against source; 40 of 42 lines checked, ≈ 60–70 s; `inkcheck.SAME` 20 (untouched text measures 9–13.4, a fill 30+) |
-| Last render | `ed_38a4c36a3aae_20261112-024716.mp4`: 0 leftover in 2,964 frame checks; 2 lines not checked, shown with the reason |
-| Cold render | 698 s (was 418 s): every frame is filled alone where something crosses the text. Estimate before this render was not recorded |
+| Leftover-text check | per letter, per frame, output against source; 40 of 42 lines checked, 68–81 s on a quiet Mac (170–190 s with the Mac under load); `inkcheck.SAME` 20 (untouched text measures 9–13.4, a fill 30+) |
+| Last render | `ed_38a4c36a3aae_20261112-104149.mp4` (warm ink store, 24 of 24 spans reused): 0 leftover in 2,964 frame checks; 2 lines not checked, shown with the reason |
+| Cold render | 620–847 s on this Mac (was 418 s): every frame is filled alone where something crosses the text. Model time is ≈ 64 % of it |
+| Estimate | from the fill's own run plan: 790.4 s against 847.2 s real (6.7 % low), shown as a range. Warm call < 0.3 s; first ever for a project 144.8 s in the background |
+| Ink store | `<data root>/ink`, one file per line with every `Ink` field, `ink.STORE_VERSION` 2, shared by estimate, queue and render, capped at 512 MiB |
 
 ## Known limits that shape the next loops
 
@@ -48,7 +50,9 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   Check never found has no layer and is not judged.
 - A steady shot cut at both ends of a line: scenery in the box cannot be told from text by time, so
   the hole there is a little larger than the letters.
-- The estimate does not know where something crosses the text; the fill rate it learns includes it.
+- Render time on this 8 GB Mac varies by about a third for the same edit, so the estimate is a range.
+- Three wins are measured and not built: crop the fill decode (35–50 s), share the check's decode
+  (52.8 s), fewer key frames (about a third of the model time, but it changes pixels).
 - LaMa cannot rebuild a background it never saw; most lines sit on moving footage.
 - Vietnamese transcription needs the 1.61 GB Whisper pack. macOS 26.0, Apple silicon only.
 
@@ -63,4 +67,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-_No open requests._
+- REQ-20261112-01 · founder: check loops 7–8, send back what is worse, update the documents, push to
+  `ducksuite` only (not `main`), then run PLAN loop 9 (layout balance); the founder tests by hand
+  only after it. Brief: `docs/teams/loop-10-layout-balance/BRIEF.md`.

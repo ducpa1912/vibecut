@@ -4,12 +4,9 @@ Only open work lives here; done items and closed loops are in `old_todo.md` (age
 Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries its request id
 (`REQ-YYYYMMDD-NN`, from `MEMORY.md`) or its brief/review path.
 
-## Now — sent back to the build team
+## Now
 
-- [ ] `docs/teams/loop-08-moving-fill/BRIEF.md`, Revision 3: the ink store drops each line's letter
-  spans, the estimate worker can die, the estimate key ignores the fill model, cost profile of the
-  cold render and the check, and a look at the 48 letter-frames.
-- [ ] Then PLAN loop 9, layout balance: `docs/teams/loop-10-layout-balance/BRIEF.md`. The founder
+- [ ] REQ-20261112-01 · PLAN loop 9, layout balance: `docs/teams/loop-10-layout-balance/BRIEF.md`. The founder
   tests by hand only after it.
 
 ## Fill and leftover check — open after brief loops 7–9
@@ -18,9 +15,14 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
 - [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
   (no steady strokes). The Render screen says so; no rule judges them yet.
-- [ ] REQ-20261111-11 · cold render 620–847 s on this Mac (418 s before the crossing rule), the
-  leftover check 60–70 s, the first estimate of a project 144.8 s in the background. Revision 3
-  profiles them; what it cannot win without changing fill output stays here with its number.
+- [ ] REQ-20261111-11 · cold render 620–847 s on this Mac (418 s before the crossing rule); model
+  time is 702 s of an instrumented 1,091 s. Measured, not built:
+  crop the fill decode (35–50 s, needs an every-frame proof); share the check's decode (52.8 s);
+  fewer key frames (about a third of the model time, changes pixels, needs a `VERSION` bump).
+- [ ] REQ-20261111-11 · first estimate of a project is 144.8 s of background work: build the ink
+  store and the span units during Check.
+- [ ] REQ-20261111-11 · leftover check 68–81 s quiet, 170–190 s when the Mac is busy (load 18):
+  the check and a render compete for the same cores; measure with the app alone before tuning.
 - [ ] The stored transcript of `prj_e95348a97316` still holds three made-up cues: the founder runs
   Check again; it can move clean-layer ranges.
 - [ ] Founder, by hand, after loop 9: `docs/teams/loop-08-moving-fill/founder-test.md` (fill model
