@@ -71,12 +71,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-### REQ-20261112-05 · 2026-11-12
-**Request:** "No safezone for each social media, this is a button on the preview panel, and it should refresh if the cut edit chose to crop or make the original video to different dimension."
-**Read as:** Preview shows cited safe-zone guides per platform, drawn on the Cut output frame.
-**Response:** Loop 15: TikTok/Reels/Shorts, IG 4:5 and 1:1, YouTube 16:9; Preview only.
-**Outcome:** open.
-
 ### REQ-20261112-06 · 2026-11-12
 **Request:** "In Preview block, the preview panel can only preview one cut scenes at a time, it should either play all the scenes (if no story selected), or the scene in the story in the storytelling order."
 **Read as:** Preview plays a sequence: all scenes in source order, or the story's beats in story order.

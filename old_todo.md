@@ -330,3 +330,7 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] REQ-20261112-04 · loop 14: move Warm / Cool / B&W / Vivid out of SFX into Cut
 - [x] REQ-20261112-04 · loop 18: grading sliders (exposure, contrast, saturation, temperature)
 - [x] REQ-20261112-04 · loop 19: enhance 360p→1080p, lanczos label, optional CoreML pack after licence and benchmark
+
+## Loop 15 — safe zones (closed 2026-11-12)
+
+- [x] REQ-20261112-05 · loop 15: safe-zone button on Preview, five cited guides, redraw on Cut aspect

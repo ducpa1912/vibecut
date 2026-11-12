@@ -1949,3 +1949,25 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
   left: var(--vx, 0%); top: var(--vy, 0%);
   object-fit: cover;
 }
+
+/* Safe zones: drawn on the Cut output frame, inside the picture. */
+.safe-zone { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 5; }
+.safe-frame { position: relative; outline: 1px solid rgba(255,255,255,.55); }
+.sz-band {
+  position: absolute; display: block;
+  background: rgba(196, 44, 44, .26);
+  border: 1px solid rgba(196, 44, 44, .35);
+}
+.sz-block { background: rgba(196, 44, 44, .34); }
+.sz-safe { position: absolute; display: block; border: 1px dashed rgba(255, 255, 255, .82); }
+.sz-label {
+  position: absolute; left: 50%; bottom: -18px; transform: translateX(-50%);
+  background: rgba(12, 12, 13, .78); color: #fff; border-radius: 4px;
+  padding: 2px 6px; font-size: 9px; white-space: nowrap;
+}
+.safe-zone-panel { display: grid; gap: 7px; }
+.safe-zone-list { grid-template-columns: repeat(3, minmax(0, 1fr)); font-size: 10px; }
+.sz-source { margin: -2px 0 0; font-size: 9.5px; line-height: 1.35; }
+.sz-warn { margin: 2px 0 0; color: var(--red); font-size: 9.5px; line-height: 1.35; }
+.safe-zone { overflow: hidden; }
+.safe-frame { box-shadow: 0 0 0 100vmax rgba(10, 10, 10, .52); outline: 1px solid rgba(255,255,255,.85); }

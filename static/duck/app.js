@@ -93,6 +93,8 @@ const state = {
   transcriptSideHidden: false,
   transcriptAlpha: 100,
   timelineZoom: 1,
+  safeZone: 'off',
+  safeZoneOpen: false,
   cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
@@ -3016,7 +3018,7 @@ function proofStepBar(hasProof) {
   </div>`;
 }
 
-function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = false, inlineCta = true } = {}) {
+function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = false, inlineCta = true, overlay = '' } = {}) {
   const view = state.previewView || 'compare';
   if (!scene) return '';
   if (state.inlinePlaying) {
@@ -3038,29 +3040,30 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = 
   const beforeMarkup = `<img src="${frameUrl(shot)}" alt="Before">`;
   const afterMarkup = `<img src="${after}" alt="After">`;
   const cleaningMarkup = showCleaning && blurred ? `<span class="cleaning-pill"><span class="dot"></span>Cleaning ${readyCount}/${scenes.length}</span>` : '';
-  const overlay = `<div class="media-overlay"><button type="button" data-action="play-source" aria-label="Play source">${icon('play', 14)}</button><span class="tc">${fmtTC(scene.start, 24)} – ${fmtTC(scene.end, 24)}</span><span class="spacer"></span><span class="small" style="opacity:.82">${esc(cleanState(scene))}</span></div>`;
+  const mediaOverlay = `<div class="media-overlay"><button type="button" data-action="play-source" aria-label="Play source">${icon('play', 14)}</button><span class="tc">${fmtTC(scene.start, 24)} – ${fmtTC(scene.end, 24)}</span><span class="spacer"></span><span class="small" style="opacity:.82">${esc(cleanState(scene))}</span></div>`;
+  const safeOverlay = overlay;
   const cta = `<div class="proof-cta"><span>${cached ? 'Blur proof ready.' : 'No proof yet. A proof is a fast blur, not the AI fill.'}</span><button class="btn small${cached ? '' : ' primary'}" type="button" data-action="prove-scene" data-index="${at}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 12)} ${cached ? 'Prove again' : 'Prove this scene'}</button></div>`;
 
   if (steps) {
     const step = cached ? (state.proofStep || 1) : 1;
-    const detect = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}${proofBoxes(scene)}<span class="split-tag before">Detect · blur area</span>${overlay}</div>`;
+    const detect = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}${proofBoxes(scene)}<span class="split-tag before">Detect · blur area</span>${mediaOverlay}${overlay}</div>`;
     const compare = `<div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
       ${beforeMarkup}
       <div class="after-layer">${afterMarkup}</div>
       <span class="split-tag before">Before</span>
       <span class="split-tag after">After · blur</span>
       <span class="split-handle" aria-hidden="true"></span>
-      ${overlay}
+      ${mediaOverlay}${overlay}
     </div>`;
-    const review = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer">${afterMarkup}</div><span class="split-tag after">After · blur</span>${overlay}</div>`;
+    const review = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer">${afterMarkup}</div><span class="split-tag after">After · blur</span>${mediaOverlay}${overlay}</div>`;
     return `<div class="proof-frame">${proofStepBar(Boolean(cached))}${step === 1 ? detect : step === 2 ? compare : review}${inlineCta ? cta : ''}</div>`;
   }
 
   if (view === 'before') {
-    return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}<span class="split-tag before">Before</span>${overlay}</div>`;
+    return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}<span class="split-tag before">Before</span>${mediaOverlay}${overlay}</div>`;
   }
   if (view === 'after') {
-    return `<div class="proof-frame"><div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${overlay}</div>${cta}</div>`;
+    return `<div class="proof-frame"><div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${mediaOverlay}${safeOverlay}</div>${cta}</div>`;
   }
   return `<div class="proof-frame"><div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
     ${beforeMarkup}
@@ -3069,7 +3072,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = 
     <span class="split-tag after">After</span>
     <span class="split-handle" aria-hidden="true"></span>
     ${cleaningMarkup}
-    ${overlay}
+    ${mediaOverlay}${safeOverlay}
   </div>${cta}</div>`;
 }
 
@@ -3089,6 +3092,126 @@ function mediaAspect() {
 
 /* ------------------------------------------------------------------ preview */
 
+const SAFE_ZONES = {
+  tiktok: {
+    label: 'TikTok', ratio: 9 / 16,
+    top: 240 / 1920, bottom: 660 / 1920, left: 120 / 1080, right: 120 / 1080,
+    block: { x: 780 / 1080, y: 840 / 1920, w: 180 / 1080, h: 1080 / 1920 },
+    source: 'TikTok In-Feed safe-zone template, 720×1280 scaled ×1.5',
+  },
+  reels: {
+    label: 'Reels', ratio: 9 / 16,
+    top: 0.14, bottom: 0.35, left: 0.06, right: 0.06,
+    block: { x: 1 - 0.06 - 0.16, y: 0.60, w: 0.16, h: 0.40 },
+    source: 'Meta Ads Guide: 14 % top, 35 % bottom, 6 % sides',
+  },
+  shorts: {
+    label: 'Shorts', ratio: 9 / 16,
+    top: 288 / 1920, bottom: 672 / 1920, left: 48 / 1080, right: 192 / 1080,
+    source: 'Google universal vertical ad template: 288 / 672 / 48 / 192 px',
+  },
+  ig45: {
+    label: 'IG 4:5', ratio: 4 / 5, titleSafe: 0.10,
+    source: 'No player chrome in Feed; 10 % title-safe; the 3:4 profile grid trims about 34 px a side',
+  },
+  ig11: {
+    label: 'IG 1:1', ratio: 1, titleSafe: 0.10,
+    source: 'No player chrome in Feed; 10 % title-safe; the 3:4 profile grid trims about 135 px a side',
+  },
+  youtube: {
+    label: 'YouTube 16:9', ratio: 16 / 9, titleSafe: 0.10,
+    source: 'No chrome over a 16:9 frame; 10 % title-safe is a convention, Google publishes its 16:9 template as an image',
+  },
+};
+
+function cutOutputRatio() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const sw = Number(meta.width || 0);
+  const sh = Number(meta.height || 0);
+  const cut = state.edit?.cut || {};
+  const crop = cut.crop;
+  if (crop) {
+    const cw = Math.max(0.02, Number(crop.w) || 1);
+    const ch = Math.max(0.02, Number(crop.h) || 1);
+    return ((sw || 16) * cw) / ((sh || 9) * ch);
+  }
+  const sizes = { '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '16:9': 16 / 9 };
+  if (cut.aspect && sizes[cut.aspect]) return sizes[cut.aspect];
+  return sw && sh ? sw / sh : 16 / 9;
+}
+
+function safeZoneFrame() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const sw = Number(meta.width || 0);
+  const sh = Number(meta.height || 0);
+  const stageRatio = sw && sh ? sw / sh : 16 / 9;
+  const outRatio = cutOutputRatio();
+  return outRatio >= stageRatio
+    ? { width: 100, height: (stageRatio / outRatio) * 100 }
+    : { width: (outRatio / stageRatio) * 100, height: 100 };
+}
+
+function safeZoneOverlay() {
+  const zone = SAFE_ZONES[state.safeZone];
+  if (!zone) return '';
+  const frame = safeZoneFrame();
+  const bands = [];
+  const safe = {};
+  if (zone.titleSafe) {
+    const inset = zone.titleSafe;
+    ['top', 'bottom', 'left', 'right'].forEach((edge) => {
+      const style = {
+        top: `top:0;left:0;right:0;height:${inset * 100}%`,
+        bottom: `bottom:0;left:0;right:0;height:${inset * 100}%`,
+        left: `left:0;top:0;bottom:0;width:${inset * 100}%`,
+        right: `right:0;top:0;bottom:0;width:${inset * 100}%`,
+      }[edge];
+      bands.push(`<span class="sz-band" style="${style}"></span>`);
+    });
+    Object.assign(safe, { left: inset, right: inset, top: inset, bottom: inset });
+  } else {
+    bands.push(`<span class="sz-band" style="top:0;left:0;right:0;height:${zone.top * 100}%"></span>`);
+    bands.push(`<span class="sz-band" style="bottom:0;left:0;right:0;height:${zone.bottom * 100}%"></span>`);
+    bands.push(`<span class="sz-band" style="left:0;top:${zone.top * 100}%;height:${(1 - zone.top - zone.bottom) * 100}%;width:${zone.left * 100}%"></span>`);
+    bands.push(`<span class="sz-band" style="right:0;top:${zone.top * 100}%;height:${(1 - zone.top - zone.bottom) * 100}%;width:${zone.right * 100}%"></span>`);
+    if (zone.block) {
+      bands.push(`<span class="sz-band sz-block" style="left:${zone.block.x * 100}%;top:${zone.block.y * 100}%;width:${zone.block.w * 100}%;height:${zone.block.h * 100}%"></span>`);
+    }
+    safe.left = zone.left;
+    safe.right = zone.right;
+    safe.top = zone.top;
+    safe.bottom = zone.bottom;
+  }
+  const outline = `<span class="sz-safe" style="left:${safe.left * 100}%;right:${safe.right * 100}%;top:${safe.top * 100}%;bottom:${safe.bottom * 100}%"></span>`;
+  return `<div class="safe-zone" aria-label="${esc(zone.label)} safe zone">
+    <div class="safe-frame" style="width:${frame.width.toFixed(2)}%;height:${frame.height.toFixed(2)}%">
+      ${bands.join('')}${outline}
+      <span class="sz-label">${esc(zone.label)} · safe area</span>
+    </div>
+  </div>`;
+}
+
+function safeZoneMatches(zone) {
+  if (!zone) return false;
+  return Math.abs(cutOutputRatio() - zone.ratio) <= 0.01;
+}
+
+function safeZonePanel() {
+  const zone = SAFE_ZONES[state.safeZone];
+  const mismatch = zone && !safeZoneMatches(zone);
+  return `<div class="safe-zone-panel">
+    <button class="btn wide${state.safeZoneOpen ? ' primary' : ''}" type="button" data-action="safe-zone-toggle" aria-pressed="${state.safeZoneOpen}">${icon('grid', 13)} Safe zones${zone ? ` · ${esc(zone.label)}` : ''}</button>
+    ${state.safeZoneOpen ? `<div class="segmented safe-zone-list">
+      <button class="${state.safeZone === 'off' ? 'is-active' : ''}" type="button" data-action="safe-zone" data-zone="off">Off</button>
+      ${Object.entries(SAFE_ZONES).map(([id, item]) => `<button class="${state.safeZone === id ? 'is-active' : ''}" type="button" data-action="safe-zone" data-zone="${id}">${esc(item.label)}</button>`).join('')}
+    </div>
+    <p class="small muted sz-source">${esc(zone ? zone.source : 'Pick a platform. Guides are drawn on the Cut output frame.')}</p>
+    ${mismatch ? `<p class="small sz-warn">This guide is ${zone.ratio > 1 ? '16:9' : zone.ratio === 1 ? '1:1' : zone.ratio === 0.8 ? '4:5' : '9:16'}; the Cut is another shape. Set the Cut aspect first, or the guide is not true.</p>` : ''}` : ''}
+  </div>`;
+}
+
+
+
 function screenPreview() {
   const scenes = getScenes();
   const scene = currentScene();
@@ -3105,7 +3228,7 @@ function screenPreview() {
     <div class="workspace preview${portrait ? ' portrait' : ''}">
       <section class="preview-main">
         <section class="panel preview-stage${portrait ? ' portrait-stage' : ''}" style="overflow:hidden;--stage-ratio:${ratio}">
-          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true, steps: true, inlineCta: false })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true, steps: true, inlineCta: false, overlay: state.safeZone !== 'off' && safeZoneMatches(SAFE_ZONES[state.safeZone]) ? safeZoneOverlay() : '' })}
         </section>
         <section class="panel preview-scenes">
           <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${proofScenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
@@ -3133,6 +3256,7 @@ function screenPreview() {
           <div class="panel-pad" style="padding-top:0;display:grid;gap:9px">
             <button class="btn wide" type="button" data-action="play-source">${icon('play', 14)} Play detection review</button>
             <button class="btn wide" type="button" data-action="prove-scene" data-index="${state.selectedScene}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${state.previewCache.has(scene.id) ? 'Prove this scene again · blur' : 'Prove this scene · blur'}</button>
+            ${safeZonePanel()}
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
             <button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all</button>
             ${status === 'failed' ? `<p class="small" style="color:var(--red)">This scene failed. Retry before render.</p>` : ''}
@@ -4538,6 +4662,12 @@ document.addEventListener('click', async (event) => {
     else if (action === 'audio-mute' || action === 'audio-solo') await toggleAudioTrack(target.dataset.track || '', action === 'audio-mute' ? 'muted' : 'solo');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
+    else if (action === 'safe-zone-toggle') { state.safeZoneOpen = !state.safeZoneOpen; render(); }
+    else if (action === 'safe-zone') {
+      state.safeZone = target.dataset.zone || 'off';
+      if (state.safeZone === 'off') state.safeZoneOpen = false;
+      render();
+    }
     else if (action === 'preview-reclean') {
       const scenes = getScenes();
       const scene = currentScene();

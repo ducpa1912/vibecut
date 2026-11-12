@@ -381,3 +381,10 @@ reset; the four Look presets moved out of SFX; render and proof respect the Cut.
 enhance loop 19.
 **Numbers:** 9:16 player ratio 0.5625, render-path frame 1080x1920; crop h=0.6 ratio 2.963; source
 chain unchanged (test); proof cache key includes the Cut; 188 tests.
+
+### REQ-20261112-05 · 2026-11-12 · loop 15 closed
+**Request:** safe zones per social platform on the Preview panel, refreshed by the Cut.
+**Shipped:** six cited guides plus Off, drawn on the Cut output frame inside the picture, with the
+outside dimmed; no guide on a mismatched shape, a warning instead; refresh follows a Cut change.
+**Numbers:** 7 chips; TikTok frame 331x588 / 280x498, ratio 0.563, 5 bands + block; IG 4:5/1:1 4
+bands; Cut 1:1 -> frame ratio 1.000 without reload; YouTube on a 1:1 Cut draws nothing and warns.
