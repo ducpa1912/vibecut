@@ -108,3 +108,30 @@ Accept: the three new measures are 0 / ≥ 80 % at 1440×900 and 1280×800, port
 fixture; all earlier items still pass; new `after-*` captures replace the old ones and you have
 looked at each one; `founder-test.md` matches the new screens. Tests, `node --check`, the Xcode
 build pass; `textfill.VERSION` 17. "Revision 1" on top of `review.md`. One commit, pushed.
+
+## Revision 2 (Senior PO, 2026-11-12) — after looking at the captures of `0ee5fb9`
+
+Preview is accepted: the picture is the player now. Edit is not. Three things, all in
+`after-edit-1440x900.jpg` and `after-edit-1280x800.jpg`.
+
+1. **Two sets of controls on the Edit player.** The browser's own controls are showing (play,
+   "0:00 / 2:40", volume, full screen, the three dots) and the app's timecode
+   "00:00:00 / 00:02:40" is drawn across the browser's scrub bar. One control set only, the app's
+   own, styled like Preview's. Measure: the `<video>` has no `controls` attribute on any screen;
+   zero intersection between any two control or timecode boxes.
+2. **The transcript is unreadable and sits on the picture.** White text on a blurred photo, three
+   wrapped lines over the plate at 1280. There are now about 230 px (1440) and 115 px (1280) of
+   empty paper on each side of the portrait picture. Put the transcript in that paper, beside the
+   picture, as dark text on the panel colour; the picture is clear of it. For a landscape picture,
+   where there is no paper beside it, the transcript sits under the picture, not on it.
+   Measure: zero intersection between the transcript box and the picture rectangle; text contrast
+   at least 4.5 : 1 against its own background, computed from the two colours; the line reads in
+   at most two lines at 1280×800 for this project's cue.
+3. **Dark vertical bars on the scenes list.** The list has a dark line about 2 px wide down its
+   left and right edges. Remove them; the list's edge is the panel's hairline. Measure: no border
+   or outline on the list or its rows darker than the panel border colour.
+
+Add the three measures to `scripts/measure-layout.mjs`. All earlier items still pass at both sizes,
+portrait and the 16:9 fixture. New captures replace the old; look at each. `founder-test.md`
+matches. Tests, `node --check`, Xcode build; `textfill.VERSION` 17. "Revision 2" on top of
+`review.md`. One commit, pushed.
