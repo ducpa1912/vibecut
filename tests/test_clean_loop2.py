@@ -323,3 +323,75 @@ def test_a_cut_between_frames_does_not_hand_the_next_line_the_wrong_hole() -> No
     assert len(table[3]) == 1
     rect = table[3][0]
     assert rect[0] <= int(0.228 * 1080) + 2, "the new line's own hole must cover its first frame"
+
+
+def test_patch_box_normalizes_and_marks_the_layer() -> None:
+    edit = {"clean": [{"id": "cl_box", "kind": "fill", "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}}]}
+    out = clean.patch_box(edit, "cl_box", {"x": 0.95, "y": -0.2, "w": 0.4, "h": 0.05})
+    layer = out["clean"][0]
+    assert layer["auto"] is False
+    assert layer["box"] == {"x": 0.6, "y": 0.0, "w": 0.4, "h": 0.05}
+
+
+def test_patch_box_rejects_missing_numbers() -> None:
+    edit = {"clean": [{"id": "cl_box", "kind": "fill"}]}
+    try:
+        clean.patch_box(edit, "cl_box", {"x": 0.1})
+    except ValueError as exc:
+        assert "four numbers" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("a missing box should fail")
+
+
+def test_proof_layers_blur_every_enabled_layer_and_skip_off() -> None:
+    from duckcore.preview import proof_layers
+    from duckcore.render import _fill_layers
+
+    active = [
+        {"id": "a", "kind": "fill", "enabled": True},
+        {"id": "b", "kind": "blur", "enabled": True},
+        {"id": "c", "kind": "fill", "enabled": False},
+    ]
+    layers = proof_layers(active, "blur")
+    assert [layer["kind"] for layer in layers] == ["blur", "blur"]
+    assert active[0]["kind"] == "fill"  # the source is not mutated
+    assert _fill_layers({"clean": layers}) == []
+    assert proof_layers(active, "clean") == active
+
+
+def test_a_manual_box_survives_a_replan() -> None:
+    fresh = [{"id": "cl_box", "kind": "fill", "method": "lama", "enabled": True, "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, "track": [{"t": 0.0, "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}}]}]
+    previous = [{"id": "cl_box", "kind": "blur", "enabled": True, "auto": False, "box": {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2}}]
+    merged = clean.merge_layers(previous, fresh)
+    assert merged[0]["kind"] == "blur"
+    assert merged[0]["box"] == {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2}
+    assert merged[0]["track"] is None
+
+
+def test_patch_box_route_updates_and_rejects_the_unknown_layer(tmp_path: Path) -> None:
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from duckcore.main import create_app
+
+    edit_dir = tmp_path / "projects" / "prj_box" / "edits"
+    edit_dir.mkdir(parents=True)
+    edit = {"id": "ed_box", "project_id": "prj_box", "clean": [{"id": "cl_box", "kind": "fill", "enabled": True}]}
+    (edit_dir / "ed_box.json").write_text(json.dumps(edit), encoding="utf-8")
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+    with TestClient(app) as client:
+        ok = client.patch(
+            "/api/projects/prj_box/edits/ed_box/clean/cl_box/box",
+            headers=headers,
+            json={"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["edit"]["clean"][0]["box"] == {"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1}
+        missing = client.patch(
+            "/api/projects/prj_box/edits/ed_box/clean/nope/box",
+            headers=headers,
+            json={"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1},
+        )
+        assert missing.status_code == 404

@@ -33,7 +33,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 178 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 183 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
@@ -67,12 +67,6 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 Only requests whose loop is still open stay here. A new request appends one entry before code; a
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
-
-### REQ-20261112-01 · 2026-11-12
-**Request:** "Proofs become so slow ... proofs just need to be a quick blur ... optional not auto ... proof check should be step by step, detect (blur area)/ compare the slip screen, also re-clean this scene will take back to clean focus".
-**Read as:** A proof is an opt-in blurred detection frame in three steps; Re-clean opens Clean Focus on that scene with box, brush and re-apply.
-**Response:** Loop 11: blur proofs through the render path, click-only, step tabs, route to Clean Focus.
-**Outcome:** open.
 
 ### REQ-20261112-02 · 2026-11-12
 **Request:** "In edit: the transcript overlay did not have the tranparency slider. Player runtime being block by the transcript, volume is block by the transcript overlay".

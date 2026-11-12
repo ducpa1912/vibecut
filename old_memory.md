@@ -351,3 +351,11 @@ row lost its speaker chip and menu.
 and Hide/Show in place of CC; the old ⇕ is superseded.
 **Numbers:** mute/volume/full probed on Check, Edit and inline; control overlaps 0; transcript
 contrast 14.99:1, 2 lines at 1280. 178 tests; `VERSION` 17.
+
+### REQ-20261112-01 · 2026-11-12 · loop 11 closed
+**Request:** proofs are too slow; make them a quick blur, optional, step by step, and send Re-clean
+back to Clean Focus.
+**Shipped:** `mode=blur` on the proof endpoint (no fill, no fill cache), click-only proofs, three
+steps, Re-clean routing, editable fill box (track dropped so render and proof agree).
+**Numbers:** blur proof 0.98 s cold / 0.02 s cached at 1080p; 0 auto requests on opening Edit,
+Preview or Clean; 0 fill files; `textfill.VERSION` 17; 183 tests.

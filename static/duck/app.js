@@ -52,6 +52,7 @@ const state = {
   queuePaused: false,
   queueScope: 'project',
   previewView: 'after',
+  proofStep: 1,
   inlinePlaying: false,
   scriptOpen: false,
   scriptBusy: false,
@@ -628,16 +629,14 @@ function frameUrl(time, projectId = state.project?.id) {
   return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/frame`, { time: Math.max(0, Number(time) || 0).toFixed(3) });
 }
 
-function cleanPreviewUrl(time) {
+function cleanPreviewUrl(time, mode = 'blur') {
   if (!state.project || !state.edit) return '';
-  return mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/preview`, {
+  const params = {
     time: Math.max(0, Number(time) || 0).toFixed(3),
     v: state.cleanVersion,
-  });
-}
-
-function cleanImg(url, alt, placeholder) {
-  return `<img src="${esc(placeholder)}" data-clean-src="${esc(url)}" alt="${esc(alt)}">`;
+  };
+  if (mode === 'blur') params.mode = 'blur';
+  return mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/preview`, params);
 }
 
 const cleanFetchQueue = [];
@@ -760,14 +759,6 @@ async function route() {
     state.screen = routeInfo.screen;
     if (['edit', 'clean', 'preview', 'render'].includes(routeInfo.screen)) await ensureEdit();
     if (routeInfo.screen === 'check' && state.check?.state === 'idle') await startCheck();
-    if (routeInfo.screen === 'preview') {
-      const scene = currentScene();
-      if (scene) startPreviewClean(scene.id);
-    }
-    if (routeInfo.screen === 'clean' && state.edit) {
-      const scene = currentScene();
-      if (scene && !state.previewCache.has(scene.id)) startPreviewClean(scene.id);
-    }
     render();
   } catch (error) {
     toast(`Project could not open: ${error.message}`, 'bad');
@@ -1602,11 +1593,14 @@ function layerListMarkup(active, layers, emptyText = 'No text detected in this s
 
 function inspectorClean(scene, layer, layers) {
   if (!state.edit) return `<p class="small muted">Editor data is still loading. Clean controls appear when Check finishes.</p>`;
+  const proof = state.previewCache.get(scene.id) || '';
+  const sceneIndex = getScenes().indexOf(scene);
   return `<div class="proof-pair">
     <figure><div class="frame"><img src="${frameUrl(sceneMid(scene))}" alt=""></div><figcaption>Before</figcaption></figure>
     <span class="arrow">${icon('chevronRight', 14)}</span>
-    <figure><div class="frame">${sceneLayers(scene).length ? cleanImg(cleanPreviewUrl(sceneMid(scene)), 'After', frameUrl(sceneMid(scene))) : `<img src="${frameUrl(sceneMid(scene))}" alt="">`}</div><figcaption>After</figcaption></figure>
+    <figure><div class="frame"><img src="${proof || frameUrl(sceneMid(scene))}" alt="After"></div><figcaption>${proof ? 'After · blur proof' : 'After · no proof yet'}</figcaption></figure>
   </div>
+  <button class="btn wide" type="button" data-action="prove-scene" data-index="${sceneIndex}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${proof ? 'Prove again' : 'Prove this scene'}</button>
   <div class="segmented">
     ${['fill', 'blur', 'exclude'].map((action) => {
       const label = action === 'exclude' ? 'Off' : action[0].toUpperCase() + action.slice(1);
@@ -1615,6 +1609,16 @@ function inspectorClean(scene, layer, layers) {
     }).join('')}
   </div>
   ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
+  ${layer ? `<div class="box-editor">
+    <span class="rail-head">Fill box · normalized</span>
+    <div class="box-grid">
+      <label>X <input id="box-x" type="number" min="0" max="1" step="0.005" value="${Number(layer.box?.x || 0).toFixed(3)}"></label>
+      <label>Y <input id="box-y" type="number" min="0" max="1" step="0.005" value="${Number(layer.box?.y || 0).toFixed(3)}"></label>
+      <label>W <input id="box-w" type="number" min="0.01" max="1" step="0.005" value="${Number(layer.box?.w || 0.1).toFixed(3)}"></label>
+      <label>H <input id="box-h" type="number" min="0.01" max="1" step="0.005" value="${Number(layer.box?.h || 0.1).toFixed(3)}"></label>
+    </div>
+    <div class="box-actions"><button class="btn small" type="button" data-action="box-apply" data-layer="${esc(layer.id)}">Apply box</button><button class="btn small" type="button" data-action="recheck-scene">Re-check &amp; re-apply</button></div>
+  </div>` : ''}
   <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
   ${layerListMarkup(layer, layers)}
   <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
@@ -2404,6 +2408,7 @@ function screenClean() {
   const layers = sceneLayers(scene);
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const checked = sceneCleanCount(allScenes);
+  const hasProof = state.previewCache.has(scene.id);
   const detectPct = Math.round(stagePct('text') * 100);
   return `<main class="screen">
     <div class="workspace clean">
@@ -2458,7 +2463,7 @@ function screenClean() {
           <div class="proof-pair">
             <figure><div class="frame"><img src="${frameUrl(sceneMid(scene))}" alt=""></div><figcaption>Before</figcaption></figure>
             <span class="arrow">${icon('chevronRight', 14)}</span>
-            <figure><div class="frame"><img src="${afterFrameUrl(scene)}" alt=""></div><figcaption>${state.previewCache.has(scene.id) ? 'After' : 'After · cleaning…'}</figcaption></figure>
+            <figure><div class="frame"><img src="${afterFrameUrl(scene)}" alt=""></div><figcaption>${state.previewCache.has(scene.id) ? 'After' : 'After · no proof yet'}</figcaption></figure>
           </div>
           <div class="segmented">
             ${['fill', 'blur', 'exclude'].map((action) => {
@@ -2468,8 +2473,19 @@ function screenClean() {
             }).join('')}
           </div>
           ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
+          ${layer ? `<div class="box-editor">
+            <span class="rail-head">Fill box · normalized</span>
+            <div class="box-grid">
+              <label>X <input id="box-x" type="number" min="0" max="1" step="0.005" value="${Number(layer.box?.x || 0).toFixed(3)}"></label>
+              <label>Y <input id="box-y" type="number" min="0" max="1" step="0.005" value="${Number(layer.box?.y || 0).toFixed(3)}"></label>
+              <label>W <input id="box-w" type="number" min="0.01" max="1" step="0.005" value="${Number(layer.box?.w || 0.1).toFixed(3)}"></label>
+              <label>H <input id="box-h" type="number" min="0.01" max="1" step="0.005" value="${Number(layer.box?.h || 0.1).toFixed(3)}"></label>
+            </div>
+            <div class="box-actions"><button class="btn small" type="button" data-action="box-apply" data-layer="${esc(layer.id)}">Apply box</button><button class="btn small" type="button" data-action="recheck-scene">Re-check &amp; re-apply</button></div>
+          </div>` : ''}
           <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
+          <button class="btn wide" type="button" data-action="prove-scene" data-index="${allScenes.indexOf(scene)}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${hasProof ? 'Prove again · blur' : 'Prove this scene · blur'}</button>
           <button class="btn wide" type="button" data-action="brush-toggle">${icon('sparkle', 14)} ${state.brushMode ? 'Close brush' : 'Paint a mask'}</button>
           <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
           ${checked === scenes.length
@@ -2758,10 +2774,9 @@ async function applyBrush() {
     state.brushStrokes = [];
     state.selectedLayerId = data.layer?.id || '';
     state.previewCache.delete(scene.id);
-    state.previewStatus.set(scene.id, 'queued');
+    state.previewStatus.set(scene.id, 'pending');
     render();
     toast('Brush mask added.');
-    startPreviewClean(scene.id);
   } catch (error) {
     toast(`Brush: ${error.message}`, 'bad');
   }
@@ -2847,7 +2862,44 @@ function setupInlineDetectionReview() {
   update();
 }
 
-function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
+function proofTime(scene) {
+  const layers = sceneLayers(scene).filter((layer) => layer.enabled !== false && (layer.ranges || []).length);
+  if (!layers.length) return Number(sceneMid(scene));
+  const first = layers[0].ranges[0] || {};
+  return Number(first.start ?? scene.start ?? 0) + 0.05;
+}
+
+function proofBoxes(scene) {
+  const at = Number(proofTime(scene));
+  const live = (layer) => {
+    const ranges = layer.ranges || [];
+    if (!ranges.length) return true;
+    return ranges.some((range) => Number(range.start || 0) <= at && at <= Number(range.end || 0));
+  };
+  const boxAt = (layer) => {
+    const track = layer.track || [];
+    if (!track.length) return layer.box;
+    return track.reduce((best, item) => (
+      Math.abs(Number(item.t || 0) - at) < Math.abs(Number(best.t || 0) - at) ? item : best
+    ), track[0]).box || layer.box;
+  };
+  return sceneLayers(scene)
+    .filter((layer) => layer.enabled !== false && live(layer))
+    .map((layer) => {
+      const box = boxAt(layer);
+      if (!box) return '';
+      return `<span class="proof-box" style="left:${(Number(box.x || 0) * 100).toFixed(2)}%;top:${(Number(box.y || 0) * 100).toFixed(2)}%;width:${(Number(box.w || 0) * 100).toFixed(2)}%;height:${(Number(box.h || 0) * 100).toFixed(2)}%"></span>`;
+    }).join('');
+}
+
+function proofStepBar(hasProof) {
+  const step = hasProof ? (state.proofStep || 1) : 1;
+  return `<div class="proof-steps" aria-label="Proof steps">
+    ${[[1, 'Detect'], [2, 'Compare'], [3, 'Review']].map(([number, label]) => `<button class="proof-step${step === number ? ' is-active' : ''}" type="button" data-action="proof-step" data-step="${number}" ${number > 1 && !hasProof ? 'disabled' : ''} aria-pressed="${step === number}">${number} · ${label}</button>`).join('')}
+  </div>`;
+}
+
+function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = false, inlineCta = true } = {}) {
   const view = state.previewView || 'compare';
   if (!scene) return '';
   if (state.inlinePlaying) {
@@ -2858,26 +2910,42 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
       <button class="btn small inline-close" type="button" data-action="close-inline-player">${icon('arrowLeft', 12)} Back to proof</button>
     </div>`;
   }
+  const at = getScenes().indexOf(scene);
+  const shot = steps ? proofTime(scene) : Number(sceneMid(scene));
   const status = state.previewStatus.get(scene.id) || 'pending';
-  const cached = state.previewCache.get(scene.id);
-  const after = cached || (useCleanUrl && sceneLayers(scene).length ? cleanPreviewUrl(sceneMid(scene)) : frameUrl(sceneMid(scene)));
+  const cached = state.previewCache.get(scene.id) || '';
+  const after = cached || frameUrl(shot);
   const blurred = showCleaning && status === 'cleaning';
-  const ready = state.previewStatus.get(scene.id) === 'ready';
   const scenes = getScenes();
-  const readyCount = scenes.filter((item) => state.previewStatus.get(item.id) === 'ready').length;
-  const afterMarkup = useCleanUrl && !cached && sceneLayers(scene).length
-    ? cleanImg(cleanPreviewUrl(sceneMid(scene)), 'After', frameUrl(sceneMid(scene)))
-    : `<img src="${after}" alt="After">`;
-  const beforeMarkup = `<img src="${frameUrl(sceneMid(scene))}" alt="Before">`;
+  const readyCount = scenes.filter((item) => state.previewCache.has(item.id)).length;
+  const beforeMarkup = `<img src="${frameUrl(shot)}" alt="Before">`;
+  const afterMarkup = `<img src="${after}" alt="After">`;
   const cleaningMarkup = showCleaning && blurred ? `<span class="cleaning-pill"><span class="dot"></span>Cleaning ${readyCount}/${scenes.length}</span>` : '';
   const overlay = `<div class="media-overlay"><button type="button" data-action="play-source" aria-label="Play source">${icon('play', 14)}</button><span class="tc">${fmtTC(scene.start, 24)} – ${fmtTC(scene.end, 24)}</span><span class="spacer"></span><span class="small" style="opacity:.82">${esc(cleanState(scene))}</span></div>`;
+  const cta = `<div class="proof-cta"><span>${cached ? 'Blur proof ready.' : 'No proof yet. A proof is a fast blur, not the AI fill.'}</span><button class="btn small${cached ? '' : ' primary'}" type="button" data-action="prove-scene" data-index="${at}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 12)} ${cached ? 'Prove again' : 'Prove this scene'}</button></div>`;
+
+  if (steps) {
+    const step = cached ? (state.proofStep || 1) : 1;
+    const detect = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}${proofBoxes(scene)}<span class="split-tag before">Detect · blur area</span>${overlay}</div>`;
+    const compare = `<div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
+      ${beforeMarkup}
+      <div class="after-layer">${afterMarkup}</div>
+      <span class="split-tag before">Before</span>
+      <span class="split-tag after">After · blur</span>
+      <span class="split-handle" aria-hidden="true"></span>
+      ${overlay}
+    </div>`;
+    const review = `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer">${afterMarkup}</div><span class="split-tag after">After · blur</span>${overlay}</div>`;
+    return `<div class="proof-frame">${proofStepBar(Boolean(cached))}${step === 1 ? detect : step === 2 ? compare : review}${inlineCta ? cta : ''}</div>`;
+  }
+
   if (view === 'before') {
     return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}<span class="split-tag before">Before</span>${overlay}</div>`;
   }
   if (view === 'after') {
-    return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${overlay}</div>`;
+    return `<div class="proof-frame"><div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${overlay}</div>${cta}</div>`;
   }
-  return `<div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
+  return `<div class="proof-frame"><div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
     ${beforeMarkup}
     <div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div>
     <span class="split-tag before">Before</span>
@@ -2885,7 +2953,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
     <span class="split-handle" aria-hidden="true"></span>
     ${cleaningMarkup}
     ${overlay}
-  </div>`;
+  </div>${cta}</div>`;
 }
 
 function mediaResolution() {
@@ -2920,7 +2988,7 @@ function screenPreview() {
     <div class="workspace preview${portrait ? ' portrait' : ''}">
       <section class="preview-main">
         <section class="panel preview-stage${portrait ? ' portrait-stage' : ''}" style="overflow:hidden;--stage-ratio:${ratio}">
-          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true, steps: true, inlineCta: false })}
         </section>
         <section class="panel preview-scenes">
           <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${proofScenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
@@ -2940,16 +3008,14 @@ function screenPreview() {
         <section class="panel preview-status-card">
           <div class="preview-thumb"><img src="${frameUrl(sceneMid(scene))}" alt=""><div><h3>Scene ${pad(state.selectedScene + 1)}</h3><p>${fmtTC(scene.start)} – ${fmtTC(scene.end)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p></div></div>
           <div class="panel-rule" style="margin:12px 0"></div>
-          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'no-text' ? 'No text' : status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : 'Cleaning…'}</strong><span>${status === 'no-text' ? 'Nothing to clean in this scene.' : status === 'ready' ? 'Review the before / after' : 'Building a proof frame from this scene.'}</span></span></div>
+          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'no-text' ? 'No text' : status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : status === 'cleaning' ? 'Cleaning…' : 'No proof yet'}</strong><span>${status === 'no-text' ? 'Nothing to clean in this scene.' : status === 'ready' ? 'Review it in the steps below' : status === 'cleaning' ? 'Building a blur proof from this scene.' : 'A proof is a fast blur; press Prove this scene.'}</span></span></div>
         </section>
 
         <section class="panel preview-actions">
           <div class="panel-head" style="padding-bottom:8px"><h2>Preview</h2><span class="meta">${ready}/${proofScenes.length}</span></div>
           <div class="panel-pad" style="padding-top:0;display:grid;gap:9px">
-            <div class="segmented">
-              ${['before', 'compare', 'after'].map((view) => `<button class="${state.previewView === view ? 'is-active' : ''}" type="button" data-action="preview-view" data-view="${view}">${view[0].toUpperCase() + view.slice(1)}</button>`).join('')}
-            </div>
             <button class="btn wide" type="button" data-action="play-source">${icon('play', 14)} Play detection review</button>
+            <button class="btn wide" type="button" data-action="prove-scene" data-index="${state.selectedScene}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${state.previewCache.has(scene.id) ? 'Prove this scene again · blur' : 'Prove this scene · blur'}</button>
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
             <button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all</button>
             ${status === 'failed' ? `<p class="small" style="color:var(--red)">This scene failed. Retry before render.</p>` : ''}
@@ -2960,7 +3026,7 @@ function screenPreview() {
           <div class="readiness-head"><strong>Proofs</strong><span>${ready} / ${proofScenes.length} text scenes</span></div>
           <div class="progress"><span style="width:${proofScenes.length ? (ready / proofScenes.length) * 100 : 0}%"></span></div>
           <p class="readiness-note">Proofs are optional review frames. You can render any time. ${ready}/${proofScenes.length} text scenes have a proof.</p>
-          <button class="btn wide" type="button" data-action="proof-all" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 13)} Generate remaining proofs</button>
+          <button class="btn wide" type="button" data-action="proof-all" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 13)} Prove remaining scenes · blur</button>
         </section>
 
         <button class="btn ${activeJob ? '' : 'primary'} wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon(activeJob ? 'loader' : 'arrowRight', 15)} ${activeJob ? `View active render · ${renderPercent(activeJob)}%` : 'Continue to Render'}</button>
@@ -3620,7 +3686,7 @@ function prioritizeScenes(scenes) {
   return [...scenes.slice(index), ...scenes.slice(0, index)];
 }
 
-async function startPreviewClean(forceSceneId = '') {
+async function startPreviewClean(forceSceneId = '', { mode = 'blur' } = {}) {
   if (state.previewRunning || !state.edit) return;
   const scenes = getScenes();
   if (!scenes.length) return;
@@ -3648,7 +3714,7 @@ async function startPreviewClean(forceSceneId = '') {
     state.previewStatus.set(scene.id, 'cleaning');
     updatePreviewUI();
     try {
-      const url = cleanPreviewUrl(sceneMid(scene));
+      const url = cleanPreviewUrl(proofTime(scene), mode);
       const blob = await enqueueCleanFetch(url);
       if (run !== state.previewRun) break;
       const dataUrl = await blobToDataUrl(blob);
@@ -3681,7 +3747,7 @@ async function cleanAction(layerId, action) {
     const scene = currentScene();
     if (scene) {
       state.previewCache.delete(scene.id);
-      state.previewStatus.set(scene.id, 'queued');
+      state.previewStatus.set(scene.id, 'pending');
     }
     if (state.previewRunning) {
       state.previewRun += 1;
@@ -3689,7 +3755,6 @@ async function cleanAction(layerId, action) {
     }
     render();
     toast(`Clean set to ${action === 'exclude' ? 'Off' : action}.`);
-    if (scene && ['clean', 'preview'].includes(state.screen)) startPreviewClean(scene.id);
   } catch (error) {
     toast(`Clean change failed: ${error.message}`, 'bad');
   }
@@ -3825,7 +3890,6 @@ async function cleanAll() {
       cost = estimate.text ? ` ${estimate.text}` : '';
     } catch (_) { /* the Render screen asks again */ }
     toast(`${parts.join(' · ')}.${plan.moving ? ` ${plan.moving} sit over a moving background.` : ''}${cost}`);
-    if (state.screen === 'preview') startPreviewClean();
   } catch (error) {
     toast(`Clean failed: ${error.message}`, 'bad');
   }
@@ -4279,10 +4343,8 @@ document.addEventListener('click', async (event) => {
       state.showAllCues = false;
       const selected = scenes[state.selectedScene];
       state.previewStatus.set(selected?.id, state.previewCache.has(selected?.id) ? 'ready' : (state.previewStatus.get(selected?.id) || 'pending'));
+      state.proofStep = 1;
       render();
-      if (selected && ['preview', 'clean'].includes(state.screen) && !state.previewCache.has(selected.id)) {
-        startPreviewClean(selected.id);
-      }
     } else if (action === 'select-story') {
       const index = Number(target.dataset.scene || 0);
       state.proofTab = 'stories';
@@ -4360,15 +4422,60 @@ document.addEventListener('click', async (event) => {
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
+      const scenes = getScenes();
+      const scene = currentScene();
+      state.selectedScene = Math.max(0, scenes.indexOf(scene));
+      state.selectedLayerId = sceneLayers(scene)[0]?.id || '';
+      state.proofStep = 1;
+      state.inlinePlaying = false;
+      state.screen = 'clean';
+      window.location.hash = `#/project/${state.project.id}/clean`;
+      render();
+    }
+    else if (action === 'proof-step') { state.proofStep = Number(target.dataset.step || 1); render(); }
+    else if (action === 'prove-scene') {
+      const index = Number(target.dataset.index ?? state.selectedScene);
+      const scene = getScenes()[index];
+      if (scene) {
+        state.selectedScene = index;
+        state.proofStep = 1;
+        await startPreviewClean(scene.id);
+        render();
+      }
+    }
+    else if (action === 'box-apply') {
+      const layerId = target.dataset.layer || '';
+      const value = (id) => Number(document.querySelector(`#${id}`)?.value || 0);
+      const box = { x: value('box-x'), y: value('box-y'), w: value('box-w'), h: value('box-h') };
+      if (![box.x, box.y, box.w, box.h].every(Number.isFinite) || box.w <= 0 || box.h <= 0) {
+        toast('Box needs four numbers; width and height must be above 0.', 'bad');
+        return;
+      }
+      const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/${encodeURIComponent(layerId)}/box`, { method: 'PATCH', body: JSON.stringify(box) });
+      state.edit = data.edit;
+      state.cleanVersion += 1;
       const scene = currentScene();
       if (scene) {
         state.previewCache.delete(scene.id);
-        state.previewStatus.set(scene.id, 'queued');
-        if (state.previewRunning) {
-          state.previewRun += 1;
-          state.previewRunning = false;
+        state.previewStatus.set(scene.id, 'pending');
+      }
+      render();
+      toast('Box saved. The next proof and render use it.');
+    }
+    else if (action === 'recheck-scene') {
+      const scene = currentScene();
+      try {
+        const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/from-check`, { method: 'POST' });
+        state.edit = data.edit;
+        state.cleanVersion += 1;
+        if (scene) {
+          state.previewCache.delete(scene.id);
+          state.previewStatus.set(scene.id, 'pending');
         }
-        startPreviewClean(scene.id);
+        render();
+        toast('Clean re-checked and re-applied.');
+      } catch (error) {
+        toast(`Re-check failed: ${error.message}`, 'bad');
       }
     }
     else if (action === 'verify-model') await verifyModel(target.dataset.model || '');

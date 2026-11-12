@@ -90,6 +90,13 @@ class LayerAction(BaseModel):
     action: str = Field(pattern="^(fill|blur|exclude)$")
 
 
+class LayerBox(BaseModel):
+    x: float
+    y: float
+    w: float
+    h: float
+
+
 class SettingsPatch(BaseModel):
     translation_engine: str | None = None
     translation_model_path: str | None = None
@@ -1189,8 +1196,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         request: Request,
         time: float | None = None,
         t: str | None = None,
+        mode: str = "clean",
     ) -> FileResponse:
         require_media(request, t)
+        mode = str(mode or "clean").strip().lower()
+        if mode not in {"clean", "blur"}:
+            raise HTTPException(status_code=400, detail="mode must be clean or blur.")
         try:
             project = store.get(project_id)
             edit = edits.get_edit(data_root, project_id, edit_id)
@@ -1198,8 +1209,13 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
         active, clip_scope = _proof_scope(edit, when)
+        # A proof is a detection frame: every enabled layer is blurred, so no
+        # fill model runs and no fill cache is written. Off stays Off.
+        from duckcore.preview import proof_layers
+
+        active = proof_layers(active, mode)
         clean_hash = hashlib.sha1(
-            json.dumps({"clean": active, "clip": clip_scope}, sort_keys=True).encode("utf-8")
+            json.dumps({"clean": active, "clip": clip_scope, "mode": mode}, sort_keys=True).encode("utf-8")
         ).hexdigest()[:12]
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():
@@ -1821,6 +1837,24 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Layer not found.") from exc
         except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        edits.save_edit(edit, data_root)
+        return {"edit": edit}
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/clean/{layer_id}/box")
+    def patch_clean_box(
+        project_id: str,
+        edit_id: str,
+        layer_id: str,
+        body: LayerBox,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = clean.patch_box(edit, layer_id, body.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Layer not found.") from exc
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         edits.save_edit(edit, data_root)
         return {"edit": edit}

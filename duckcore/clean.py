@@ -208,6 +208,13 @@ def merge_layers(existing: list[dict], fresh: list[dict]) -> list[dict]:
                 "enabled": previous.get("enabled", layer["enabled"]),
                 "auto": False,
             }
+            if "box" in previous:
+                # A box the user set survives a re-check, and the fresh track
+                # must not win over it in the render.
+                layer["box"] = previous["box"]
+                layer["track"] = previous.get("track")
+            if "fill_keys" in previous:
+                layer["fill_keys"] = previous["fill_keys"]
         merged.append(layer)
     return merged
 
@@ -246,6 +253,38 @@ def patch_layer(edit: dict, layer_id: str, action: str) -> dict:
             layer["enabled"] = True
             layer["kind"] = "fill"
             layer["method"] = "lama"
+        layer["auto"] = False
+        return edit
+    raise KeyError(layer_id)
+
+
+def patch_box(edit: dict, layer_id: str, box: dict) -> dict:
+    """Replace one layer's normalized box and mark it as the user's choice."""
+    for layer in edit.get("clean") or []:
+        if str(layer.get("id")) != str(layer_id):
+            continue
+        try:
+            x = float(box.get("x"))
+            y = float(box.get("y"))
+            w = float(box.get("w"))
+            h = float(box.get("h"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Box needs four numbers: x, y, w, h.") from exc
+        if not all(value == value for value in (x, y, w, h)):
+            raise ValueError("Box needs four numbers: x, y, w, h.")
+        w = max(0.01, min(1.0, w))
+        h = max(0.01, min(1.0, h))
+        x = max(0.0, min(1.0 - w, x))
+        y = max(0.0, min(1.0 - h, y))
+        layer["box"] = {
+            "x": round(x, 5),
+            "y": round(y, 5),
+            "w": round(w, 5),
+            "h": round(h, 5),
+        }
+        # The render prefers a per-frame track over the box, so a manual box
+        # would be invisible in the render while the proof shows it.
+        layer.pop("track", None)
         layer["auto"] = False
         return edit
     raise KeyError(layer_id)

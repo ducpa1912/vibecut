@@ -308,3 +308,9 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [ ] Verify a 9:16 project at 1440×900 and 1280×800.
 
 
+
+## Loop 11 — proofs (closed 2026-11-12)
+
+- [x] REQ-20261112-01 · loop 11: proofs are a blurred frame, clicked by the user, never auto
+- [x] REQ-20261112-01 · loop 11: Detect / Compare / Review steps with a step label
+- [x] REQ-20261112-01 · loop 11: Re-clean this scene opens Clean Focus on that scene, with box edit, brush and re-apply

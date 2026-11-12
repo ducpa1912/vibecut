@@ -103,7 +103,7 @@ const MEASURE = String.raw`(() => {
     return r;
   };
   // Chips, timecodes and scene labels sit on media by design: not layout overlaps.
-  const designed = (el) => Boolean(el.closest('.tc, .duration, .media-badge, .split-tag, .media-overlay'));
+  const designed = (el) => Boolean(el.closest('.tc, .duration, .media-badge, .split-tag, .media-overlay, .proof-box'));
   const screen = document.querySelector('main.screen') || document.body;
   let bottom = 0, who = '';
   const visibleBottom = (el, r) => {
@@ -160,7 +160,7 @@ const MEASURE = String.raw`(() => {
       const ix = Math.min(ca.right, cb.right) - Math.max(ca.left, cb.left);
       const iy = Math.min(ca.bottom, cb.bottom) - Math.max(ca.top, cb.top);
       if (ix > 2 && iy > 2) {
-        const stageOf = (el) => el.closest('.media-card, .split-stage');
+        const stageOf = (el) => el.closest('.proof-frame') || el.closest('.media-card') || el.closest('.split-stage');
         const playerPair = (a.kind === 'img' || b.kind === 'img')
           && stageOf(a.el) && stageOf(a.el) === stageOf(b.el);
         const intended = designed(a.el) || designed(b.el) || playerPair;
@@ -288,6 +288,17 @@ const MEASURE = String.raw`(() => {
     const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
     if (ix > 1 && iy > 1) controlOverlaps += 1;
   }
+  const stepOverlaps = (() => {
+    const steps = [...document.querySelectorAll('.proof-step')].map((el) => el.getBoundingClientRect());
+    const controls = [...document.querySelectorAll('.player-bar button, .player-bar .player-time, .player-bar .player-scrub, .media-overlay button, .media-overlay .tc, .split-tag')].map((el) => el.getBoundingClientRect());
+    let hits = 0;
+    for (const s of steps) for (const c of controls) {
+      const ix = Math.min(s.right, c.right) - Math.max(s.left, c.left);
+      const iy = Math.min(s.bottom, c.bottom) - Math.max(s.top, c.top);
+      if (ix > 1 && iy > 1) hits += 1;
+    }
+    return hits;
+  })();
   const side = document.querySelector('.transcript-side');
   let transcript = null;
   if (side) {
@@ -377,7 +388,7 @@ const MEASURE = String.raw`(() => {
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
     scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
     picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
-    nativeControls, controlOverlaps, transcript, listEdges, videoBars,
+    nativeControls, controlOverlaps, transcript, listEdges, videoBars, stepOverlaps,
     renderCols: left && right ? {
       left: Math.round(left.getBoundingClientRect().height),
       right: Math.round(right.getBoundingClientRect().height),

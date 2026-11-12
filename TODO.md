@@ -13,9 +13,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
 
-- [ ] REQ-20261112-01 · loop 11: proofs are a blurred frame, clicked by the user, never auto
-- [ ] REQ-20261112-01 · loop 11: Detect / Compare / Review steps with a step label
-- [ ] REQ-20261112-01 · loop 11: Re-clean this scene opens Clean Focus on that scene, with box edit, brush and re-apply
 - [ ] REQ-20261112-02 · loop 12: transcript opacity slider, 30–100 %, persisted
 - [ ] REQ-20261112-02 · loop 12: transcript never covers the player time, volume, scrub or full screen
 - [ ] REQ-20261112-03 · loop 13: timeline zoom fit–16x, adaptive ruler, internal scroll
