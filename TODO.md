@@ -9,6 +9,25 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
   new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
 
+## Founder hand-test 2026-11-12 — workflows
+
+One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
+
+- [ ] REQ-20261112-01 · loop 11: proofs are a blurred frame, clicked by the user, never auto
+- [ ] REQ-20261112-01 · loop 11: Detect / Compare / Review steps with a step label
+- [ ] REQ-20261112-01 · loop 11: Re-clean this scene opens Clean Focus on that scene, with box edit, brush and re-apply
+- [ ] REQ-20261112-02 · loop 12: transcript opacity slider, 30–100 %, persisted
+- [ ] REQ-20261112-02 · loop 12: transcript never covers the player time, volume, scrub or full screen
+- [ ] REQ-20261112-03 · loop 13: timeline zoom fit–16x, adaptive ruler, internal scroll
+- [ ] REQ-20261112-04 · loop 14: Cut tab and Cut Focus shell with Output (crop, aspect, resize) and Look
+- [ ] REQ-20261112-04 · loop 14: move Warm / Cool / B&W / Vivid out of SFX into Cut
+- [ ] REQ-20261112-04 · loop 18: grading sliders (exposure, contrast, saturation, temperature)
+- [ ] REQ-20261112-04 · loop 19: enhance 360p→1080p, lanczos label, optional CoreML pack after licence and benchmark
+- [ ] REQ-20261112-05 · loop 15: safe-zone button on Preview, five cited guides, redraw on Cut aspect
+- [ ] REQ-20261112-06 · loop 16: preview plays all scenes in source order, or the story beats in story order
+- [ ] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels
+- [ ] REQ-20261112-07 · loop 17: visible no-model fallback; every beat traceable to a source cue
+
 ## Layout — open after brief loop 10
 
 - [ ] The player bar shows `mm:ss`; the old overlay showed the frame timecode. Put frames back on

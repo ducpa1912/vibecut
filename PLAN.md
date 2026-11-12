@@ -41,6 +41,32 @@ Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and 10 (layout balance) ar
 PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Next: the founder tests by hand with
 `docs/teams/loop-10-layout-balance/founder-test.md`.
 
+### Loops 11–20 — founder UX and workflow (opened 2026-11-12)
+
+| Loop | Work | Request | State |
+|---|---|---|---|
+| 11 | Proofs: blur not fill, opt-in, three steps, Re-clean → Clean Focus | REQ-20261112-01 | building |
+| 12 | Transcript opacity + never blocks player time/volume | REQ-20261112-02 | queued |
+| 13 | Timeline zoom for beats and scenes | REQ-20261112-03 | queued |
+| 14 | Cut Focus phase 1: crop, aspect, resize, look presets moved | REQ-20261112-04 | queued |
+| 15 | Safe zones on Preview, on the Cut output frame | REQ-20261112-05 | queued |
+| 16 | Preview sequence: all scenes, or the story order | REQ-20261112-06 | queued |
+| 17 | Story v1: whole-context thesis and non-contiguous beats on FoundationModels | REQ-20261112-07 | queued |
+| 18 | Cut phase 2: grading sliders | REQ-20261112-04 | roadmap |
+| 19 | Cut phase 3: enhance (lanczos, optional CoreML pack) | REQ-20261112-04 | roadmap |
+| 20 | Optional local VLM scene captions for story | REQ-20261112-07 | roadmap |
+
+Cut is one visual-treatment block, not a scene cut: output size, aspect, crop, resize, look,
+enhance. Rules: crop normalised to the source frame; clean boxes stay source-normalised; fill runs
+before crop/scale, so `textfill.VERSION` stays 17 and the fill cache stays valid.
+
+Research, 2026-11-12: on macOS 26 the on-device model is text-only with 4,096 tokens; OS 27 adds
+image input, not video; the 32K model is Private Cloud Compute, out of scope. Story must use the
+transcript and chunk. Local video VLMs exist (Qwen3-VL on MLX) but are multi-GB and minutes per
+clip, so they are an optional pack, never a default. Upscale: ffmpeg lanczos invents no detail;
+Real-ESRGAN via CoreML is the plug-and-play candidate after a licence check and an M1/8 GB
+benchmark.
+
 ### Loops 5 and 6 — closed 2026-11-12
 
 - Loop 5 (moving fill): `docs/teams/loop-08-moving-fill/review.md`. No licensed engine; a user fill

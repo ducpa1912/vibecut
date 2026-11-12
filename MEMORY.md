@@ -68,4 +68,44 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-_No open requests._
+### REQ-20261112-01 · 2026-11-12
+**Request:** "Proofs become so slow ... proofs just need to be a quick blur ... optional not auto ... proof check should be step by step, detect (blur area)/ compare the slip screen, also re-clean this scene will take back to clean focus".
+**Read as:** A proof is an opt-in blurred detection frame in three steps; Re-clean opens Clean Focus on that scene with box, brush and re-apply.
+**Response:** Loop 11: blur proofs through the render path, click-only, step tabs, route to Clean Focus.
+**Outcome:** open.
+
+### REQ-20261112-02 · 2026-11-12
+**Request:** "In edit: the transcript overlay did not have the tranparency slider. Player runtime being block by the transcript, volume is block by the transcript overlay".
+**Read as:** The transcript gets an opacity control and never covers the player time, volume or scrub.
+**Response:** Loop 12: 30-100 % opacity, persisted; hit-test proof at both sizes.
+**Outcome:** open.
+
+### REQ-20261112-03 · 2026-11-12
+**Request:** "Timeline should be zoom in & out to go into mini detailed of each beat/scene."
+**Read as:** The time axis zooms and scrolls so one beat fills the ruler.
+**Response:** Loop 13: fit to 16x, adaptive ruler, internal scroll, playhead kept in view.
+**Outcome:** open.
+
+### REQ-20261112-04 · 2026-11-12
+**Request:** "Plan for a Cut Edit option and a Cut Focus block, move color grading, preset filter into this block with also crop, enhance quality so 360p can be select to expand to 1080p here."
+**Read as:** Cut is one visual-treatment block for the output: crop, aspect, resize, look, enhance.
+**Response:** Loop 14 phase 1 (shell, crop, aspect, resize, move the four presets); grading loop 18; enhance loop 19 with researched local options.
+**Outcome:** open.
+
+### REQ-20261112-05 · 2026-11-12
+**Request:** "No safezone for each social media, this is a button on the preview panel, and it should refresh if the cut edit chose to crop or make the original video to different dimension."
+**Read as:** Preview shows cited safe-zone guides per platform, drawn on the Cut output frame.
+**Response:** Loop 15: TikTok/Reels/Shorts, IG 4:5 and 1:1, YouTube 16:9; Preview only.
+**Outcome:** open.
+
+### REQ-20261112-06 · 2026-11-12
+**Request:** "In Preview block, the preview panel can only preview one cut scenes at a time, it should either play all the scenes (if no story selected), or the scene in the story in the storytelling order."
+**Read as:** Preview plays a sequence: all scenes in source order, or the story's beats in story order.
+**Response:** Loop 16: sequence player across clip boundaries, one bar.
+**Outcome:** open.
+
+### REQ-20261112-07 · 2026-11-12
+**Request:** "Story is not fixed. The story should be to understand the whole context of the video then select several beat and scene that fit together and no need to be in the same consequence or timely order, and to rewrite or focus on 1 specific narrative or bold statement."
+**Read as:** Story picks fitting beats anywhere in the source, orders them by narrative, and writes one thesis; local model, transcript context.
+**Response:** Loop 17: FoundationModels over per-scene summaries, non-contiguous beats, deterministic fallback.
+**Outcome:** open.
