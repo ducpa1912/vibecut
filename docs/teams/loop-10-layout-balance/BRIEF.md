@@ -135,3 +135,30 @@ Add the three measures to `scripts/measure-layout.mjs`. All earlier items still 
 portrait and the 16:9 fixture. New captures replace the old; look at each. `founder-test.md`
 matches. Tests, `node --check`, Xcode build; `textfill.VERSION` 17. "Revision 2" on top of
 `review.md`. One commit, pushed.
+
+## Revision 3 (Senior PO, 2026-11-12) — after looking at the captures of `51b1820`
+
+Edit is accepted as a layout: one control bar, the transcript readable in the paper, no dark
+bars. But the fix removed things the user had. A layout loop removes no function.
+
+1. **Sound and full screen are gone.** Taking `controls` off every `<video>` took the volume
+   and the full-screen button with it. The app's bar gets a mute toggle with a volume slider and
+   a full-screen button, same style, same order on every player. Probe: mute sets
+   `video.muted`, the slider sets `video.volume`, full screen calls `requestFullscreen` on the
+   stage.
+2. **Every `<video>` has the bar.** `controls` was removed from five places in `app.js`: the Check
+   player, the Edit player, Preview, the inline scene player (`data-inline-player`) and the story
+   media preview (`data-story-media`). List each in the review with a capture showing its bar and
+   a probe that play, seek, mute work. A video with no controls at all is a fail.
+3. **Transcript row in Edit.** Before this loop the row carried a speaker chip and a "⋯" menu.
+   The new box shows the time and the text only. Put both back, working, or say in the review
+   what the menu did and where that action lives now. Nothing reachable before is unreachable now:
+   list every action of the old Edit player overlay and where it is.
+4. **Check, 9:16** (`after-check-1440x900.jpg`): a 770 px black stage around a 285 px picture.
+   Apply the rule of Preview and Edit: at most 24 px of black each side; use the freed width for
+   the scene strip beside the picture, or centre the picture on paper. Measure the picture share.
+
+Accept: items 1–4 probed at 1440×900 and 1280×800, portrait and the 16:9 fixture; all earlier
+measures still pass; new captures looked at; `founder-test.md` has a step for sound and full
+screen on each player. Tests, `node --check`, Xcode build; `textfill.VERSION` 17. "Revision 3" on
+top of `review.md`. One commit, pushed.
