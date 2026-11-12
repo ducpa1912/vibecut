@@ -1999,3 +1999,15 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .story-write { margin: 2px 0 6px; }
+
+/* Cut grade: four sliders, live CSS preview, exact ffmpeg render. */
+.grade-grid { display: grid; gap: 5px; margin-bottom: 6px; }
+.grade-grid label { display: grid; grid-template-columns: 72px minmax(0, 1fr) 34px; align-items: center; gap: 7px; font-size: 9.5px; color: var(--muted); }
+.grade-grid input { width: 100%; height: 3px; accent-color: var(--amber); }
+.grade-grid [data-grade-value] { font: 9px var(--mono); text-align: right; color: var(--ink); }
+
+/* Cut grade: four sliders, live CSS preview, exact ffmpeg render. */
+.grade-grid { display: grid; gap: 5px; margin-bottom: 6px; }
+.grade-grid label { display: grid; grid-template-columns: 72px minmax(0, 1fr) 34px; align-items: center; gap: 7px; font-size: 9.5px; color: var(--muted); }
+.grade-grid input { width: 100%; height: 3px; accent-color: var(--amber); }
+.grade-grid [data-grade-value] { font: 9px var(--mono); text-align: right; color: var(--ink); }

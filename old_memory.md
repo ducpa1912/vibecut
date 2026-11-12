@@ -403,3 +403,9 @@ non-contiguous story edit; thesis bar with model chip and beat cues; determinist
 **Numbers:** fallback 200 in 0.08 s, 4 beats, 18.5 s, ids 17/18/20/23; model order [2,0,5] kept with
 a fake; bad ids fall back; every cue verbatim from the transcript. Apple Intelligence not enabled on
 this Mac, so the real model path is unproven.
+
+### REQ-20261112-04 · loop 18 (2026-11-12)
+**Shipped:** four grade sliders in Cut → Look, stored in `edit.cut.grade`, rendered by ffmpeg after
+crop/scale, reset; player preview is CSS.
+**Numbers:** neutral adds no filter; +100 exposure lum 126.2 -> 131.6; -100 saturation chroma
+192.3 -> 2.6; +100 temperature R-B -5.7 -> -2.2; UI saves +80 and resets to 0. 197 tests.

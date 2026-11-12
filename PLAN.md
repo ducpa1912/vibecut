@@ -60,8 +60,8 @@ layout evidence is `docs/teams/loop-10-layout-balance/review.md` (revisions 1–
 | 15 | Safe zones on Preview, on the Cut output frame | REQ-20261112-05 | **closed 2026-11-12** |
 | 16 | Preview sequence: all scenes, or the story order | REQ-20261112-06 | **closed 2026-11-12** |
 | 17 | Story v1: whole-context thesis and non-contiguous beats on FoundationModels | REQ-20261112-07 | **closed 2026-11-12** |
-| 18 | Cut phase 2: grading sliders | REQ-20261112-04 | roadmap |
-| 19 | Cut phase 3: enhance (lanczos, optional CoreML pack) | REQ-20261112-04 | roadmap |
+| 18 | Cut phase 2: grading sliders | REQ-20261112-04 | **closed 2026-11-12** |
+| 19 | Cut phase 3: enhance (lanczos, optional CoreML pack) | REQ-20261112-04 | open |
 | 20 | Optional local VLM scene captions for story | REQ-20261112-07 | roadmap |
 
 Cut is one visual-treatment block, not a scene cut: output size, aspect, crop, resize, look,

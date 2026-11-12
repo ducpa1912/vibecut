@@ -521,9 +521,13 @@ def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dic
 
 
 CUT_ASPECTS = ("source", "9:16", "1:1", "4:5", "16:9")
+GRADE_KEYS = ("exposure", "contrast", "saturation", "temperature")
 
 
-def set_cut(edit: dict, *, aspect: str = "source", fit: str = "fit", crop: dict | None = None) -> dict:
+def set_cut(
+    edit: dict, *, aspect: str = "source", fit: str = "fit",
+    crop: dict | None = None, grade: dict | None = None,
+) -> dict:
     """Store the visual treatment. Crop is normalized to the source frame."""
     aspect = str(aspect or "source").strip()
     if aspect not in CUT_ASPECTS:
@@ -547,7 +551,17 @@ def set_cut(edit: dict, *, aspect: str = "source", fit: str = "fit", crop: dict 
         x = max(0.0, min(1.0 - w, x))
         y = max(0.0, min(1.0 - h, y))
         clean_crop = {"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
-    edit["cut"] = {"aspect": aspect, "fit": fit, "crop": clean_crop}
+    clean_grade = {key: 0 for key in GRADE_KEYS}
+    if grade:
+        for key in GRADE_KEYS:
+            try:
+                value = float(grade.get(key, 0) or 0)
+            except (TypeError, ValueError) as exc:
+                raise EditError("Grade values must be numbers.") from exc
+            if value != value:
+                raise EditError("Grade values must be numbers.")
+            clean_grade[key] = int(round(max(-100.0, min(100.0, value))))
+    edit["cut"] = {"aspect": aspect, "fit": fit, "crop": clean_crop, "grade": clean_grade}
     return edit
 
 

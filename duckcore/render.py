@@ -182,6 +182,21 @@ def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tu
     else:
         parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease")
         parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
+    grade = cut.get("grade") if isinstance(cut.get("grade"), dict) else {}
+    try:
+        exposure = max(-2.0, min(2.0, float(grade.get("exposure") or 0) / 50.0))
+        contrast = max(0.0, min(2.0, 1.0 + float(grade.get("contrast") or 0) / 100.0))
+        saturation = max(0.0, min(3.0, 1.0 + float(grade.get("saturation") or 0) / 100.0))
+        temperature = max(-1.0, min(1.0, float(grade.get("temperature") or 0) / 100.0))
+    except (TypeError, ValueError):
+        exposure = contrast = temperature = 0.0
+        saturation = 1.0
+    if abs(exposure) > 0.001:
+        parts.append(f"exposure=exposure={exposure:.3f}")
+    if abs(contrast - 1.0) > 0.001 or abs(saturation - 1.0) > 0.001:
+        parts.append(f"eq=contrast={contrast:.3f}:saturation={saturation:.3f}")
+    if abs(temperature) > 0.001:
+        parts.append(f"colorbalance=rs={0.15 * temperature:.3f}:gs=0:bs={-0.15 * temperature:.3f}")
     parts += ["setsar=1", f"fps={target_fps}"]
     return out_w, out_h, ",".join(parts)
 

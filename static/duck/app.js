@@ -1474,7 +1474,7 @@ function screenEditor() {
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
-                : `<video class="cut-video" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+                : `<video class="cut-video" style="filter:${gradeFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
               ${playerBar()}
             </div>
@@ -1662,6 +1662,33 @@ function layerListMarkup(active, layers, emptyText = 'No text detected in this s
   </div>`;
 }
 
+function gradeOf() {
+  const grade = state.edit?.cut?.grade || {};
+  return {
+    exposure: Number(grade.exposure || 0),
+    contrast: Number(grade.contrast || 0),
+    saturation: Number(grade.saturation || 0),
+    temperature: Number(grade.temperature || 0),
+  };
+}
+
+function signedValue(value) {
+  const number = Math.round(Number(value) || 0);
+  return number > 0 ? `+${number}` : String(number);
+}
+
+function gradeFilter(grade = gradeOf()) {
+  const parts = [
+    `brightness(${(1 + Number(grade.exposure || 0) / 200).toFixed(3)})`,
+    `contrast(${(1 + Number(grade.contrast || 0) / 100).toFixed(3)})`,
+    `saturate(${(1 + Number(grade.saturation || 0) / 100).toFixed(3)})`,
+  ];
+  const temperature = Number(grade.temperature || 0);
+  if (temperature > 0) parts.push(`sepia(${(temperature / 100 * 0.45).toFixed(3)})`);
+  if (temperature < 0) parts.push(`hue-rotate(${(temperature / 100 * 18).toFixed(1)}deg)`);
+  return parts.join(' ');
+}
+
 function cutPreview() {
   const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
   const sw = Number(meta.width || 0);
@@ -1736,7 +1763,13 @@ function cutFocus() {
     </div>
     <div class="focus-card">
       <h3>Look</h3>
-      <p class="small muted">Presets add a filter to the timeline for this scene.</p>
+      <div class="cut-label">Grade</div>
+      <div class="grade-grid">
+        ${[['exposure', 'Exposure'], ['contrast', 'Contrast'], ['saturation', 'Saturation'], ['temperature', 'Temperature']].map(([key, label]) => `<label><span>${label}</span><input data-grade="${key}" type="range" min="-100" max="100" step="1" value="${gradeOf()[key]}"><span data-grade-value>${signedValue(gradeOf()[key])}</span></label>`).join('')}
+      </div>
+      <div class="box-actions"><button class="btn small" type="button" data-action="grade-reset">Reset grade</button></div>
+      <p class="small muted">The player preview is approximate; the render applies these in ffmpeg.</p>
+      <div class="cut-label">Presets</div>
       <div class="filter-presets">
         ${presets.map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}">${label}</button>`).join('')}
       </div>
@@ -4894,6 +4927,7 @@ document.addEventListener('click', async (event) => {
       await saveCut({ crop });
     }
     else if (action === 'cut-reset') { await saveCut({ crop: null }); }
+    else if (action === 'grade-reset') { await saveCut({ grade: { exposure: 0, contrast: 0, saturation: 0, temperature: 0 } }); }
     else if (action === 'timeline-zoom') {
       const steps = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
       const dir = Number(target.dataset.dir || 0);
@@ -4987,6 +5021,14 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.dataset && target.dataset.grade) {
+    const grade = { ...gradeOf() };
+    document.querySelectorAll('[data-grade]').forEach((input) => {
+      grade[input.dataset.grade] = Number(input.value || 0);
+    });
+    saveCut({ grade });
+    return;
+  }
   if (target.id === 'translation-engine') {
     await saveTranslationSettings();
     await openSettings();
@@ -5046,6 +5088,15 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.dataset && event.target.dataset.grade) {
+    const key = event.target.dataset.grade;
+    const grade = { ...gradeOf(), [key]: Number(event.target.value || 0) };
+    const video = document.querySelector('.cut-video');
+    if (video) video.style.filter = gradeFilter(grade);
+    const read = event.target.closest('label')?.querySelector('[data-grade-value]');
+    if (read) read.textContent = signedValue(event.target.value);
+    return;
+  }
   if (event.target.id === 'sequence-scrub') {
     sequenceSeek(Number(event.target.value || 0) / 1000);
     return;

@@ -31,6 +31,10 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 - [ ] N8 · delete the web UI and WKWebView; parity audit with XCUITest
 - [ ] N1-N8 · XCUITest measurement: 1024×700, 1280×800, 1440×900; no headless Chrome
 
+## Cut — phase 3 (open)
+
+- [ ] REQ-20261112-04 · loop 19: enhance 360p→1080p with lanczos, honest "no new detail" label; optional CoreML pack only after licence check and an M1/8 GB benchmark
+
 ## Layout — open after brief loop 10
 
 - [ ] The player bar shows `mm:ss`; the old overlay showed the frame timecode. Put frames back on

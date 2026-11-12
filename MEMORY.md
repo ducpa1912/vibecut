@@ -26,6 +26,8 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence, so LaMa stays
   and the `moves` warning stays. A user fill model folder (ONNX or TorchScript) replaces LaMa when set.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
+- Cut grading ships (loop 18): exposure, contrast, saturation, temperature in `edit.cut.grade`,
+  applied by ffmpeg after crop/scale; the player preview is CSS and labelled approximate.
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
 - Model packs live in app data, never in a Hugging Face cache.
 - Native UI track is planned (`PLAN.md`, N1–N8): SwiftUI + AppKit bridges, the Python core and its
