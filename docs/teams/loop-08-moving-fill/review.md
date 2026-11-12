@@ -1,3 +1,61 @@
+# Loop 8 review — revision 3, D–E (Senior PO, 2026-11-12)
+
+## D. What got worse, profiled
+
+One cold render of `prj_e95348a97316` with the GPU, wrapped timers on the reader, the model, the
+paste, the ink build and the check's reader. The wrappers themselves slow the run: **1090.7 s**
+measured this way against 620.6 s and 847.2 s for the same edit unwrapped. Shares are what matter.
+
+| Stage | Seconds | Share of the render |
+|---|---:|---:|
+| Ink build | **0.2** | 0.02 % (warm store) |
+| Fill decode | **84.3** | 7.7 % |
+| Model runs | **702.2** | 64.4 % |
+| Paste and blend | **9.6** | 0.9 % |
+| Encode, join, audio, mux | **98.3** | 9.0 % |
+| Check, total | **81.2** | 7.4 % |
+| — check decode (source + output) | 52.8 | 4.8 % |
+| — check judge | 28.4 | 2.6 % |
+| Fill spans, summed by the log | 911.2 | 83.5 % (decode + model + writer backpressure) |
+
+The estimate's dry run, outside a render: **144.8 s** first ever, **19.7 s** after one layer changes.
+
+### Wins taken (no pixel changes)
+
+| Win | Before | After |
+|---|---|---|
+| Ink build in every render | built from frames each time, ~24 s (94.6 s first ever) | **0.2 s** from the store |
+| Estimate inside the queue | 66.7 s blocking before the first frame (≈90 s with the ink build) | **8.2 s** queue to first fill frame |
+| Estimate units | re-decoded every call (66.7 s) | stored per span; **0.084–0.257 s** warm |
+
+### Listed, not built (each changes a pixel or needs a proof)
+
+- **Crop the fill decode** to the work areas: 84.3 s of full-size decode, of which the model needs
+  only the strips (the work areas cover a fraction of the 1080×1920 frame). Expected save 35–50 s;
+  not built because it changes how frames are addressed and needs an every-frame proof.
+- **Fewer key frames** (3/s → 2/s): about a third of 702.2 s, but the fill output changes →
+  `textfill.VERSION` would move; not built.
+- **Share the check's decode with the fill's**: 52.8 s; needs a frame store across two phases; not
+  built.
+- The model is 64 % of the render; none of the remaining wins touch it without a pixel change.
+
+## E. The 48 letter-frames that still show strokes
+
+I could not reproduce them on the two candidate renders with the current inks.
+
+- Scan: every filled letter of every layer, every frame it is on screen: 40 letters, **1,743 filled
+  letter-frames** on `ed_38a4c36a3aae_20261112-024716.mp4`. Frames whose ink still has strong edges
+  in the output: **0 at ≥ 15 %**, 0 at ≥ 30 %, 0 at ≥ 50 %.
+- The strict check on the same render: **2,964 frames, 0 hits**, 2 lines not judged (the same two).
+- `rev3-letter-1..6.jpg` in this folder are six of those letters, source beside output, at 2× — they
+  show the text gone, not an outline, a shadow, or a redrawn edge. With no residual frame to crop,
+  these are controls for the measurement, not examples of the fault.
+- **`GROW_PX` was not changed.** Raising it 6 → 8 would add **7,127,423 hole pixel-frames**, from
+  50,813,587 to 57,941,010 over 11,876 letter-frames (**+14.0 %**), and buy nothing while no residue
+  is measurable.
+
+---
+
 # Loop 8 review — revision 3, A–C (Senior PO, 2026-11-12)
 
 ## A. The ink store lost the letters — fixed, proof below

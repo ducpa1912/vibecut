@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 8 · rev 3 D–E</strong><span>12 Nov · profiled, and the 48 frames</span></div>
+      <div class="timeline-body">
+        <strong>Profile: the model is 64 % of a cold render; the pixel-neutral wins are in.</strong>
+        <ul class="clean">
+          <li>Instrumented cold render (1090.7 s wrapped): model 702.2 s, fill decode 84.3 s, encode/join 98.3 s, check 81.2 s (decode 52.8, judge 28.4), paste 9.6 s, ink 0.2 s.</li>
+          <li>Ink build per render 24 s → <b>0.2 s</b> (store); queue to first fill ≈90 s → <b>8.2 s</b>; warm estimate <b>0.084–0.257 s</b>.</li>
+          <li>Listed, not built: crop the fill decode (35–50 s, needs an every-frame proof), fewer key frames (a third of the model time, but the output changes), share the check's decode.</li>
+          <li>The 48 letter-frames with strokes could not be reproduced: <b>0 of 1,743</b> filled letter-frames reach 15 % stroke presence; the check reports 0 hits. Six control crops saved; <span class="mono">GROW_PX</span> unchanged (8 would add 14.0 % hole pixel-frames).</li>
+        </ul>
+        <span class="mono">178 tests</span> · <span class="mono">VERSION</span> 17 unchanged
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 8 · rev 3 A–C</strong><span>12 Nov · the store keeps the letters</span></div>
       <div class="timeline-body">
         <strong>A correctness fault in the ink store is fixed: stored lines keep their letters.</strong>

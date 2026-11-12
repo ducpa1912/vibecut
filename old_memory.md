@@ -301,3 +301,13 @@ the chip and the engine stamp.
 **Proof:** 42/42 ink_keys equal cold vs warm (94.6 s cold, 0.2 s warm, 42 files, 178,666 bytes);
 render 104149: 0 leftovers, 2,964 checks, 40/42 lines, 24/24 spans reused; 24 letterless clips
 deleted by key. 178 tests; `VERSION` stays 17.
+
+### Loop 8 revision 3, D-E · 2026-11-12
+**D:** profiled one cold instrumented render (1090.7 s wrapped): ink 0.2 s, fill decode 84.3 s,
+model 702.2 s, paste 9.6 s, encode/join 98.3 s, check 81.2 s (decode 52.8, judge 28.4); dry run
+144.8 s first-ever. Wins taken: ink store 24 s -> 0.2 s, queue to first fill 90 s -> 8.2 s, warm
+estimate 0.084-0.257 s. Not built: crop decode (35-50 s, proof needed), fewer key frames (output
+change), shared check decode.
+**E:** the 48 letter-frames could not be reproduced: 0 of 1,743 filled letter-frames on 024716 reach
+15% stroke presence; check 0 hits. Six control crops saved; GROW_PX 8 would add 7,127,423 pixel-frames
+(+14.0%) and was not changed.
