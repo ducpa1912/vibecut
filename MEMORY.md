@@ -68,12 +68,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-### REQ-20261112-03 · 2026-11-12
-**Request:** "Timeline should be zoom in & out to go into mini detailed of each beat/scene."
-**Read as:** The time axis zooms and scrolls so one beat fills the ruler.
-**Response:** Loop 13: fit to 16x, adaptive ruler, internal scroll, playhead kept in view.
-**Outcome:** open.
-
 ### REQ-20261112-04 · 2026-11-12
 **Request:** "Plan for a Cut Edit option and a Cut Focus block, move color grading, preset filter into this block with also crop, enhance quality so 360p can be select to expand to 1080p here."
 **Read as:** Cut is one visual-treatment block for the output: crop, aspect, resize, look, enhance.

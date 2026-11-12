@@ -92,6 +92,7 @@ const state = {
   showAllLayers: false,
   transcriptSideHidden: false,
   transcriptAlpha: 100,
+  timelineZoom: 1,
   cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
@@ -2100,6 +2101,14 @@ function audioColor(kind) {
   return { voice: '#2d7b59', dub: '#c46812', music: '#6b5a9e', sound: '#b63a2c' }[kind] || '#6f7f86';
 }
 
+function centerTimelineOnPlayhead() {
+  const scroller = document.querySelector('.timeline-scroll');
+  if (!scroller) return;
+  const total = Number(document.querySelector('.timeline')?.dataset.total || 0);
+  const fraction = total ? Math.max(0, Math.min(1, Number(state.timelineTime || 0) / total)) : 0;
+  scroller.scrollLeft = Math.max(0, fraction * scroller.scrollWidth - scroller.clientWidth / 2);
+}
+
 function timelineDuration() {
   const edit = state.edit;
   if (isStoryEdit()) {
@@ -2156,14 +2165,24 @@ function timelinePanel() {
   const sfxHeight = visualFx.length ? 22 : 32;
   const laneRows = `22px 22px ${scriptHeight}px ${audioHeightLane}px ${sfxHeight}px`;
   const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.timelineTime || 0) / total) * 100)) : 0;
-  const ruler = Array.from({ length: 7 }, (_unused, index) => {
-    const time = total > 0 ? (total * index) / 6 : 0;
-    return `<span class="ruler-tick${index === 6 ? ' is-last' : ''}" style="left:${(index / 6 * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
+  const tickCount = Math.max(7, Math.round(7 * Number(state.timelineZoom || 1)));
+  const ruler = Array.from({ length: tickCount }, (_unused, index) => {
+    const at = index / (tickCount - 1);
+    const time = total > 0 ? total * at : 0;
+    return `<span class="ruler-tick${index === tickCount - 1 ? ' is-last' : ''}" style="left:${(at * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
   }).join('');
   return `<section class="panel timeline" data-total="${total}">
     <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${(state.edit.sfx || []).length} effects</span><span class="spacer"></span>
       <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="icon-btn timeline-action" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}" title="Trim selected clip">${icon('scissors', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="split-at-playhead" title="Split at playhead">${icon('split', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="-0.5" title="Slip earlier">${icon('chevronLeft', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="0.5" title="Slip later">${icon('chevronRight', 14)}</button></span>
+      <span class="timeline-zoom" aria-label="Timeline zoom">
+        <button type="button" data-action="timeline-zoom" data-dir="-1" aria-label="Zoom out">−</button>
+        <span data-zoom-label>${Math.round(Number(state.timelineZoom || 1) * 10) / 10}×</span>
+        <button type="button" data-action="timeline-zoom" data-dir="1" aria-label="Zoom in">+</button>
+        <button type="button" data-action="timeline-zoom" data-dir="0">Fit</button>
+      </span>
       <button class="icon-btn timeline-action" type="button" data-action="open-script" title="Open Script Focus">${icon('captions', 14)}</button></div>
+    <div class="timeline-scroll">
+    <div class="timeline-inner" style="--zoom:${Number(state.timelineZoom || 1)}">
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
       <div class="timeline-labels" style="grid-template-rows:${laneRows}">
@@ -2210,6 +2229,7 @@ function timelinePanel() {
         <div class="timeline-track sfx${visualFx.length ? '' : ' is-empty'}">${visualFx.length ? visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('') : `<button class="lane-add" type="button" data-action="open-focus" data-focus="sfx">${icon('plus', 10)} Add an effect</button>`}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
+    </div>
     </div>
     </div>
   </section>`;
@@ -4354,6 +4374,7 @@ document.addEventListener('click', async (event) => {
       state.previewStatus.set(selected?.id, state.previewCache.has(selected?.id) ? 'ready' : (state.previewStatus.get(selected?.id) || 'pending'));
       state.proofStep = 1;
       render();
+      if (Number(state.timelineZoom || 1) > 1) centerTimelineOnPlayhead();
     } else if (action === 'select-story') {
       const index = Number(target.dataset.scene || 0);
       state.proofTab = 'stories';
@@ -4394,7 +4415,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'script-rewrite') await rewriteScript();
     else if (action === 'script-reset') await resetScript();
     else if (action === 'script-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); document.querySelectorAll('.focus-cue').forEach((row) => row.classList.toggle('is-current', Number(row.dataset.time || 0) <= state.timelineTime)); }
-    else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); }
+    else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); if (Number(state.timelineZoom || 1) > 1) centerTimelineOnPlayhead(); }
     else if (action === 'overlay-position') { state.overlayTop = !state.overlayTop; render(); }
     else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     else if (action === 'voice-tab') { state.inspectorTab = 'voice'; state.scriptOpen = false; render(); }
@@ -4440,6 +4461,17 @@ document.addEventListener('click', async (event) => {
       state.screen = 'clean';
       window.location.hash = `#/project/${state.project.id}/clean`;
       render();
+    }
+    else if (action === 'timeline-zoom') {
+      const steps = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
+      const dir = Number(target.dataset.dir || 0);
+      if (dir === 0) state.timelineZoom = 1;
+      else {
+        const at = steps.findIndex((value) => value >= Number(state.timelineZoom || 1) - 0.001);
+        state.timelineZoom = steps[Math.max(0, Math.min(steps.length - 1, (at < 0 ? 0 : at) + dir))];
+      }
+      render();
+      centerTimelineOnPlayhead();
     }
     else if (action === 'proof-step') { state.proofStep = Number(target.dataset.step || 1); render(); }
     else if (action === 'prove-scene') {

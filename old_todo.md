@@ -319,3 +319,7 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 
 - [x] REQ-20261112-02 · loop 12: transcript opacity slider, 30–100 %, persisted
 - [x] REQ-20261112-02 · loop 12: transcript never covers the player time, volume, scrub or full screen
+
+## Loop 13 — timeline zoom (closed 2026-11-12)
+
+- [x] REQ-20261112-03 · loop 13: timeline zoom fit–16x, adaptive ruler, internal scroll

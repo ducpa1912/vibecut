@@ -366,3 +366,10 @@ Preview or Clean; 0 fill files; `textfill.VERSION` 17; 183 tests.
 the before/after image no longer paints over the player overlay.
 **Numbers:** alpha 0.50 applied and restored; play/time/scrub/volume/full hit tests all true;
 blocked controls 0 on Edit, Preview and Clean; transcript/picture 0 px²; contrast 14.99:1.
+
+### REQ-20261112-03 · 2026-11-12 · loop 13 closed
+**Request:** the timeline needs zoom to inspect beats and scenes.
+**Shipped:** 1×–16× zoom, Fit, internal scroll, ruler ticks that grow with zoom, sticky lane labels,
+playhead kept in view.
+**Numbers:** ratio 1 / 6 / 16 measured; label gap 86–109 px at 6× and 108 px at 16×; no page
+h-scroll; a scene block click at 6× selects S07 and seeks 00:31.

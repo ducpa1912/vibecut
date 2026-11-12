@@ -1924,3 +1924,14 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .transcript-alpha-row span { font: 9px var(--mono); min-width: 26px; text-align: right; }
 /* The before/after image must never sit over the player overlay. */
 .split-stage .media-overlay { z-index: 4; }
+
+/* Timeline zoom: the tracks grow inside their own scroller. */
+.timeline-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.timeline-inner { width: calc(var(--zoom, 1) * 100%); min-width: 100%; }
+.timeline-zoom { display: inline-flex; align-items: center; gap: 4px; }
+.timeline-zoom button {
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  border-radius: 5px; min-width: 20px; height: 20px; font-size: 11px; cursor: pointer; padding: 0 5px;
+}
+.timeline-zoom span { min-width: 26px; text-align: center; font: 10px var(--mono); color: var(--muted); }
+.timeline-labels { position: sticky; left: 0; z-index: 5; background: var(--panel); }
