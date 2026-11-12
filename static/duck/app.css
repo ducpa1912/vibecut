@@ -1846,3 +1846,36 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .preview-row.landscape { gap: 10px; }
 .preview-row.landscape .media-card.preview-large { height: min(48vh, 460px); }
 .preview-row.landscape .transcript-side { width: min(100%, 560px); }
+.player-mute, .player-full {
+  width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center;
+  border: 0; background: transparent; color: #fff; cursor: pointer; opacity: .92;
+}
+.player-mute.is-muted { opacity: .45; }
+.player-volume { width: 64px; flex: 0 0 64px; height: 4px; accent-color: #fff; }
+.modal-body { position: relative; }
+.media-card.hug { width: fit-content; max-width: 100%; margin: 0 auto; aspect-ratio: var(--media-ratio, 1.7778); }
+.media-card.hug video { width: 100%; height: 100%; }
+.transcript-side.is-hidden { padding-bottom: 10px; }
+.transcript-side-head { display: flex; align-items: center; gap: 8px; }
+.transcript-side-head button.transcript-hide {
+  margin-left: auto; border: 0; background: transparent; color: var(--amber-ink);
+  font-size: 10px; font-weight: 620; cursor: pointer; padding: 0;
+}
+.transcript-side-row { position: relative; display: grid; grid-template-columns: minmax(0,1fr) 24px; gap: 4px; align-items: start; }
+.transcript-row-main { display: grid; gap: 2px; text-align: left; border: 0; background: transparent; padding: 2px 0; cursor: pointer; color: inherit; }
+.transcript-row-main:hover .transcript-side-copy { color: var(--amber-ink); }
+.speaker-chip { justify-self: start; padding: 1px 5px; border-radius: 3px; background: var(--paper-2); color: var(--muted); font-size: 8px; }
+.transcript-side-copy { font-size: 11.5px; line-height: 1.35; color: var(--ink); }
+.transcript-menu { width: 22px; height: 22px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.cue-menu {
+  position: absolute; right: 0; top: 24px; z-index: 6; min-width: 150px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: var(--shadow); display: grid; padding: 4px;
+}
+.cue-menu button { text-align: left; border: 0; background: transparent; padding: 6px 9px; font-size: 11px; border-radius: 6px; cursor: pointer; }
+.cue-menu button:hover { background: var(--paper-2); }
+.player-bar { gap: 6px; padding: 24px 8px 6px; }
+.player-time { font-size: 10px; }
+.player-play, .player-mute, .player-full { width: 20px; height: 20px; flex-basis: 20px; }
+.player-volume { width: 44px; flex-basis: 44px; }
+.player-scrub { min-width: 24px; }

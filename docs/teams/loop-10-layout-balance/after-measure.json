@@ -32,6 +32,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": null
  },
@@ -61,7 +62,7 @@
    {
     "a": "img:",
     "b": "text:00:00 / 02:40",
-    "area": 1149,
+    "area": 965,
     "aCls": "VIDEO",
     "bCls": "player-time",
     "intended": true
@@ -121,9 +122,16 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
-  "picture": null,
-  "pictureShare": null,
-  "stageBlack": null,
+  "picture": {
+   "w": 284,
+   "h": 503,
+   "box": [
+    544,
+    67
+   ]
+  },
+  "pictureShare": 99.4,
+  "stageBlack": 0,
   "controls": null,
   "cutText": 0,
   "cut": [],
@@ -132,6 +140,18 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
   "renderCols": null,
   "preview": null
  },
@@ -153,7 +173,7 @@
    {
     "a": "img:",
     "b": "text:00:00 / 02:40",
-    "area": 1149,
+    "area": 965,
     "aCls": "VIDEO",
     "bCls": "player-time",
     "intended": true
@@ -202,12 +222,24 @@
   "transcript": {
    "intersect": 0,
    "contrast": 14.99,
-   "lines": 1
+   "lines": 2
   },
   "listEdges": {
    "dark": 0,
    "sample": []
   },
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
   "renderCols": null,
   "preview": null,
   "layerRows": 6
@@ -332,6 +364,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": null
  },
@@ -423,6 +456,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": {
    "portrait": true,
@@ -463,6 +497,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": {
    "left": 673,
    "right": 1221,
@@ -503,6 +538,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": null
  },
@@ -532,7 +568,7 @@
    {
     "a": "img:",
     "b": "text:00:00 / 02:40",
-    "area": 1149,
+    "area": 965,
     "aCls": "VIDEO",
     "bCls": "player-time",
     "intended": true
@@ -592,9 +628,16 @@
   "scrolls": [],
   "hScroll": false,
   "clipped": [],
-  "picture": null,
-  "pictureShare": null,
-  "stageBlack": null,
+  "picture": {
+   "w": 252,
+   "h": 447,
+   "box": [
+    483,
+    67
+   ]
+  },
+  "pictureShare": 99.3,
+  "stageBlack": 0,
   "controls": null,
   "cutText": 0,
   "cut": [],
@@ -603,6 +646,18 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
   "renderCols": null,
   "preview": null
  },
@@ -624,7 +679,7 @@
    {
     "a": "img:",
     "b": "text:00:00 / 02:40",
-    "area": 1149,
+    "area": 965,
     "aCls": "VIDEO",
     "bCls": "player-time",
     "intended": true
@@ -680,12 +735,24 @@
   "transcript": {
    "intersect": 0,
    "contrast": 14.99,
-   "lines": 1
+   "lines": 2
   },
   "listEdges": {
    "dark": 0,
    "sample": []
   },
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
   "renderCols": null,
   "preview": null,
   "layerRows": 6
@@ -802,6 +869,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": null
  },
@@ -885,6 +953,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": null,
   "preview": {
    "portrait": true,
@@ -925,6 +994,7 @@
   "controlOverlaps": 0,
   "transcript": null,
   "listEdges": null,
+  "videoBars": [],
   "renderCols": {
    "left": 673,
    "right": 1221,

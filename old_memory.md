@@ -342,3 +342,12 @@ transcript is a panel in the paper beside the picture (portrait) or under it (la
 panel; list/row borders reset to the hairline.
 **Numbers:** native controls 0, control overlaps 0, play/seek probed; transcript intersection 0,
 contrast 14.99:1, 1 line at 1280; dark list borders 0. 178 tests; `VERSION` 17.
+
+### Loop 10 revision 3 · 2026-11-12
+**Faults:** removing `controls` took volume and full screen; some videos had no bar; the transcript
+row lost its speaker chip and menu.
+**Fixed:** every player bar has mute, volume and full screen (probed); Check hugs the picture
+(284x503 / 252x447, 0 black); the transcript row has the Speaker chip, a working menu (Seek, Copy)
+and Hide/Show in place of CC; the old ⇕ is superseded.
+**Numbers:** mute/volume/full probed on Check, Edit and inline; control overlaps 0; transcript
+contrast 14.99:1, 2 lines at 1280. 178 tests; `VERSION` 17.

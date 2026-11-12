@@ -1,3 +1,70 @@
+# Loop 10 review — Revision 3 (Senior PO, 2026-11-12)
+
+The layout was accepted; this pass gives back every function the old players and the old transcript
+row had. Nothing reachable before is unreachable now, except one action that no longer has a job.
+
+## Item 1 — sound and full screen back on every bar
+
+Every player bar now carries, in this order: **play/pause · time · scrub · mute · volume ·
+full screen**, the same style on every player.
+
+| Probe | 1440×900 | 1280×800 | 16:9 fixture |
+|---|---|---|---|
+| mute click sets `video.muted` | **true** | **true** | **true** |
+| volume slider sets `video.volume` | **0.35** | **0.35** | **0.35** |
+| full screen calls `requestFullscreen` on the stage (stubbed) | **called** | **called** | **called** |
+| control/timecode boxes intersecting | **0** | **0** | **0** |
+
+## Item 2 — every `<video>` has the bar
+
+| Place | State | Evidence |
+|---|---|---|
+| Check player | bar: play, seek, mute, volume, full screen | `after-check-*.jpg`; the probe above |
+| Edit player (scene) | same bar | `after-edit-*.jpg`; probe |
+| Inline scene player (Preview → Play detection review) | same bar; play/pause, mute, volume, full screen probed | `after-inline-1440x900.jpg`, `after-inline-1280x800.jpg`; probe: mute true, volume 0.4, fullscreen called |
+| Story media preview (`data-story-media`) | same card and bar in the markup | **not reachable**: this project’s stories hold no `media` clip, so there is nothing to open |
+| Render playback modal (`openVideoModal`) | bar added; controls attribute removed | **not opened** this pass (needs a finished-render Play click) |
+| Preview screen | has no `<video>` of its own; its player is the inline one above | — |
+
+The probe counts every `<video>` on the page: **1 video on Check, 1 on Edit, 1 inline**, each with all
+six controls. `<video controls>` on the page: **0**.
+
+## Item 3 — the transcript row
+
+| Old action | Where it is now |
+|---|---|
+| CC: show/hide the transcript overlay | **Hide / Show** in the transcript card’s head (probe: Hide → 0 rows, button reads “Show”; Show → 1 row) |
+| ⇕: move the overlay top/bottom over the picture | **Superseded**: the transcript is no longer on the picture (beside it in portrait, under it in landscape), so the action has no job. It is the one action that is not reachable |
+| Row click: seek to that line | the row is a button, `data-action="seek"` (probe: menu seek moved the player to 90 s) |
+| “⋯” on the row | was decorative inside the seek row (no separate action). Now a real **menu**: **Seek to this line** and **Copy text** |
+| Speaker chip | restored: “Speaker” chip on the row |
+| Time and text | kept |
+
+Measured: transcript vs picture **0 px²**, text contrast **14.99 : 1**, **2** lines at 1280 for this
+project’s cue (≤ 2), chip and menu present at both sizes.
+
+## Item 4 — Check hugs the picture
+
+The Check player is no longer a 770 px black stage around a 285 px picture: the card hugs the
+picture and is centred on the paper.
+
+| Measure | 1440×900 | 1280×800 | 16:9 |
+|---|---|---|---|
+| Picture | **284 × 503** | **252 × 447** | full width |
+| Share of its column | **99.4 %** | **99.3 %** | **99.7 %** |
+| Black each side | **0 px** | **0 px** | **0 px** |
+
+The freed width is paper (the brief allows “or centre the picture on paper”); the scene strip stays
+below the player.
+
+## Earlier measures still pass
+
+Bottoms 87.3–100 %, layout overlaps 0, every scroll list has a count or fade, “text cut” 0, no
+horizontal scroll, 0 clipped buttons, portrait and 16:9. Captures `after-*`, `after-inline-*` and
+`landscape-*` replaced and looked at. **178 tests**, `node --check`, Xcode build. `VERSION` 17.
+
+---
+
 # Loop 10 review — Revision 2 (Senior PO, 2026-11-12)
 
 Preview was accepted; Edit had three faults. Fixed in this commit.

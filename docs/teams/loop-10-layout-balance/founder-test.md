@@ -48,12 +48,19 @@ try Import.
    **Filter** field has the same space on its left and right; the scene rows are hairlines with no
    dark edge.
 4. Look at the player's controls.
-5. **Must see:** one control bar only — the app's play circle, `00:00 / 02:40` and the scrub — and
-   no browser controls. Click play: it plays; drag the scrub: the picture follows.
-6. Find the transcript.
-7. **Must see:** a **Transcript** panel in the paper beside the picture (portrait), dark text on the
+5. **Must see:** one control bar only — play, time, scrub, mute, volume, full screen — and no
+   browser controls. Click play: it plays; drag the scrub: the picture follows.
+6. Click the speaker icon: the sound goes off; click again: it returns. Drag the volume: it
+   changes. Click full screen: the player fills the screen; press Esc.
+7. Repeat 5–6 on **Check** and on Preview’s **Play detection review** player: each has the same bar
+   and the same six controls.
+8. Find the transcript.
+9. **Must see:** a **Transcript** panel in the paper beside the picture (portrait), dark text on the
    panel colour, one or two lines; it does not cover the picture. In a landscape project it sits
    under the picture.
+10. **Must see:** a “Speaker” chip, the time, and a “⋯” button on the line. Click the line: the
+    player seeks to it. Click “⋯”: **Seek to this line** and **Copy text**. Click **Hide**: the
+    lines fold away and the button reads **Show**; click **Show**: they return.
 6. Scroll the scenes list and the inspector: each shows a soft fade at the bottom while more is
    below, and the fade goes away at the end.
 7. Rotate the window narrow (below ~1000 px) and widen it: the side panels stack, nothing overlaps.

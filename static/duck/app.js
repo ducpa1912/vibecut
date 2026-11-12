@@ -89,6 +89,8 @@ const state = {
   autoOpened: false,
   editorReady: false,
   showAllLayers: false,
+  transcriptSideHidden: false,
+  cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
 };
@@ -942,7 +944,7 @@ function screenCheck() {
 
       <section style="display:grid;gap:14px;min-width:0">
         <section class="panel" style="overflow:hidden">
-          <div class="media-card" style="height:min(56vh, 540px)">
+          <div class="media-card hug" style="height:min(56vh, 540px);--media-ratio:${(Number(state.check?.result?.meta?.width) && Number(state.check?.result?.meta?.height)) ? (Number(state.check.result.meta.width) / Number(state.check.result.meta.height)).toFixed(4) : '1.7778'}">
             <video data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || 0.5)}" src="${sourceUrl()}"></video><span class="media-badge right">${mediaResolution()}</span>${playerBar()}
           </div>
         </section>
@@ -1446,9 +1448,20 @@ function screenEditor() {
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
               ${playerBar()}
             </div>
-            ${overlayCues.length ? `<aside class="transcript-side" aria-label="Transcript">
-              <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span></div>
-              ${overlayCues.map((cue) => `<div class="transcript-side-row"><span class="transcript-side-time">${fmtTC(cue.start, 24)}</span><p>${esc(cue.text || '')}</p></div>`).join('')}
+            ${overlayCues.length ? `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" aria-label="Transcript">
+              <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
+              ${state.transcriptSideHidden ? '' : overlayCues.map((cue) => `<div class="transcript-side-row">
+                <button class="transcript-row-main" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
+                  <span class="transcript-side-time">${fmtTC(cue.start, 24)}</span>
+                  <span class="speaker-chip">Speaker</span>
+                  <span class="transcript-side-copy">${esc(cue.source_text && cue.source_text !== cue.text ? `${cue.source_text} · ` : '')}${esc(cue.text || '')}</span>
+                </button>
+                <button class="transcript-menu" type="button" data-action="cue-menu" data-cue="${esc(cue.id || '')}" aria-label="Line actions">${icon('more', 12)}</button>
+                ${state.cueMenu && state.cueMenu === cue.id ? `<div class="cue-menu">
+                  <button type="button" data-action="cue-seek" data-time="${Number(cue.start || 0).toFixed(3)}">Seek to this line</button>
+                  <button type="button" data-action="cue-copy" data-cue="${esc(cue.id || '')}">Copy text</button>
+                </div>` : ''}
+              </div>`).join('')}
             </aside>` : ''}
           </div>
         </section>
@@ -3215,7 +3228,7 @@ function closeModal() {
 function openVideoModal(url, title = 'Preview') {
   openModal(`<dialog class="modal" aria-label="${esc(title)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
-    <div class="modal-body"><video controls autoplay src="${url}"></video></div>
+    <div class="modal-body"><video data-app-player autoplay src="${url}"></video>${playerBar()}</div>
   </dialog>`);
 }
 
@@ -4364,6 +4377,29 @@ document.addEventListener('click', async (event) => {
     else if (action === 'seek') {
       seekToTime(Number(target.dataset.time || 0) + 0.01);
     }
+    else if (action === 'toggle-transcript-side') {
+      state.transcriptSideHidden = !state.transcriptSideHidden;
+      state.cueMenu = '';
+      render();
+    }
+    else if (action === 'cue-menu') {
+      const id = target.dataset.cue || '';
+      state.cueMenu = state.cueMenu === id ? '' : id;
+      render();
+    }
+    else if (action === 'cue-seek') {
+      state.cueMenu = '';
+      seekToTime(Number(target.dataset.time || 0) + 0.01);
+      render();
+    }
+    else if (action === 'cue-copy') {
+      const id = target.dataset.cue || '';
+      const cue = (state.edit?.captions?.cues || []).find((item) => String(item.id) === id);
+      const text = String(cue?.text || '');
+      state.cueMenu = '';
+      if (text && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Line copied.'), () => toast('Could not copy.', 'bad'));
+      render();
+    }
   } catch (error) {
     toast(error.message || 'Action failed.', 'bad');
   }
@@ -4464,6 +4500,9 @@ function playerBar() {
     <button class="player-play" type="button" data-action="player-play" aria-label="Play or pause">${icon('play', 13)}</button>
     <span class="player-time" data-player-time>00:00 / 00:00</span>
     <input class="player-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+    <button class="player-mute" type="button" aria-label="Mute" aria-pressed="false">${icon('volume', 13)}</button>
+    <input class="player-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+    <button class="player-full" type="button" aria-label="Full screen">${icon('expand', 13)}</button>
   </div>`;
 }
 
@@ -4479,6 +4518,9 @@ function setupPlayerBars() {
     const play = bar.querySelector('.player-play');
     const time = bar.querySelector('[data-player-time]');
     const scrub = bar.querySelector('.player-scrub');
+    const mute = bar.querySelector('.player-mute');
+    const volume = bar.querySelector('.player-volume');
+    const full = bar.querySelector('.player-full');
     const paint = () => {
       if (time) time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
       if (scrub && Number.isFinite(video.duration) && video.duration > 0) {
@@ -4494,6 +4536,23 @@ function setupPlayerBars() {
       if (Number.isFinite(video.duration) && video.duration > 0) {
         video.currentTime = (Number(scrub.value) / 1000) * video.duration;
       }
+    });
+    mute?.addEventListener('click', () => {
+      video.muted = !video.muted;
+      mute.setAttribute('aria-pressed', String(video.muted));
+      mute.classList.toggle('is-muted', video.muted);
+    });
+    volume?.addEventListener('input', () => {
+      video.volume = Math.max(0, Math.min(1, Number(volume.value)));
+      if (video.volume > 0 && video.muted) {
+        video.muted = false;
+        mute?.setAttribute('aria-pressed', 'false');
+        mute?.classList.remove('is-muted');
+      }
+    });
+    full?.addEventListener('click', () => {
+      const stage = video.closest('.media-card, .split-stage, .modal-body') || video.parentElement;
+      if (stage && stage.requestFullscreen) stage.requestFullscreen().catch(() => {});
     });
     video.addEventListener('timeupdate', paint);
     video.addEventListener('loadedmetadata', paint);

@@ -212,7 +212,7 @@ const MEASURE = String.raw`(() => {
     const area = b.width * b.height;
     if (nw > 0 && nh > 0 && area > mediaArea) { media = el; mediaArea = area; }
   }
-  const stageBox = document.querySelector('.preview-stage') || document.querySelector('.media-card.preview-large');
+  const stageBox = document.querySelector('.preview-stage') || document.querySelector('.media-card.preview-large') || document.querySelector('.media-card.hug');
   let picture = null, pictureShare = null, stageBlack = null;
   if (media && stageBox) {
     const box = media.getBoundingClientRect();
@@ -295,7 +295,7 @@ const MEASURE = String.raw`(() => {
     const picBox = media ? media.getBoundingClientRect() : null;
     const ix = picBox ? Math.min(s.right, picBox.right) - Math.max(s.left, picBox.left) : 0;
     const iy = picBox ? Math.min(s.bottom, picBox.bottom) - Math.max(s.top, picBox.top) : 0;
-    const p = side.querySelector('.transcript-side-row p');
+    const p = side.querySelector('.transcript-side-copy');
     const fg = rgb(p ? getComputedStyle(p).color : '');
     const bg = rgb(getComputedStyle(side).backgroundColor);
     const lineHeight = p ? parseFloat(getComputedStyle(p).lineHeight) || 15 : 15;
@@ -324,6 +324,34 @@ const MEASURE = String.raw`(() => {
     }
     listEdges = { dark: dark.length, sample: dark.slice(0, 4) };
   }
+  const videoBars = [];
+  for (const v of document.querySelectorAll('video')) {
+    const bar = v.parentElement?.querySelector('[data-player-bar]') || v.closest('.media-card, .modal-body, .split-stage')?.querySelector('[data-player-bar]');
+    const info = { hasBar: Boolean(bar), play: false, mute: false, volume: false, full: false, muted: null, vol: null, fullcall: null };
+    if (bar) {
+      info.play = Boolean(bar.querySelector('.player-play'));
+      info.mute = Boolean(bar.querySelector('.player-mute'));
+      info.volume = Boolean(bar.querySelector('.player-volume'));
+      info.full = Boolean(bar.querySelector('.player-full'));
+      const m = bar.querySelector('.player-mute');
+      if (m) { const before = v.muted; m.click(); info.muted = v.muted; v.muted = before; m.setAttribute('aria-pressed', String(before)); }
+      const vol = bar.querySelector('.player-volume');
+      if (vol) { const before = v.volume; vol.value = '0.35'; vol.dispatchEvent(new Event('input', { bubbles: true })); info.vol = Math.round(v.volume * 100) / 100; v.volume = before; vol.value = String(before); }
+      const f = bar.querySelector('.player-full');
+      if (f) {
+        const stage = v.closest('.media-card, .split-stage, .modal-body');
+        if (stage) {
+          const old = stage.requestFullscreen;
+          let called = false;
+          stage.requestFullscreen = () => { called = true; return Promise.resolve(); };
+          f.click();
+          info.fullcall = called;
+          stage.requestFullscreen = old;
+        }
+      }
+    }
+    videoBars.push(info);
+  }
   const filter = document.querySelector('.scene-filter input');
   const filterPanel = filter ? filter.closest('.panel') : null;
   let filterInsets = null;
@@ -349,7 +377,7 @@ const MEASURE = String.raw`(() => {
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
     scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
     picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
-    nativeControls, controlOverlaps, transcript, listEdges,
+    nativeControls, controlOverlaps, transcript, listEdges, videoBars,
     renderCols: left && right ? {
       left: Math.round(left.getBoundingClientRect().height),
       right: Math.round(right.getBoundingClientRect().height),
