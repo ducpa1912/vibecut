@@ -9,6 +9,15 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
   new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
 
+## Layout — open after brief loop 10
+
+- [ ] The player bar shows `mm:ss`; the old overlay showed the frame timecode. Put frames back on
+  the Edit bar if the founder misses them.
+- [ ] Not opened in the layout loop: the story media player (no media beat in the review project)
+  and the render playback window. Same bar code; not seen.
+- [ ] Copy text in the transcript menu was not checked against the real clipboard.
+- [ ] 1024×700 and browser zoom not measured.
+
 ## Fill and leftover check — open after brief loops 7–9
 
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
@@ -25,8 +34,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
   the check and a render compete for the same cores; measure with the app alone before tuning.
 - [ ] The stored transcript of `prj_e95348a97316` still holds three made-up cues: the founder runs
   Check again; it can move clean-layer ranges.
-- [ ] Founder, by hand, after loop 9: `docs/teams/loop-08-moving-fill/founder-test.md` (fill model
-  folder, "Measuring the fill…", the range) and the Render screen's "not checked" count.
 
 ## Loop 7 — local model slots (REQ-20261111-03)
 

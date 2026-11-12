@@ -61,9 +61,9 @@ try Import.
 10. **Must see:** a “Speaker” chip, the time, and a “⋯” button on the line. Click the line: the
     player seeks to it. Click “⋯”: **Seek to this line** and **Copy text**. Click **Hide**: the
     lines fold away and the button reads **Show**; click **Show**: they return.
-6. Scroll the scenes list and the inspector: each shows a soft fade at the bottom while more is
+11. Scroll the scenes list and the inspector: each shows a soft fade at the bottom while more is
    below, and the fade goes away at the end.
-7. Rotate the window narrow (below ~1000 px) and widen it: the side panels stack, nothing overlaps.
+12. Make the window narrow (below ~1000 px) and widen it: the side panels stack, nothing overlaps.
 
 ## 6. Render, the estimate, the not-checked count
 
