@@ -65,3 +65,34 @@ left.
 Same as loop 7's brief. In addition: downloading a candidate to a scratch folder outside the repo
 for the bench is allowed only for a yes row; delete it after the bench and say so in the review.
 Never ship NLLB. Write `docs/teams/loop-08-moving-fill/review.md`.
+
+## Revision 1 (Senior PO, 2026-11-12) — after review of `7bda48d`
+
+Loop 8 passed its own items; these three faults are left. Fix them in one commit.
+
+1. **The estimate is 31 % low** (483.5 s against a measured 698 s cold render of
+   `ed_38a4c36a3aae`). Crossings added 11.7 s, so they are not the cause. The cause is that the
+   estimate plans box runs while the fill runs per-letter stroke holes.
+   - Build the estimate from the same run plan the fill executes: one function, called by both.
+     No constant fitted to this project, no multiplier.
+   - Proof per span, not per total: a table of estimated against real seconds for every filled span
+     of the review project. Take the real seconds from the `fill span ... seconds=` log lines; if
+     the log of render `20261112-024716` is gone, run one cold render on GPU and do not stop it
+     mid-clip.
+   - Accept: total within 15 % of the real cold render, and no span off by more than 2× unless the
+     review names it and says why. If 15 % cannot be reached, show the measured gap in the UI
+     beside the estimate; do not hide it.
+2. **A custom model teaches the LaMa speed.** `prepare_span` stores the frame rate of a user model
+   under `lama`, so later estimates for the default engine drift. Keep a separate rate for the
+   custom engine, keyed by its stamp, or do not learn from it. Test: a slow stub model leaves the
+   default estimate unchanged.
+3. **Estimate and render can disagree on the key.** `estimate_span` uses `custom_fill_path` even
+   when the model would fail to load; `prepare_span` then falls back. Make both take the same
+   decision. Test it.
+
+Also write `docs/teams/loop-08-moving-fill/founder-test.md`: a click-by-click script for the
+founder to try the fill model folder in the built app (pick a folder, a wrong folder, clear it),
+with what must be seen at each step. The founder runs it; do not run the app yourself.
+
+No fill output change is expected. If one happens, bump `textfill.VERSION` and say the next render
+is cold. Add a "Revision 1" section on top of `review.md`.

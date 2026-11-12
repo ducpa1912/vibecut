@@ -46,3 +46,25 @@ loop 8's "State on restart" apply. After loop 9, reply once with one report for 
 - The final render path, wall-clock against estimate, frames checked and frames with text.
 - Every figure that got worse, and why.
 - What was not tested.
+
+## Revision 1 (Senior PO, 2026-11-12) — after review of `59e6732`
+
+**The Whisper loop rule drops real speech.** In `_whisper_payload` a line said twice, where one
+copy is slow (≥ 8 s, ≥ 1.2 s a word), loses every copy. A speaker who repeats a line once after a
+long pause loses both.
+
+- A made-up loop is local: the copies follow each other. Drop only copies that belong to one run
+  of back-to-back segments with the same line, where that run holds a slow copy. The same line
+  elsewhere in the video stays.
+- Read the review project's three made-up cues first and write down what else sets them apart
+  (gap between copies, word timing, any score the pack does return). Use what you measured; do not
+  add a threshold you did not measure.
+- Tests: (a) the review project's pattern is dropped; (b) the same line 60 s apart, one copy slow,
+  keeps both; (c) a chorus line three times at speaking pace keeps all three; (d) one slow line,
+  not repeated, is kept.
+- The stored transcript of `prj_e95348a97316` still holds the made-up cues. Do not re-Check that
+  project. Say in the review that the founder must run Check again and that it can move layer
+  ranges.
+
+Add a "Revision 1" section on top of `review.md`. One commit, with `MEMORY.md`, `TODO.md`, the
+test count in `CLAUDE.md`, `PLAN.md` and `MEMORY.md`, and the scripted report row.
