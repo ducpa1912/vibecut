@@ -18,6 +18,23 @@ One loop per request, each ends in its own commit. Cut phases 18–19 are roadma
 - [ ] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels
 - [ ] REQ-20261112-07 · loop 17: visible no-model fallback; every beat traceable to a source cue
 
+## Native UI (planned 2026-11-12)
+
+Decision open: SwiftUI + AppKit bridges (recommended) or AppKit only. Freeze the web UI, or run both.
+Cutover screen by screen behind a flag (recommended), or one branch merged at the end. XCUITest may
+tap its own app instance (recommended), or frames and screenshots only. Plan: `PLAN.md`, Native UI.
+
+- [ ] N1 · shell: window, toolbar, navigation, tokens, Settings, Welcome/projects, API client, models
+- [ ] N1 · remove WKWebView from the launch path behind a flag; old UI still reachable
+- [ ] N2 · Check: native player, scene strip, progress, transcript/OCR tables
+- [ ] N3 · Edit desk: three panes, AVPlayer, transcript + opacity, inspector tabs, Cut Focus
+- [ ] N4 · Edit timeline: AppKit lanes, 1x-16x, playhead, trim/split/slip, audio
+- [ ] N5 · Clean: compare, layers, box edit, brush, proof steps, Re-clean route
+- [ ] N6 · Preview: sequence player, safe zones, proofs, story picker
+- [ ] N7 · Render: queue, estimate, progress, leftover report, playback
+- [ ] N8 · delete the web UI and WKWebView; parity audit with XCUITest
+- [ ] N1-N8 · XCUITest measurement: 1024×700, 1280×800, 1440×900; no headless Chrome
+
 ## Layout — open after brief loop 10
 
 - [ ] The player bar shows `mm:ss`; the old overlay showed the frame timecode. Put frames back on

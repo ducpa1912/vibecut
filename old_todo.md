@@ -298,14 +298,14 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 
 ## Loop 10 closed items (2026-11-12)
 
-## Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`)
+## Loop 10 — layout balance (`docs/teams/uiux-balance-01.md`) — closed 2026-11-12
 
-- [ ] Render screen restructure: Settings (320 px) + Start render left, queue full width right,
+- [x] Render screen restructure: Settings (320 px) + Start render left, queue full width right,
   finished renders as cards. The estimate lives in the left column.
-- [ ] Edit inspector: `5 of 9 layers` plus a bottom fade so the clipped row reads as "more below".
-- [ ] Timeline empty lanes: collapse a lane with no cues to one 32 px `+` row.
-- [ ] Portrait Preview width: scene strip in a 300 px column beside the player.
-- [ ] Verify a 9:16 project at 1440×900 and 1280×800.
+- [x] Edit inspector: `5 of 9 layers` plus a bottom fade so the clipped row reads as "more below".
+- [x] Timeline empty lanes: collapse a lane with no cues to one 32 px `+` row.
+- [x] Portrait Preview width: scene strip in a 300 px column beside the player.
+- [x] Verify a 9:16 project at 1440×900 and 1280×800.
 
 
 

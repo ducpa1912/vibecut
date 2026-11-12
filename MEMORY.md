@@ -28,6 +28,9 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
 - Model packs live in app data, never in a Hugging Face cache.
+- Native UI track is planned (`PLAN.md`, N1–N8): SwiftUI + AppKit bridges, the Python core and its
+  local HTTP API stay, WKWebView goes at cutover. Decisions are open in `TODO.md`; the web UI still
+  carries loops 15–17 until the track starts. No headless Chrome is used for UI evidence once N1 opens.
 
 ## Where the build stands (2026-11-12)
 

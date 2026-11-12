@@ -9,6 +9,9 @@
 **DuckSuite** is the offline macOS product. VibeCut Studio is the frozen reference codebase; where
 this file and the build disagree, the build wins and this file is corrected.
 
+UI today is HTML/CSS/JS in a WKWebView. A native **SwiftUI + AppKit** track (N1–N8) replaces it; the
+Python core and its local API stay. See `PLAN.md`, Native UI track.
+
 ## Platform
 
 macOS 26.0+ on Apple silicon. The floor comes from SpeechAnalyzer and FoundationModels; lowering it

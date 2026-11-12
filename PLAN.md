@@ -37,9 +37,17 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 
 ## Loops
 
-Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and 10 (layout balance) are **closed**; the
+Two numbers are in use and they are not the same scale. **Brief loops** are the design/brief rounds
+that arrived as `docs/teams/<loop>/BRIEF.md` (… 8 moving fill, 9 rules, 10 layout balance, 11
+proofs, 12 transcript, 13 timeline zoom, 14 Cut). **Build loops** are this file's own order
+(PLAN loop 7 local model slots, PLAN loop 8 $29 readiness). A heading below names the brief loop.
+
+Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; the
 PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Next: the founder tests by hand with
 `docs/teams/loop-10-layout-balance/founder-test.md`.
+
+Loop 10 had been mislabelled "Loop 9" in this file and in `old_todo.md`; corrected 2026-11-12. The
+layout evidence is `docs/teams/loop-10-layout-balance/review.md` (revisions 1–3).
 
 ### Loops 11–20 — founder UX and workflow (opened 2026-11-12)
 
@@ -85,11 +93,47 @@ planned in `BYOK-PLAN.md` and are **not v1**.
 SHA-256 per pack file, LGPL written source offer for ffmpeg, a smaller or per-language Whisper pack,
 AI fill repair instruction, manual microphone test, creator-readable import errors.
 
-### Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`) — **closed 2026-11-12**
+### Loop 10 — layout balance (brief loop 10) — **closed 2026-11-12**
 
 Review: `docs/teams/loop-10-layout-balance/review.md`. 9/9 acceptance; six screens measured at
 1440×900 and 1280×800 (bottoms 87.3–100 %, 0 layout overlaps, no horizontal scroll, 0 clipped
 buttons, portrait stage 70 % / 64.6 %), 16:9 fixture measured the same. Nothing left open here.
+
+## Native UI track (N1–N8) — planned 2026-11-12
+
+**Goal:** the app ships a real SwiftUI/AppKit UI. No WKWebView, no browser engine in the product or
+in the test loop. The Python core stays; the token-gated local HTTP API stays until cutover.
+
+```text
+SwiftUI app
+  screens: Welcome · Check · Edit · Clean · Preview · Render
+  player: AVPlayer / AVPlayerLayer (mute, volume, full screen native)
+  timeline: AppKit NSView lanes (1x-16x, playhead, trim/split/slip, audio)
+  models: Check, Edit, Scene, Layer, Cut, Story mirror the JSON
+  client: URLSession + polling, launch token from the shell
+duckcore sidecar (unchanged): FastAPI, fill, render, ink check
+```
+
+| Loop | Ships | Gate |
+|---|---|---|
+| N1 | Shell: window, toolbar, navigation, design tokens, Settings, Welcome/projects, API client, models; old UI behind a flag | Opens a project and lists projects; snapshots at 1024×700, 1280×800, 1440×900 |
+| N2 | Check: native player, scene strip, progress, transcript/OCR tables, cut stills | XCUITest: scenes appear; play/pause/seek |
+| N3 | Edit desk: three panes, AVPlayer, transcript + opacity, inspector tabs (Cut/Clean/Script/Audio/SFX), Cut Focus | 9:16 Cut changes the player frame; the output rect exists for safe zones |
+| N4 | Edit timeline: AppKit lanes, 1x-16x, scroll, playhead, trim/split/slip, audio, zoom | Zoom ratio and label spacing measured from XCUITest frames |
+| N5 | Clean: before/after compare, layer list, box fields, brush canvas, proof steps, Re-clean route | Proof under 1 s; box edit moves the blur |
+| N6 | Preview: sequence player (all scenes / story order), safe zones, proofs, story picker | Guides redraw on Cut aspect; the sequence crosses clip boundaries |
+| N7 | Render: two-column queue, estimate, live progress, leftover report, playback | Queue runs a short render; the report matches |
+| N8 | Cutover: delete the web UI and WKWebView, remove static hosting, final parity audit | No `WKWebView` in the app; every screen has an XCUITest |
+
+Rules:
+- One loop, one commit, parity checklist per screen; Python tests and `node --check` stay until N8.
+- XCUITest owns measurement: window sizes, `XCUIElement.frame`, accessibility identifiers,
+  screenshots. No headless Chrome.
+- Crop geometry is computed once in Swift and the same numbers go to ffmpeg. No CSS crop.
+- Hard parts: the timeline (AppKit drawing at 16x), clip-boundary frame accuracy, SwiftUI text
+  layout replacing CSS line rules, and two UIs while migrating.
+- Feature freeze on the web UI is recommended while N1–N8 run; open decisions are listed in
+  `TODO.md` under **Native UI**.
 
 ## Not in this plan
 
