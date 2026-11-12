@@ -41,7 +41,7 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 ## Loops
 
 Brief loops 7 (ink check), 8 (moving fill) and 9 (rules) are **closed**; the PLAN loops still open
-are 7 (local model slots), 8 ($29 readiness) and 9 (layout balance).
+are 7 (local model slots), 8 ($29 readiness) and 9 (layout balance). Loop 9 runs next, by the founder's order, from `docs/teams/loop-10-layout-balance/BRIEF.md`; the founder tests by hand after it.
 
 ### Loops 5 and 6 — closed 2026-11-12
 

@@ -4,24 +4,27 @@ Only open work lives here; done items and closed loops are in `old_todo.md` (age
 Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries its request id
 (`REQ-YYYYMMDD-NN`, from `MEMORY.md`) or its brief/review path.
 
-## Queue — briefs waiting
+## Now — sent back to the build team
 
-- [ ] `docs/teams/loop-08-moving-fill/BRIEF.md` — read the brief, then build it as loop 8.
-  Unfinished custom-fill work from the first try is on branch `loop8-wip`; it predates
-  `textfill.VERSION` 17 and must be merged by hand.
-- [ ] `docs/teams/loop-09-rules/BRIEF.md` — read the brief after loop 8 signs off
+- [ ] `docs/teams/loop-08-moving-fill/BRIEF.md`, Revision 3: the ink store drops each line's letter
+  spans, the estimate worker can die, the estimate key ignores the fill model, cost profile of the
+  cold render and the check, and a look at the 48 letter-frames.
+- [ ] Then PLAN loop 9, layout balance: `docs/teams/loop-10-layout-balance/BRIEF.md`. The founder
+  tests by hand only after it.
 
-## Loop 5 — better fill for moving footage
+## Fill and leftover check — open after brief loops 7–9
 
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
 - [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
-- [ ] REQ-20261111-11 · the estimate does not count the extra fills where something crosses the
-  text: cold render 698 s. Count crossings in Check, or show the range.
-- [ ] REQ-20261111-11 · 48 filled letter-frames still show strokes in the output (differs from the
-  source by 30+, so not leftover text): look at them, decide if it is outline residue.
 - [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
-  (no steady strokes). A short OCR read of just those frames would close it.
-- [ ] REQ-20261111-11 · the Render screen's "not checked" count was not looked at in the built app.
+  (no steady strokes). The Render screen says so; no rule judges them yet.
+- [ ] REQ-20261111-11 · cold render 620–847 s on this Mac (418 s before the crossing rule), the
+  leftover check 60–70 s, the first estimate of a project 144.8 s in the background. Revision 3
+  profiles them; what it cannot win without changing fill output stays here with its number.
+- [ ] The stored transcript of `prj_e95348a97316` still holds three made-up cues: the founder runs
+  Check again; it can move clean-layer ranges.
+- [ ] Founder, by hand, after loop 9: `docs/teams/loop-08-moving-fill/founder-test.md` (fill model
+  folder, "Measuring the fill…", the range) and the Render screen's "not checked" count.
 
 ## Loop 7 — local model slots (REQ-20261111-03)
 
@@ -31,7 +34,7 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
 - [ ] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check
 - [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
-- [ ] REQ-20261111-03 · fill local slot: custom ONNX inpaint model
+- [x] REQ-20261111-03 · fill local slot: shipped in brief loop 8 (`7bda48d`); founder test open above
 
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 
@@ -51,7 +54,6 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] Portrait Preview width: scene strip in a 300 px column beside the player.
 - [ ] Verify a 9:16 project at 1440×900 and 1280×800.
 
-- [ ] **Estimate the first-ever run.** 144.8 s of background work on a project with no ink store; consider building the store during Check, where the frames are already decoded.
 
 ## Later
 

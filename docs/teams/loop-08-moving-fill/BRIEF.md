@@ -133,3 +133,55 @@ Accept, measured on `prj_e95348a97316` in the built app's server, not in a test 
 Do not open the app window or click in it; the founder does that. Add a step to
 `founder-test.md` for the "Measuring the fill…" line. "Revision 2" section on top of `review.md`,
 one commit with `MEMORY.md`, `TODO.md`, the test counts and the scripted report row, pushed.
+
+## Revision 3 (Senior PO, 2026-11-12) — after review of `9f1bb32`
+
+Revision 2 made the estimate fast and broke the thing it stores. Fix A first; it is a correctness
+fault. One commit for A–C, one for D–E.
+
+**A. The ink store loses the letters.** `inkcheck._save_ink` writes `mask, rect, first, last, fps`.
+`ink.Ink` also has `settled`, `glyphs` and `spans`. A line read back from the store has no letter
+spans, so `Ink.pieces()` returns one whole-line hole, `Ink.reach` falls back to the line, and the
+check judges the line as one letter. The first render of a project (store empty) and every later
+one (store warm) therefore fill different holes under different `ink_key`s, and the warm one loses
+the per-letter check that loop 7 revision 2 exists for. The 44 files now on this Mac prove it: no
+`glyphs`, no `spans`.
+
+- Store every field of `Ink`. Bump `ink.STORE_VERSION`. An old or unreadable file (catch
+  `zipfile.BadZipFile` too) is rebuilt, not trusted.
+- Test: for a line with two letters that end on different frames, `pieces()`, `reach`, `settled`
+  and the layer's `ink_key` are equal before and after a round trip through the store.
+- Test: a new field added to `Ink` without the store knowing fails a test (compare
+  `dataclasses.fields(Ink)` with what the store writes).
+- Proof on `prj_e95348a97316`: every layer's `ink_key` with an empty store equals the key with a
+  warm store, 42 of 42. Then one render with the warm store: 0 leftover, 40 of 42 lines checked,
+  the same as `20261112-024716`. If its fill cache is warm from the earlier cold renders, say so and
+  give the count of spans reused; it must be all of them.
+- Delete the fill cache files written by the render you started in revision 2 with the letterless
+  store, if you can tell them by key; say how many. Cap the ink store (oldest files out past a
+  stated size).
+
+**B. The estimate worker can die.** `estimate_status` trims `_ESTIMATE_JOBS` to the last 8 and can
+remove a job that is still working; the worker then raises `KeyError` outside its `try`, the thread
+ends, and `wait_for_estimate` waits 900 s. Never trim a working job; the worker must survive any
+error. Test both.
+
+**C. The estimate key ignores what changes the answer.** `_estimate_key` has `"fill_device": None`
+and no fill model. Key it by the same layer fields as the ink store, the chosen device and
+`engine_choice`'s stamp. Test: setting a fill model folder makes the stored estimate stale.
+
+**D. What got worse since loop 6, measured, with no output change.** Cold render 418 s → 620–847 s;
+leftover check 21–37 s → 60–70 s; first estimate of a project 144.8 s. Profile one cold render and
+one check on the review project and write the table: seconds per stage (decode, ink build, dry
+run, fill runs, paste, encode, check decode, check judge). Then take every win that does not
+change a pixel: frames decoded twice, a source read at full size where a crop serves, work the
+estimate already did that the render repeats. State before and after per stage. A win that needs a
+fill output change is listed with its expected gain and **not** built. `textfill.VERSION` stays 17.
+
+**E. The 48 filled letter-frames that still show strokes** (loop 7 revision 2, TODO). Save crops of
+six of them, source beside output, in this folder. Say what they are: outline residue, a shadow, or
+the fill redrawing an edge. No code unless it is a hole that is too small, and then say what
+`GROW_PX` would cost in pixel-frames before changing it.
+
+Reply once: A–E pass or fail with the numbers, what got worse, what was not tested, commits.
+"Revision 3" section on top of `review.md`; `MEMORY.md`, `TODO.md`, test counts, report row.
