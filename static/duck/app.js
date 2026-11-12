@@ -1407,17 +1407,20 @@ function screenEditor() {
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
   const overlayCues = overlayCuesForTime();
-  const tab = state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
-    : state.inspectorTab === 'sfx' ? 'sfx'
-      : state.inspectorTab === 'script' ? 'script' : 'clean';
-  const tabBody = tab === 'clean' ? inspectorClean(scene, layer, layers)
-    : tab === 'script' ? inspectorScript()
-      : tab === 'audio' ? inspectorAudio()
-        : inspectorSFX();
-  const focusLabel = { clean: 'Clean', script: 'Script', audio: 'Audio', sfx: 'SFX' }[tab];
+  const tab = state.inspectorTab === 'cut' ? 'cut'
+    : state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
+      : state.inspectorTab === 'sfx' ? 'sfx'
+        : state.inspectorTab === 'script' ? 'script' : 'clean';
+  const tabBody = tab === 'cut' ? inspectorCut()
+    : tab === 'clean' ? inspectorClean(scene, layer, layers)
+      : tab === 'script' ? inspectorScript()
+        : tab === 'audio' ? inspectorAudio()
+          : inspectorSFX();
+  const focusLabel = { cut: 'Cut', clean: 'Clean', script: 'Script', audio: 'Audio', sfx: 'SFX' }[tab];
   const story = isStoryEdit() ? storyClipAt(state.timelineTime || 0) : null;
   const mediaClip = story?.clip?.kind === 'media' ? story.clip : null;
   const sourceMeta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const cutView = cutPreview();
   return `<main class="screen">${storyBanner()}
     <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
@@ -1438,12 +1441,12 @@ function screenEditor() {
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
           <div class="preview-row${Number(sourceMeta.height || 0) > Number(sourceMeta.width || 0) ? ' portrait' : ' landscape'}">
-            <div class="media-card preview-large" style="--media-ratio:${(Number(sourceMeta.width) && Number(sourceMeta.height)) ? (Number(sourceMeta.width) / Number(sourceMeta.height)).toFixed(4) : '1.7778'}">
+            <div class="media-card preview-large${cutView.cls}" style="${cutView.style}">
               ${mediaClip
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
-                : `<video data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+                : `<video class="cut-video" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
               ${playerBar()}
             </div>
@@ -1478,7 +1481,7 @@ function screenEditor() {
           <span class="scope-note">Use Clean all in Preview to clean every scene.</span>
         </div>` : ''}
         <div class="tabs">
-          ${['clean', 'script', 'audio', 'sfx'].map((item) => `<button class="tab${tab === item ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${item}">${item === 'audio' ? 'Audio' : item === 'sfx' ? 'SFX' : item[0].toUpperCase() + item.slice(1)}</button>`).join('')}
+          ${['cut', 'clean', 'script', 'audio', 'sfx'].map((item) => `<button class="tab${tab === item ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${item}">${item === 'audio' ? 'Audio' : item === 'sfx' ? 'SFX' : item[0].toUpperCase() + item.slice(1)}</button>`).join('')}
         </div>
         <div class="inspector-body">
           ${tabBody}
@@ -1600,6 +1603,96 @@ function layerListMarkup(active, layers, emptyText = 'No text detected in this s
   </div>`;
 }
 
+function cutPreview() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const sw = Number(meta.width || 0);
+  const sh = Number(meta.height || 0);
+  const cut = state.edit?.cut || {};
+  const aspect = cut.aspect || 'source';
+  const crop = cut.crop || null;
+  const sizes = { '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '16:9': 16 / 9 };
+  let ratio = sw && sh ? sw / sh : 16 / 9;
+  let style = `--media-ratio:${ratio.toFixed(4)}`;
+  let cls = cut.fit === 'fill' ? ' cut-fill' : ' cut-fit';
+  if (aspect !== 'source' && sizes[aspect]) ratio = sizes[aspect];
+  style = `--media-ratio:${ratio.toFixed(4)}`;
+  if (crop) {
+    const cw = Math.max(0.02, Number(crop.w) || 1);
+    const ch = Math.max(0.02, Number(crop.h) || 1);
+    const ratioCrop = ((sw || 16) * cw) / ((sh || 9) * ch);
+    style = `--media-ratio:${ratioCrop.toFixed(4)};--vw:${(100 / cw).toFixed(2)}%;--vh:${(100 / ch).toFixed(2)}%;--vx:${(-(Number(crop.x) || 0) / cw * 100).toFixed(2)}%;--vy:${(-(Number(crop.y) || 0) / ch * 100).toFixed(2)}%`;
+    cls += ' cut-cropped';
+  }
+  return { cls, style };
+}
+
+function cutOutputLabel() {
+  const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
+  const cut = state.edit?.cut || {};
+  const sizes = { '9:16': '1080 × 1920', '1:1': '1080 × 1080', '4:5': '1080 × 1350', '16:9': '1920 × 1080' };
+  return sizes[cut.aspect] || `${Number(meta.width || 1080)} × ${Number(meta.height || 1920)} (source)`;
+}
+
+async function saveCut(patch) {
+  if (!state.project || !state.edit) return;
+  const cut = { aspect: 'source', fit: 'fit', crop: null, ...(state.edit.cut || {}), ...patch };
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/cut`, { method: 'PATCH', body: JSON.stringify(cut) });
+    state.edit = data.edit;
+    state.cleanVersion += 1;
+    render();
+    toast(`Cut saved · ${cutOutputLabel()}.`);
+  } catch (error) {
+    toast(`Cut: ${error.message}`, 'bad');
+  }
+}
+
+function cutFocus() {
+  const cut = state.edit?.cut || {};
+  const aspect = cut.aspect || 'source';
+  const fit = cut.fit || 'fit';
+  const crop = cut.crop || { x: 0, y: 0, w: 1, h: 1 };
+  const presets = [['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'B&W'], ['vivid', 'Vivid']];
+  return `<div class="cut-focus">
+    <div class="focus-card">
+      <h3>Output</h3>
+      <div class="cut-label">Aspect</div>
+      <div class="segmented cut-aspect">
+        ${['source', '9:16', '1:1', '4:5', '16:9'].map((value) => `<button class="${aspect === value ? 'is-active' : ''}" type="button" data-action="cut-aspect" data-aspect="${value}">${value === 'source' ? 'Source' : value}</button>`).join('')}
+      </div>
+      <p class="small muted">Output ${cutOutputLabel()}</p>
+      <div class="cut-label">Framing</div>
+      <div class="segmented">
+        <button class="${fit === 'fit' ? 'is-active' : ''}" type="button" data-action="cut-fit" data-fit="fit">Fit</button>
+        <button class="${fit === 'fill' ? 'is-active' : ''}" type="button" data-action="cut-fit" data-fit="fill">Fill</button>
+      </div>
+      <div class="cut-label">Crop · normalized</div>
+      <div class="box-grid">
+        <label>X <input id="cut-x" type="number" min="0" max="1" step="0.005" value="${Number(crop.x || 0).toFixed(3)}"></label>
+        <label>Y <input id="cut-y" type="number" min="0" max="1" step="0.005" value="${Number(crop.y || 0).toFixed(3)}"></label>
+        <label>W <input id="cut-w" type="number" min="0.02" max="1" step="0.005" value="${Number(crop.w || 1).toFixed(3)}"></label>
+        <label>H <input id="cut-h" type="number" min="0.02" max="1" step="0.005" value="${Number(crop.h || 1).toFixed(3)}"></label>
+      </div>
+      <div class="box-actions"><button class="btn small" type="button" data-action="cut-crop">Apply crop</button><button class="btn small" type="button" data-action="cut-reset">Reset crop</button></div>
+    </div>
+    <div class="focus-card">
+      <h3>Look</h3>
+      <p class="small muted">Presets add a filter to the timeline for this scene.</p>
+      <div class="filter-presets">
+        ${presets.map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}">${label}</button>`).join('')}
+      </div>
+    </div>
+    <div class="focus-card">
+      <h3>Enhance</h3>
+      <p class="small muted">Upscaling is planned (loop 19). Today the output is 1080-class and keeps the source detail.</p>
+    </div>
+  </div>`;
+}
+
+function inspectorCut() {
+  return cutFocus();
+}
+
 function inspectorClean(scene, layer, layers) {
   if (!state.edit) return `<p class="small muted">Editor data is still loading. Clean controls appear when Check finishes.</p>`;
   const proof = state.previewCache.get(scene.id) || '';
@@ -1657,26 +1750,26 @@ function fillStatusText() {
 
 
 function focusDock() {
-  const titles = { script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
+  const titles = { cut: 'Cut Focus', script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
   const mode = state.focusMode;
   return `<section class="panel focus-dock">
     <div class="focus-dock-head">
       <div><span class="focus-kicker">Edit Focus</span><h2>${titles[mode] || 'Focus'}</h2></div>
       <button class="btn small" type="button" data-action="close-focus">${icon('arrowLeft', 12)} Back to timeline</button>
     </div>
-    <div class="focus-dock-body">${mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
+    <div class="focus-dock-body">${mode === 'cut' ? cutFocus() : mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
   </section>`;
 }
 
 function focusShell() {
-  const titles = { script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
+  const titles = { cut: 'Cut Focus', script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
   const mode = state.focusMode;
   return `<section class="focus-shell">
     <div class="focus-head">
       <div><span class="focus-kicker">Edit Focus</span><h1>${titles[mode] || 'Focus'}</h1></div>
       <button class="btn" type="button" data-action="close-focus">${icon('arrowLeft', 14)} Back to Edit</button>
     </div>
-    <div class="focus-body">${mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
+    <div class="focus-body">${mode === 'cut' ? cutFocus() : mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
   </section>`;
 }
 
@@ -1724,10 +1817,6 @@ function sfxFocus() {
         <button class="btn" data-action="sfx-add" data-kind="image">${icon('grid', 14)} Image</button>
         <button class="btn" data-action="sfx-add" data-kind="layer">${icon('layers', 14)} Layer</button>
         <button class="btn" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Sound</button>
-      </div>
-      <h3 style="margin-top:14px">Colour filter</h3>
-      <div class="filter-presets">
-        ${[['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'B&W'], ['vivid', 'Vivid']].map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}">${label}</button>`).join('')}
       </div>
     </div>
     <div class="focus-card">
@@ -2360,7 +2449,6 @@ function inspectorSFX() {
     <button class="btn small" type="button" data-action="sfx-add" data-kind="sticker">${icon('sparkle', 13)} Sticker</button>
     <button class="btn small" type="button" data-action="sfx-add" data-kind="layer">${icon('layers', 13)} Layer</button>
     <button class="btn small" type="button" data-action="sfx-text">${icon('captions', 13)} Text</button>
-    <button class="btn small" type="button" data-action="sfx-filter">${icon('sun', 13)} Filter</button>
   </div>
   <div class="sfx-list">
     ${rows.length ? rows.map((effect) => `<div class="sfx-row"><span class="sfx-kind">${esc(effect.kind)}</span><span class="sfx-name">${esc(effect.name || effect.text || 'Effect')}</span><button class="icon-btn" type="button" data-action="sfx-remove" data-effect="${esc(effect.id)}" title="Remove">${icon('trash', 14)}</button></div>`).join('') : '<p class="small muted">No effects yet. Add text, a sticker, a filter or a sound.</p>'}
@@ -4441,7 +4529,6 @@ document.addEventListener('click', async (event) => {
     else if (action === 'toggle-transcript-overlay') { state.transcriptOverlay = !state.transcriptOverlay; render(); }
     else if (action === 'sfx-add') startSfxUpload(target.dataset.kind || 'sound');
     else if (action === 'sfx-text') openSfxTextModal();
-    else if (action === 'sfx-filter') openSfxFilterModal();
     else if (action === 'sfx-filter-add') await addSfxFilter(target.dataset.preset || 'warm', target.dataset.start, target.dataset.end);
     else if (action === 'sfx-text-add') await addSfxText();
     else if (action === 'sfx-remove') await removeSfx(target.dataset.effect || '');
@@ -4462,6 +4549,21 @@ document.addEventListener('click', async (event) => {
       window.location.hash = `#/project/${state.project.id}/clean`;
       render();
     }
+    else if (action === 'cut-aspect') {
+      const aspect = target.dataset.aspect || 'source';
+      await saveCut({ aspect, ...(aspect === 'source' ? {} : { fit: 'fill' }) });
+    }
+    else if (action === 'cut-fit') { await saveCut({ fit: target.dataset.fit || 'fit' }); }
+    else if (action === 'cut-crop') {
+      const value = (id) => Number(document.querySelector(`#${id}`)?.value || 0);
+      const crop = { x: value('cut-x'), y: value('cut-y'), w: value('cut-w'), h: value('cut-h') };
+      if (![crop.x, crop.y, crop.w, crop.h].every(Number.isFinite) || crop.w <= 0 || crop.h <= 0) {
+        toast('Crop needs four numbers; width and height must be above 0.', 'bad');
+        return;
+      }
+      await saveCut({ crop });
+    }
+    else if (action === 'cut-reset') { await saveCut({ crop: null }); }
     else if (action === 'timeline-zoom') {
       const steps = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
       const dir = Number(target.dataset.dir || 0);

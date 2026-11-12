@@ -520,6 +520,37 @@ def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dic
     return edit
 
 
+CUT_ASPECTS = ("source", "9:16", "1:1", "4:5", "16:9")
+
+
+def set_cut(edit: dict, *, aspect: str = "source", fit: str = "fit", crop: dict | None = None) -> dict:
+    """Store the visual treatment. Crop is normalized to the source frame."""
+    aspect = str(aspect or "source").strip()
+    if aspect not in CUT_ASPECTS:
+        raise EditError("Aspect must be source, 9:16, 1:1, 4:5 or 16:9.")
+    fit = str(fit or "fit").strip().lower()
+    if fit not in {"fit", "fill"}:
+        raise EditError("Fit must be fit or fill.")
+    clean_crop = None
+    if crop:
+        try:
+            x = float(crop.get("x") or 0.0)
+            y = float(crop.get("y") or 0.0)
+            w = float(crop.get("w") or 0.0)
+            h = float(crop.get("h") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise EditError("Crop needs four numbers: x, y, w, h.") from exc
+        if not all(value == value for value in (x, y, w, h)):
+            raise EditError("Crop needs four numbers: x, y, w, h.")
+        w = max(0.02, min(1.0, w))
+        h = max(0.02, min(1.0, h))
+        x = max(0.0, min(1.0 - w, x))
+        y = max(0.0, min(1.0 - h, y))
+        clean_crop = {"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
+    edit["cut"] = {"aspect": aspect, "fit": fit, "crop": clean_crop}
+    return edit
+
+
 def save_edit(edit: dict, data_root: Path) -> dict:
     edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))

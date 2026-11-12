@@ -1935,3 +1935,17 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 }
 .timeline-zoom span { min-width: 26px; text-align: center; font: 10px var(--mono); color: var(--muted); }
 .timeline-labels { position: sticky; left: 0; z-index: 5; background: var(--panel); }
+
+/* Cut: output framing on the Edit player, and the Cut Focus block. */
+.cut-focus { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.inspector-body .cut-focus { grid-template-columns: 1fr; }
+.cut-label { margin: 8px 0 4px; color: var(--muted); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
+.cut-aspect { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.media-card.cut-fill .cut-video { object-fit: cover; }
+.media-card.cut-fit .cut-video { object-fit: contain; }
+.media-card.cut-cropped .cut-video {
+  position: absolute; right: auto; bottom: auto;
+  width: var(--vw, 100%); height: var(--vh, 100%);
+  left: var(--vx, 0%); top: var(--vy, 0%);
+  object-fit: cover;
+}

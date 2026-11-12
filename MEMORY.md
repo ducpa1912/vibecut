@@ -68,12 +68,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-### REQ-20261112-04 · 2026-11-12
-**Request:** "Plan for a Cut Edit option and a Cut Focus block, move color grading, preset filter into this block with also crop, enhance quality so 360p can be select to expand to 1080p here."
-**Read as:** Cut is one visual-treatment block for the output: crop, aspect, resize, look, enhance.
-**Response:** Loop 14 phase 1 (shell, crop, aspect, resize, move the four presets); grading loop 18; enhance loop 19 with researched local options.
-**Outcome:** open.
-
 ### REQ-20261112-05 · 2026-11-12
 **Request:** "No safezone for each social media, this is a button on the preview panel, and it should refresh if the cut edit chose to crop or make the original video to different dimension."
 **Read as:** Preview shows cited safe-zone guides per platform, drawn on the Cut output frame.

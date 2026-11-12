@@ -323,3 +323,10 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 ## Loop 13 — timeline zoom (closed 2026-11-12)
 
 - [x] REQ-20261112-03 · loop 13: timeline zoom fit–16x, adaptive ruler, internal scroll
+
+## Loop 14 — Cut Focus phase 1 (closed 2026-11-12)
+
+- [x] REQ-20261112-04 · loop 14: Cut tab and Cut Focus shell with Output (crop, aspect, resize) and Look
+- [x] REQ-20261112-04 · loop 14: move Warm / Cool / B&W / Vivid out of SFX into Cut
+- [x] REQ-20261112-04 · loop 18: grading sliders (exposure, contrast, saturation, temperature)
+- [x] REQ-20261112-04 · loop 19: enhance 360p→1080p, lanczos label, optional CoreML pack after licence and benchmark

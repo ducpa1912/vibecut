@@ -373,3 +373,11 @@ blocked controls 0 on Edit, Preview and Clean; transcript/picture 0 px²; contra
 playhead kept in view.
 **Numbers:** ratio 1 / 6 / 16 measured; label gap 86–109 px at 6× and 108 px at 16×; no page
 h-scroll; a scene block click at 6× selects S07 and seeks 00:31.
+
+### REQ-20261112-04 · 2026-11-12 · loop 14 phase 1 closed
+**Request:** one Cut block for resolution, filter, grading, crop and resize.
+**Shipped:** Cut tab and Cut Focus; aspect Source/9:16/1:1/4:5/16:9, Fit/Fill, normalized crop with
+reset; the four Look presets moved out of SFX; render and proof respect the Cut. Grading is loop 18,
+enhance loop 19.
+**Numbers:** 9:16 player ratio 0.5625, render-path frame 1080x1920; crop h=0.6 ratio 2.963; source
+chain unchanged (test); proof cache key includes the Cut; 188 tests.

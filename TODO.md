@@ -13,10 +13,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
 
-- [ ] REQ-20261112-04 · loop 14: Cut tab and Cut Focus shell with Output (crop, aspect, resize) and Look
-- [ ] REQ-20261112-04 · loop 14: move Warm / Cool / B&W / Vivid out of SFX into Cut
-- [ ] REQ-20261112-04 · loop 18: grading sliders (exposure, contrast, saturation, temperature)
-- [ ] REQ-20261112-04 · loop 19: enhance 360p→1080p, lanczos label, optional CoreML pack after licence and benchmark
 - [ ] REQ-20261112-05 · loop 15: safe-zone button on Preview, five cited guides, redraw on Cut aspect
 - [ ] REQ-20261112-06 · loop 16: preview plays all scenes in source order, or the story beats in story order
 - [ ] REQ-20261112-07 · loop 17: story thesis and non-contiguous beats over the transcript on FoundationModels

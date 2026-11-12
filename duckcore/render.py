@@ -90,7 +90,7 @@ def _blur_filter(
 ) -> str:
     from duckcore.engine.textfill import mask as textmask
 
-    out_w, out_h, scale = _scale_filter(meta, target_fps)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
     layers = _blur_layers(edit)
@@ -137,12 +137,53 @@ def _blur_filter(
     return ";".join(parts)
 
 
-def _scale_filter(meta: dict, target_fps: float) -> tuple[int, int, str]:
-    out_w, out_h = _target_size(meta)
-    return out_w, out_h, (
-        f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
-        f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={target_fps}"
-    )
+CUT_SIZES = {
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+    "4:5": (1080, 1350),
+    "16:9": (1920, 1080),
+}
+
+
+def cut_size(meta: dict, edit: dict | None = None) -> tuple[int, int]:
+    """Output size: the Cut aspect when one is chosen, else the source size."""
+    cut = (edit or {}).get("cut") or {}
+    aspect = str(cut.get("aspect") or "source")
+    if aspect in CUT_SIZES:
+        return CUT_SIZES[aspect]
+    return _target_size(meta)
+
+
+def _even(value: float) -> int:
+    return max(2, int(round(value)) // 2 * 2)
+
+
+def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tuple[int, int, str]:
+    out_w, out_h = cut_size(meta, edit)
+    cut = (edit or {}).get("cut") or {}
+    parts: list[str] = []
+    crop = cut.get("crop") if isinstance(cut.get("crop"), dict) else None
+    width = max(2, int(meta.get("width") or 0))
+    height = max(2, int(meta.get("height") or 0))
+    if crop:
+        try:
+            cw = _even(width * float(crop.get("w") or 0))
+            ch = _even(height * float(crop.get("h") or 0))
+            cx = _even(width * float(crop.get("x") or 0))
+            cy = _even(height * float(crop.get("y") or 0))
+            cx = max(0, min(width - cw, cx))
+            cy = max(0, min(height - ch, cy))
+            parts.append(f"crop={cw}:{ch}:{cx}:{cy}")
+        except (TypeError, ValueError):
+            pass
+    if str(cut.get("fit") or "fit") == "fill":
+        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
+        parts.append(f"crop={out_w}:{out_h}")
+    else:
+        parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease")
+        parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
+    parts += ["setsar=1", f"fps={target_fps}"]
+    return out_w, out_h, ",".join(parts)
 
 
 def proof_window(start: float, duration: float, when: float, size: float = 0.6) -> tuple[float, float]:
@@ -330,7 +371,7 @@ def render_frame(
         )
     input_path = Path(filled["path"]) if filled else Path(source)
     offset = requested - proof_start if filled else requested
-    out_w, out_h, scale = _scale_filter(meta, target_fps)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
     video_filter = _blur_filter(
         edit, meta, clip_start=start, target_fps=target_fps, at=requested,
     )
@@ -724,7 +765,7 @@ def render_edit(
     source = str(project["source_path"])
     meta = pipeline.probe(source)
     target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
-    out_w, out_h, scale = _scale_filter(meta, target_fps)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
     started = time.monotonic()
     project_id = str(project["id"])
     job_dir = Path(data_root) / "projects" / project_id

@@ -86,6 +86,12 @@ class StoryMoveBody(BaseModel):
     delta: int = Field(ge=-500, le=500)
 
 
+class CutBody(BaseModel):
+    aspect: str = "source"
+    fit: str = "fit"
+    crop: dict | None = None
+
+
 class LayerAction(BaseModel):
     action: str = Field(pattern="^(fill|blur|exclude)$")
 
@@ -1215,7 +1221,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
         active = proof_layers(active, mode)
         clean_hash = hashlib.sha1(
-            json.dumps({"clean": active, "clip": clip_scope, "mode": mode}, sort_keys=True).encode("utf-8")
+            json.dumps(
+                {"clean": active, "clip": clip_scope, "mode": mode, "cut": edit.get("cut") or {}},
+                sort_keys=True,
+            ).encode("utf-8")
         ).hexdigest()[:12]
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():
@@ -1822,6 +1831,23 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Render file is missing.")
         return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/cut")
+    def patch_cut(
+        project_id: str,
+        edit_id: str,
+        body: CutBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = edits.set_cut(edit, aspect=body.aspect, fit=body.fit, crop=body.crop)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        edits.save_edit(edit, data_root)
+        return {"edit": edit}
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/clean/{layer_id}")
     def patch_clean_layer(

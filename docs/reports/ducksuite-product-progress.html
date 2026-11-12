@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 14 · Cut Focus</strong><span>12 Nov · aspect, framing, crop, look in one block</span></div>
+      <div class="timeline-body">
+        <strong>Cut is one place for the output treatment.</strong>
+        <ul class="clean">
+          <li>New Cut tab and Cut Focus: <b>Source / 9:16 / 1:1 / 4:5 / 16:9</b>, Fit/Fill, normalized crop with reset, named output size.</li>
+          <li>Warm, Cool, B&amp;W and Vivid moved out of SFX into Cut; the SFX filter entry points are gone.</li>
+          <li>9:16 player ratio <b>0.5625</b>; a frame through the render path is <b>1080 × 1920</b>. Crop h = 0.6 gives ratio <b>2.963</b>.</li>
+          <li>Proof cache now keys the Cut; a stale 1920×1080 proof was found and fixed. Source-aspect chain unchanged by test. 188 tests.</li>
+        </ul>
+        <span class="mono">188 tests</span> · review: <span class="mono">docs/teams/loop-14-cut/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 13 · timeline zoom</strong><span>12 Nov · beats at 16×</span></div>
       <div class="timeline-body">
         <strong>The timeline zooms from Fit to 16× inside its own scroller.</strong>
