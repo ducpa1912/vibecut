@@ -1574,7 +1574,8 @@ function transcriptRow(segment, index) {
 
 function layerListMarkup(active, layers, emptyText = 'No text detected in this scene.') {
   const visible = state.showAllLayers ? layers : layers.slice(0, 6);
-  return `<div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
+  return `<div class="layer-head"><span>${visible.length} of ${layers.length} layer${layers.length === 1 ? '' : 's'}</span>${layers.length > 6 ? `<button class="layer-head-more" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer' : 'Show all'}</button>` : ''}</div>
+  <div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}" data-layer-list>
     ${layers.length ? visible.map((item, index) => `<button class="layer-row${item.id === active?.id ? ' is-active' : ''}${item.enabled === false ? ' is-off' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
       <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
       <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
@@ -1582,8 +1583,7 @@ function layerListMarkup(active, layers, emptyText = 'No text detected in this s
       ${item.quality === 'moving' && item.enabled !== false ? `<span class="layer-flag" title="Background moves behind this line">moves</span>` : ''}
       <span class="layer-kind">${esc(layerState(item))}</span>
     </button>`).join('') : `<p class="small muted">${esc(emptyText)}</p>`}
-  </div>
-  ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}`;
+  </div>`;
 }
 
 function inspectorClean(scene, layer, layers) {
@@ -2125,6 +2125,10 @@ function timelinePanel() {
   const audioRows = editAudioRows();
   const audioHeight = Math.max(22, audioRows.length * 17 + 4);
   const visualFx = (state.edit.sfx || []).filter((effect) => effect.kind !== 'sound');
+  const scriptHeight = cues.length ? 22 : 32;
+  const audioHeightLane = audioRows.length ? audioHeight : 32;
+  const sfxHeight = visualFx.length ? 22 : 32;
+  const laneRows = `22px 22px ${scriptHeight}px ${audioHeightLane}px ${sfxHeight}px`;
   const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.timelineTime || 0) / total) * 100)) : 0;
   const ruler = Array.from({ length: 7 }, (_unused, index) => {
     const time = total > 0 ? (total * index) / 6 : 0;
@@ -2136,14 +2140,14 @@ function timelinePanel() {
       <button class="icon-btn timeline-action" type="button" data-action="open-script" title="Open Script Focus">${icon('captions', 14)}</button></div>
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
-      <div class="timeline-labels" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
+      <div class="timeline-labels" style="grid-template-rows:${laneRows}">
         <div class="timeline-label"><strong>Video</strong><button class="timeline-tool icon" type="button" data-action="trim-focus" title="Trim, cut or slip video">${icon('expand', 10)}</button></div>
         <div class="timeline-label"><strong>Scene</strong><span class="timeline-tool">All</span></div>
         <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
         <div class="timeline-label audio-labels"><strong>Voice & Music</strong><span><button class="timeline-tool icon" type="button" data-action="voice-tab" title="Add voice-over">${icon('plus', 10)}</button><button class="timeline-tool icon" type="button" data-action="add-music" title="Add music">${icon('volume', 10)}</button></span></div>
         <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool icon" type="button" data-action="open-focus" data-focus="sfx" title="Add special effect">${icon('plus', 10)}</button></div>
       </div>
-      <div class="timeline-tracks" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
+      <div class="timeline-tracks" style="grid-template-rows:${laneRows}">
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
         <div class="timeline-track scene">${(() => {
           const rows = timelineSceneRanges();
@@ -2159,8 +2163,8 @@ function timelinePanel() {
             return timelineBlock(row.start, row.end, total, label, action, data, extra, title);
           }).join('');
         })()}</div>
-        <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
-        <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => {
+        <div class="timeline-track script${cues.length ? '' : ' is-empty'}">${cues.length ? cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('') : `<button class="lane-add" type="button" data-action="open-script">${icon('plus', 10)} Add a caption</button>`}</div>
+        <div class="timeline-track audio-stack${audioRows.length ? '' : ' is-empty'}">${audioRows.length ? audioRows.map((row) => {
           const start = Number(row.start || 0);
           const duration = Math.max(0.2, Number(row.duration || 0.2));
           const left = total > 0 ? Math.max(0, Math.min(100, (start / total) * 100)) : 0;
@@ -2176,8 +2180,8 @@ function timelinePanel() {
               <span class="audio-handle left" data-edge="start"></span><span class="audio-block-label">${esc(row.name || row.kind)}</span><span class="audio-handle right" data-edge="end"></span>
             </button>
           </div>`;
-        }).join('') : '<div class="audio-lane empty"><span>No voice, music or sound yet</span></div>'}</div>
-        <div class="timeline-track sfx">${visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('')}</div>
+        }).join('') : ''}</div>
+        <div class="timeline-track sfx${visualFx.length ? '' : ' is-empty'}">${visualFx.length ? visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('') : `<button class="lane-add" type="button" data-action="open-focus" data-focus="sfx">${icon('plus', 10)} Add an effect</button>`}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
     </div>
@@ -2899,7 +2903,7 @@ function screenPreview() {
   const portrait = Number(meta.height || 0) > Number(meta.width || 0);
   const ratio = Number(meta.width || 0) && Number(meta.height || 0) ? (Number(meta.width) / Number(meta.height)).toFixed(4) : '1.7778';
   return `<main class="screen">${storyContextBar()}
-    <div class="workspace preview">
+    <div class="workspace preview${portrait ? ' portrait' : ''}">
       <section class="preview-main">
         <section class="panel preview-stage${portrait ? ' portrait-stage' : ''}" style="overflow:hidden;--stage-ratio:${ratio}">
           ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: true })}
@@ -3001,12 +3005,12 @@ function renderEstimateHtml() {
     ? `${esc(fmtDuration(estimate.total_range[0]))}–${esc(fmtDuration(estimate.total_range[1]))}`
     : estimate.total_seconds ? esc(fmtDuration(estimate.total_seconds)) : '';
   const whole = span
-    ? `<p class="render-cost-note">Whole render ≈ ${span}, measured on this Mac, fill and the leftover-text check included. The range is this Mac's own spread.${esc(oldNote)}</p>`
+    ? `<p class="render-cost-note">Whole render ≈ ${span} on this Mac, fill and check included. The range is this Mac's own spread.${esc(oldNote)}</p>`
     : `<p class="render-cost-note">Whole render time is not measured on this Mac yet.${esc(oldNote)}</p>`;
   const checkNote = estimate.check_seconds
-    ? `<p class="render-cost-note">The leftover-text check reads ${estimate.check_layers} layers, ≈ ${esc(fmtDuration(estimate.check_seconds))}. It judges each letter on every frame near its line. A line under 5 frames long cannot be told from scenery; it is counted as not checked, not as clean.</p>`
+    ? `<p class="render-cost-note">Check reads ${estimate.check_layers} layers, ≈ ${esc(fmtDuration(estimate.check_seconds))}. Lines under 5 frames are not judged; they are counted as not checked.</p>`
     : '';
-  return `${measuring}<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${whole}${checkNote}${left ? `<p class="render-cost-note">The render can be paused or cancelled; filled clips are kept.</p>` : ''}${disk}`;
+  return `${measuring}<p class="render-cost-line${left && estimate.seconds >= 600 ? ' is-long' : ''}"><strong>${head}</strong><span>${esc(detail)}</span></p>${whole}${checkNote}${disk}`;
 }
 
 function paintRenderEstimate() {
@@ -3106,55 +3110,70 @@ function screenRender() {
   const movingBlur = cleanOn.filter((layer) => layer.kind === 'blur' && layer.quality === 'moving').length;
   const movingFill = cleanOn.filter((layer) => layer.kind !== 'blur' && layer.quality === 'moving').length;
   ensureRenderEstimate();
+  const done = queue.filter((item) => item.state === 'done');
+  const leftover = lastCheck
+    ? `Checked ${lastCheck.checked_frames} frames · ${lastCheck.check_hits} found${Number(lastCheck.check_unchecked) ? ` · ${lastCheck.check_unchecked} line${Number(lastCheck.check_unchecked) === 1 ? '' : 's'} not checked` : ''}`
+    : 'No check yet';
   return `<main class="screen">${storyContextBar()}
     <div class="workspace render">
-      <aside class="panel">
-        <div class="panel-head"><h2>Render settings</h2></div>
-        <div class="render-settings">
-          <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Resolution</div><div class="readonly">${resolutionLabel}</div></div>
-          <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
-          <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
-          <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
-          <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div>
-              <div class="toggle-row"><span>Burn into video</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div>
-              <div class="toggle-row"><span>Write .srt file</span><label class="switch"><input type="checkbox" data-action="caption-srt" ${state.edit?.captions?.srt ? 'checked' : ''}><i></i></label></div>
-              <p class="small muted">${(state.edit?.captions?.cues || []).length} cue${(state.edit?.captions?.cues || []).length === 1 ? '' : 's'} from the script. Nothing is exported unless you turn one on.</p>
-            </div>
-          <div class="render-setting"><div class="setting-head">${icon('voice', 14)} Voice-over</div><div class="toggle-row"><span>${state.edit?.voice ? 'Included' : 'None'}</span><label class="switch"><input type="checkbox" ${state.edit?.voice ? 'checked' : ''} disabled><i></i></label></div></div>
-          <div class="media-rule"></div>
-          <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputLabel)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div></div>
-          <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Disk space</div><div class="small muted">${state.settings?.storage?.free_bytes ? `${fmtBytes(state.settings.storage.free_bytes)} free` : 'Local storage'}</div></div>
-        </div>
-      </aside>
-
-      <section class="panel render-queue">
-        <div class="render-queue-head"><h2>Render queue · ${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}</h2><div style="display:flex;gap:6px">${elsewhere ? `<button class="btn small" type="button" data-action="queue-scope">${state.queueScope === 'all' ? 'This project' : `All projects · ${state.queue.length}`}</button>` : ''}${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
-        <div class="queue-head-row"><span>Project / Story</span><span>Edit</span><span>Duration</span><span>Resolution</span><span>State</span><span>Progress</span><span>Output</span></div>
-        ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : `<div class="queue-empty">${elsewhere ? `No renders for this project. ${elsewhere} job${elsewhere === 1 ? '' : 's'} in other projects.` : 'No jobs yet. Start a render from Preview.'}</div>`}
-      </section>
-
-      <aside class="render-ready">
-        <section class="panel render-ready" style="border:0;box-shadow:none;padding:0;background:transparent">
-          <div class="panel-head" style="padding:0 0 2px"><h2>Ready</h2><span class="meta">${checked}/${proofTotal}</span></div>
-          <div class="ready-card">
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${proofTotal} text-scene proofs cached</strong><span>Optional review frames; render is available</span></span></div>
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
-            <div class="ready-row"><span class="ready-icon" style="${cleanOn.length ? '' : 'background:var(--paper-2);color:var(--muted)'}">${icon('sparkle', 12)}</span><span class="ready-main"><strong>Clean</strong><span>${cleanOn.length ? `${cleanFill} fill · ${cleanBlur} blur` : 'No text layers'}</span></span></div>
-            ${lastCheck ? `<div class="ready-row"><span class="ready-icon" style="${lastCheck.check_hits || Number(lastCheck.check_unchecked) ? 'background:var(--amber-soft);color:var(--amber-ink)' : ''}">${lastCheck.check_hits || Number(lastCheck.check_unchecked) ? icon('loader', 12) : icon('check', 12)}</span><span class="ready-main"><strong>Leftover text</strong><span>Checked ${lastCheck.checked_frames} frames · ${lastCheck.check_hits} found${Number(lastCheck.check_unchecked) ? ` · ${lastCheck.check_unchecked} line${Number(lastCheck.check_unchecked) === 1 ? '' : 's'} not checked` : ''}${checkTimes.length ? ` · ${checkTimes.slice(0, 3).map((time) => fmtTime(time)).join(', ')}${checkTimes.length > 3 ? '…' : ''}` : ''}</span></span></div>${roughLines ? `<p class="small" style="margin:2px 0 0 24px;color:var(--amber-ink)">${roughLines} line${roughLines === 1 ? '' : 's'} above flicker 2.2.</p>` : ''}` : ''}
-            ${movingBlur ? `<p class="small muted" style="margin:2px 0 0 24px">${movingBlur} line${movingBlur === 1 ? '' : 's'} use Blur instead of AI fill.</p>` : ''}
-            ${movingFill ? `<p class="small" style="margin:2px 0 0 24px;color:var(--amber-ink)">${movingFill} line${movingFill === 1 ? '' : 's'} use AI fill over a moving background and may smear.</p>` : ''}
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
-            <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
+      <aside class="render-left">
+        <section class="panel render-left-panel">
+          <div class="panel-head"><h2>Render settings</h2><span class="meta">${resolutionLabel}</span></div>
+          <div class="render-settings">
+            <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
+            <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
+            <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
+            <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div>
+                <div class="toggle-row"><span>Burn into video</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div>
+                <div class="toggle-row"><span>Write .srt file</span><label class="switch"><input type="checkbox" data-action="caption-srt" ${state.edit?.captions?.srt ? 'checked' : ''}><i></i></label></div>
+              </div>
+            <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputLabel)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div><div class="small muted">${state.settings?.storage?.free_bytes ? `${fmtBytes(state.settings.storage.free_bytes)} free` : 'Local storage'}</div></div>
+          </div>
+          <div class="render-start">
+            ${activeJob ? `<div class="render-live"><div><strong>${state.queuePaused ? 'Render paused' : activeJob.state === 'queued' ? 'Render queued' : 'Rendering'} · ${renderPercent(activeJob)}%</strong><span>${esc(activeJob.title || 'Current render')}</span></div><div class="render-live-actions">${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">Resume</button>` : `<button class="btn small" type="button" data-action="pause-queue">Pause</button>`}<button class="btn small" type="button" data-action="cancel-render" data-project="${esc(activeJob.project_id || state.project?.id || '')}" data-edit="${esc(activeJob.edit_id || '')}">Cancel</button></div></div>` : `<button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>`}
+            <p class="readiness-note">${activeJob ? 'A render is already running. Pause, cancel, or wait for it to finish.' : 'Proofs are optional. Start render now, or review frames later.'}</p>
           </div>
           <div class="render-cost" data-render-estimate aria-live="polite">${renderEstimateHtml()}</div>
-          ${activeJob ? `<div class="render-live"><div><strong>${state.queuePaused ? 'Render paused' : activeJob.state === 'queued' ? 'Render queued' : 'Rendering'} · ${renderPercent(activeJob)}%</strong><span>${esc(activeJob.title || 'Current render')}</span></div><div class="render-live-actions">${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">Resume</button>` : `<button class="btn small" type="button" data-action="pause-queue">Pause</button>`}<button class="btn small" type="button" data-action="cancel-render" data-project="${esc(activeJob.project_id || state.project?.id || '')}" data-edit="${esc(activeJob.edit_id || '')}">Cancel</button></div></div>` : `<button class="btn primary wide start" type="button" data-action="start-render">${icon('play', 16)} Start render</button>`}
-          <p class="readiness-note">${activeJob ? 'A render is already running. Pause, cancel, or wait for it to finish.' : 'Proofs are optional. Start render now, or review frames later.'}</p>
-          <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputLabel)}</span></span></div></div>
+          <div class="render-facts">
+            <div class="fact"><span>Proofs</span><strong>${checked}/${proofTotal} text scenes</strong></div>
+            <div class="fact"><span>Clean</span><strong>${cleanOn.length ? `${cleanFill} fill · ${cleanBlur} blur · ${movingFill} moving` : 'No text layers'}</strong></div>
+            <div class="fact"><span>Captions</span><strong>${captions ? '1 track' : 'None'}</strong></div>
+            <div class="fact"><span>Voice</span><strong>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</strong></div>
+            <div class="fact"><span>Music</span><strong>${music ? '1 track' : 'None'}</strong></div>
+            <div class="fact"><span>Leftover</span><strong class="${lastCheck && (lastCheck.check_hits || Number(lastCheck.check_unchecked)) ? 'is-warn' : ''}">${esc(leftover)}</strong></div>
+            ${roughLines ? `<p class="small" style="margin:0;color:var(--amber-ink)">${roughLines} line${roughLines === 1 ? '' : 's'} above flicker 2.2.</p>` : ''}
+            ${movingBlur ? `<p class="small muted" style="margin:0">${movingBlur} line${movingBlur === 1 ? '' : 's'} use Blur instead of AI fill.</p>` : ''}
+          </div>
         </section>
       </aside>
+
+      <section class="render-right">
+        <section class="panel render-queue">
+          <div class="render-queue-head"><h2>Render queue · ${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}</h2><div style="display:flex;gap:6px">${elsewhere ? `<button class="btn small" type="button" data-action="queue-scope">${state.queueScope === 'all' ? 'This project' : `All projects · ${state.queue.length}`}</button>` : ''}${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
+          <div class="queue-head-row"><span>Project / Story</span><span>Edit</span><span>Duration</span><span>Resolution</span><span>State</span><span>Progress</span><span>Output</span></div>
+          ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : `<div class="queue-empty">${elsewhere ? `No renders for this project. ${elsewhere} job${elsewhere === 1 ? '' : 's'} in other projects.` : 'No jobs yet. Start a render from Preview.'}</div>`}
+        </section>
+        ${done.length ? `<section class="panel render-done">
+          <div class="panel-head"><h2>Finished renders</h2><span class="meta">${done.length}</span></div>
+          <div class="done-grid">${done.map((item) => doneCard(item)).join('')}</div>
+        </section>` : ''}
+      </section>
     </div>
   </main>`;
+}
+
+function doneCard(item) {
+  const real = item.elapsed_seconds ? `real ${fmtDuration(item.elapsed_seconds)}` : '';
+  const estimate = item.estimate_seconds ? `est ${fmtDuration(item.estimate_seconds)}` : '';
+  return `<article class="done-card">
+    <img src="${frameUrl(0.5, item.project_id)}" alt="">
+    <strong title="${esc(item.title || 'Render')}">${esc(item.title || 'Render')}</strong>
+    <span>${esc(item.project_name || 'Project')} · ${real}${real && estimate ? ' · ' : ''}${estimate}</span>
+    <div class="done-actions">
+      <button class="btn small" type="button" data-action="play-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 11)} Play</button>
+      <button class="btn small" type="button" data-action="reveal" data-path="${esc(item.output || '')}">${icon('folderOpen', 11)} Show</button>
+    </div>
+  </article>`;
 }
 
 function renderQueueRow(item) {
@@ -3385,21 +3404,7 @@ async function openSettings() {
           <div class="kv"><span>Vision</span><strong>${state.engine?.vision?.available ? 'Ready' : 'Unavailable'}</strong></div>
           <div class="kv"><span>Speech</span><strong>${state.engine?.speech?.default || 'Auto'}</strong></div>
           <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
-          ${(() => {
-            const fillModel = state.settings?.fill?.model || {};
-            return `<div class="field" style="margin-top:8px"><label for="fill-model-path">Your fill model</label>
-            <div class="path-row">
-              <input id="fill-model-path" type="text" value="${esc(fillModel.path || '')}" placeholder="Choose a folder with model.onnx or model.pt" readonly>
-              <button class="btn small" type="button" data-action="choose-fill-model">${icon('folder', 12)} Choose</button>
-            </div>
-          </div>
-          <p class="small muted">${fillModel.path
-            ? (fillModel.ready
-              ? `Using ${esc(fillModel.file)} in place of the default engine.`
-              : esc(fillModel.problem || 'That folder cannot be used.'))
-            : 'Runs in place of the default engine when set. DuckSuite ships no fill model and downloads none; the folder is copied into DuckSuite. Use a model you obtained yourself.'}</p>
-          ${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Use the default engine</button>` : ''}`;
-          })()}
+
           <div class="kv"><span>Voices</span><strong>${state.voices.length ? `${state.voices.length} local` : '—'}</strong></div>
           <div class="kv"><span>Rewrite</span><strong>${state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
           ${state.engine?.rewrite?.available ? '' : `<p class="small muted">${esc(
@@ -3424,6 +3429,14 @@ async function openSettings() {
           <p class="small muted">DuckSuite ships no translation model and downloads none. Point it at a CTranslate2 folder you obtained yourself: it needs model.bin, config.json and sentencepiece.bpe.model. The folder is copied into DuckSuite.</p>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button>${model.file ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(model.file)}">Show</button>` : ''}</strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
+          ${(() => {
+            const fillModel = state.settings?.fill?.model || {};
+            const stateText = fillModel.path
+              ? (fillModel.ready ? `In use · ${fillModel.file}` : `Not usable · ${fillModel.problem || 'unknown reason'}`)
+              : 'None';
+            return `<div class="kv"><span>Your fill model</span><strong>${esc(stateText)} <button class="btn small" type="button" data-action="choose-fill-model">${icon('folder', 11)} ${fillModel.path ? 'Replace' : 'Choose'}</button>${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Clear</button>` : ''}</strong></div>`;
+          })()}
+          <p class="small muted">A fill model you obtained yourself runs in place of the default engine. DuckSuite ships none and downloads none; the folder is copied into DuckSuite.</p>
           ${state.engine?.fill?.ready ? '' : `<p class="small muted">AI fill ships inside the app. If the file is missing, reinstall DuckSuite (or run the dev build) to restore it.</p>`}
         </section>
         <section>
@@ -4426,12 +4439,27 @@ document.addEventListener('input', (event) => {
 
 /* ------------------------------------------------------------------ after render */
 
+function syncLayerFades() {
+  document.querySelectorAll('[data-layer-list]').forEach((el) => {
+    el.classList.toggle(
+      'has-more',
+      el.scrollHeight > el.clientHeight + 4 && el.scrollTop + el.clientHeight < el.scrollHeight - 4,
+    );
+  });
+}
+
+document.addEventListener('scroll', (event) => {
+  const target = event.target;
+  if (target && target.matches && target.matches('[data-layer-list]')) syncLayerFades();
+}, true);
+
 function afterRender() {
   setupBrushCanvas();
   setupTimelineRuler();
   setupAudioRows();
   loadAudioWaveforms();
   setupAudioDrag();
+  syncLayerFades();
   const inline = document.querySelector('video[data-inline-player]');
   if (inline) {
     const start = Number(inline.dataset.start || 0);

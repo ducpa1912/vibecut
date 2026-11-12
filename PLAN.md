@@ -37,8 +37,8 @@ One loop = PO brief → engineer + tester → creator → PO sign-off → one co
 
 ## Loops
 
-Brief loops 7 (ink check), 8 (moving fill) and 9 (rules) are **closed**; the PLAN loops still open
-are 7 (local model slots), 8 ($29 readiness) and 9 (layout balance). Loop 9 runs next, by the founder's order, from `docs/teams/loop-10-layout-balance/BRIEF.md`; the founder tests by hand after it.
+Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and 10 (layout balance) are **closed**; the
+PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Loop 9 runs next, by the founder's order, from `docs/teams/loop-10-layout-balance/BRIEF.md`; the founder tests by hand after it.
 
 ### Loops 5 and 6 — closed 2026-11-12
 
@@ -58,10 +58,11 @@ planned in `BYOK-PLAN.md` and are **not v1**.
 SHA-256 per pack file, LGPL written source offer for ffmpeg, a smaller or per-language Whisper pack,
 AI fill repair instruction, manual microphone test, creator-readable import errors.
 
-### Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`)
+### Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`) — **closed 2026-11-12**
 
-Render screen two columns, inspector count + fade, collapsed empty lanes, portrait scene strip,
-9:16 verified at 1440×900 and 1280×800.
+Review: `docs/teams/loop-10-layout-balance/review.md`. 9/9 acceptance; six screens measured at
+1440×900 and 1280×800 (bottoms 87.3–100 %, 0 layout overlaps, no horizontal scroll, 0 clipped
+buttons, portrait stage 70 % / 64.6 %), 16:9 fixture measured the same. Nothing left open here.
 
 ## Not in this plan
 

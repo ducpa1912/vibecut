@@ -1,6 +1,6 @@
 # Product
 
-> Status 2026-11-12: local-only macOS app, about 75 % complete by the founder's estimate. 178 tests.
+> Status 2026-11-12: local-only macOS app, about 78 % complete by the founder's estimate. 178 tests.
 > Brief loops 7–9 (ink check, moving fill, rules) are closed; PLAN loops 7–9 are open. App Store
 > work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
 
@@ -58,8 +58,8 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 | Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, stroke-shaped hole, post-render letter check with one refill | Better fill on moving footage (loop 5) | Model picker for the default |
 | Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy) with Apple Intelligence or a basic cleanup shown in the UI, captions + SRT | — | Publish kit, titles, hashtags |
 | Voice | macOS voices, Kokoro pack, dub, music and SFX on one audio track | Manual microphone test (loop 8) | Voice cloning |
-| Edit | Trim, stories, media beats, filters | Split, reorder, remove silence | Grading, LUTs, keyframes |
-| Render | Source aspect, 1080p, 24/30 fps, H.264/AAC, queue scoped to the project, estimate on screen, leftover-text check | Render screen layout (loop 9) | Aspect switching, auto-frame, 4K, 60 fps, HDR, ProRes |
+| Edit | Trim, stories, media beats, filters; layer count and a fade in the inspector; empty timeline lanes collapse to a `+` row | Split, reorder, remove silence | Grading, LUTs, keyframes |
+| Render | Source aspect, 1080p, 24/30 fps, H.264/AAC, two-column screen with the estimate and the leftover-text check on the left, queue and finished cards on the right | — | Aspect switching, auto-frame, 4K, 60 fps, HDR, ProRes |
 | Models | LaMa bundled (GPU); Whisper + Kokoro optional packs; translation from a user CTranslate2 folder; **a user fill model** (ONNX or TorchScript) runs in place of LaMa | Local slots for transcription, LLM URL and voice (PLAN loop 7); SHA-256 per pack (PLAN loop 8) | Any translation weights shipped or hosted by DuckSuite |
 | Cloud | None. Nothing uploads | — | User keys after v1; cloud render plans |
 

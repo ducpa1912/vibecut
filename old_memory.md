@@ -311,3 +311,16 @@ change), shared check decode.
 **E:** the 48 letter-frames could not be reproduced: 0 of 1,743 filled letter-frames on 024716 reach
 15% stroke presence; check 0 hits. Six control crops saved; GROW_PX 8 would add 7,127,423 pixel-frames
 (+14.0%) and was not changed.
+
+## Loop 10 — layout balance (2026-11-12)
+
+### REQ-20261112-01 · 2026-11-12
+**Request:** founder: check loops 7–8, send back what is worse, update the documents, push to
+`ducksuite` only, then run PLAN loop 9 (layout balance); the founder tests by hand only after it.
+**Read as:** six screens balanced at 1440×900 and 1280×800, measured, with honest limits kept.
+**Response:** Render two columns (settings/start/estimate left, queue + finished cards right),
+inspector count and fade, empty timeline lanes as 32 px `+` rows, portrait Preview strip in a
+300 px column, fill model row grouped with the models.
+**Outcome:** 9/9 acceptance. Bottoms 87.3–100 %; 0 layout overlaps; every scroll list has a count or
+fade; portrait stage 70 % / 64.6 %; no horizontal scroll; 36 captures; 16:9 fixture measured the
+same; 178 tests; `VERSION` stays 17.

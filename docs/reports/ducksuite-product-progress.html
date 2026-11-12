@@ -190,6 +190,19 @@ ul.clean li { margin:6px 0; }
       </div>
     </div>
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">REQ-20261112-01</strong><span>12 Nov · layout balance</span></div>
+      <div class="timeline-body">
+        <strong>Six screens balanced at both sizes, measured: 9/9 acceptance.</strong>
+        <ul class="clean">
+          <li>Render is two columns: settings, Start, the estimate and the ready facts on the left (320 px, no scroll at 1280×800); queue with 56 px rows and finished-render cards on the right.</li>
+          <li>Inspector shows <b>N of M layers</b> with a 24 px fade that clears at the end; empty timeline lanes are one 32 px dashed row with a <b>+</b>; a 9:16 Preview puts the strip in a 300 px column.</li>
+          <li>Measured 1440×900 / 1280×800: content bottoms <b>87.3–100 %</b>, <b>0</b> layout overlaps, every scroll list has a count or fade, portrait stage <b>70 % / 64.6 %</b>, no horizontal scroll, 0 clipped buttons.</li>
+          <li>16:9 fixture measured the same (87.3–100 %, 0 overlaps, Preview 100 %). 36 captures, largest 175 KB. 178 tests; <span class="mono">VERSION</span> 17 unchanged.</li>
+        </ul>
+        <span class="mono">178 tests</span> · review: <span class="mono">docs/teams/loop-10-layout-balance/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 9 · rev 1</strong><span>12 Nov · the cue rule stays local</span></div>
       <div class="timeline-body">
         <strong>The Whisper loop rule no longer drops real speech.</strong>

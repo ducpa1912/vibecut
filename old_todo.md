@@ -295,3 +295,16 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] Estimate from the fill's own run plan (loop 8 revision 1): `dry_units` walks the same
   `fill_frames_lama`; 790.4 s against 847.2 s real (−6.7 %), worst span 1.75x.
 - [x] A custom model no longer teaches the LaMa rate; estimate and render share `engine_choice`.
+
+## Loop 10 closed items (2026-11-12)
+
+## Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`)
+
+- [ ] Render screen restructure: Settings (320 px) + Start render left, queue full width right,
+  finished renders as cards. The estimate lives in the left column.
+- [ ] Edit inspector: `5 of 9 layers` plus a bottom fade so the clipped row reads as "more below".
+- [ ] Timeline empty lanes: collapse a lane with no cues to one 32 px `+` row.
+- [ ] Portrait Preview width: scene strip in a 300 px column beside the player.
+- [ ] Verify a 9:16 project at 1440×900 and 1280×800.
+
+

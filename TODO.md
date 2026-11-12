@@ -6,8 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [ ] REQ-20261112-01 · PLAN loop 9, layout balance: `docs/teams/loop-10-layout-balance/BRIEF.md`. The founder
-  tests by hand only after it.
+- [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
+  new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
 
 ## Fill and leftover check — open after brief loops 7–9
 
@@ -46,16 +46,6 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] AI fill repair / reinstall instruction beside the existing problem text and Reveal button
 - [ ] Manual microphone test on a clean Mac; recording compiles, never tested by hand
 - [ ] Import failure copy: technical errors ("ffmpeg frame read failed") rewritten for a creator
-
-## Loop 9 — layout balance (`docs/teams/uiux-balance-01.md`)
-
-- [ ] Render screen restructure: Settings (320 px) + Start render left, queue full width right,
-  finished renders as cards. The estimate lives in the left column.
-- [ ] Edit inspector: `5 of 9 layers` plus a bottom fade so the clipped row reads as "more below".
-- [ ] Timeline empty lanes: collapse a lane with no cues to one 32 px `+` row.
-- [ ] Portrait Preview width: scene strip in a 300 px column beside the player.
-- [ ] Verify a 9:16 project at 1440×900 and 1280×800.
-
 
 ## Later
 

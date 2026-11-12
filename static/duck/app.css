@@ -1681,3 +1681,90 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .scene-filter input { flex: 1; min-width: 0; height: 27px; font-size: 10px; }
 .proof-row.is-hidden { display: none; }
 .preview-stage.portrait-stage { display: flex; justify-content: center; align-items: center; }
+
+/* ---------------------------------------------------------------- loop 10 */
+
+/* Render: settings and Start on the left, the queue and finished cards right. */
+.workspace.render { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
+.render-left, .render-right { display: grid; gap: 12px; min-width: 0; }
+.render-left-panel { overflow: hidden; }
+.render-left .panel-head { padding: 12px 14px 6px; }
+.render-left .render-settings { padding: 8px 14px 10px; gap: 9px; }
+.render-left .render-setting { gap: 4px; }
+.render-left .render-setting select, .render-left .render-setting .readonly { height: 30px; }
+.render-left .toggle-row { min-height: 30px; }
+.render-start { padding: 4px 14px 10px; display: grid; gap: 5px; }
+.render-start .start { height: 44px; font-size: 15px; }
+.render-start .readiness-note { margin: 0; }
+.render-left .render-cost { margin: 0 14px 10px; }
+.render-facts { padding: 0 14px 12px; display: grid; gap: 4px; }
+.render-facts .fact { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--muted); }
+.render-facts .fact strong { color: var(--ink); font-weight: 600; text-align: right; }
+.render-facts .fact strong.is-warn { color: var(--amber-ink); }
+
+.queue-item { min-height: 56px; padding: 8px 14px; }
+.render-done .panel-head { padding: 12px 14px 8px; }
+.done-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 0 14px 14px; }
+.done-card { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 8px; display: grid; gap: 6px; min-width: 0; }
+.done-card img { width: 100%; height: 64px; object-fit: cover; border-radius: 6px; background: var(--video); }
+.done-card strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-card span { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-actions { display: flex; gap: 6px; }
+
+/* Inspector: a count in the head, a fade while more rows sit below. */
+.layer-head { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 6px; color: var(--muted); font-size: 11px; }
+.layer-head-more { border: 0; background: transparent; color: var(--amber-ink); font-size: 11px; font-weight: 620; padding: 0; cursor: pointer; }
+.layer-list { max-height: 232px; overflow-y: auto; }
+.layer-list.is-expanded { max-height: 260px; }
+.layer-list.has-more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+
+/* Timeline: an empty lane is one short row with a plus. */
+.timeline-track.is-empty { display: grid; place-items: center; background: transparent; border: 1px dashed var(--line-strong); }
+.lane-add { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 620; cursor: pointer; padding: 0; }
+.lane-add:hover { color: var(--amber-ink); }
+
+/* Preview: a portrait source puts the scene strip in a 300 px column. */
+.workspace.preview.portrait .preview-main { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; }
+.workspace.preview.portrait .preview-stage { grid-column: 1; grid-row: 1; }
+.workspace.preview.portrait .preview-scenes { grid-column: 2; grid-row: 1; height: 100%; }
+.workspace.preview.portrait .scene-strip { display: flex; flex-direction: column; overflow-y: auto; max-height: calc(100vh - 300px); }
+.workspace.preview.portrait .scene-strip .scene-tile { flex: 0 0 auto; width: 100%; }
+
+/* Loop 10, measured: the portrait stage fills its column; the right column scrolls. */
+.workspace.preview.portrait .preview-stage.portrait-stage { width: 100%; justify-self: stretch; max-width: none; }
+.render-right { max-height: calc(100vh - 110px); overflow-y: auto; align-content: start; }
+.render-left .render-settings { padding-bottom: 6px; }
+.render-left .panel-head { padding-bottom: 4px; }
+.render-left .render-cost { margin-bottom: 8px; }
+.workspace.check { min-height: calc(100vh - 168px); }
+.render-facts { grid-template-columns: 1fr 1fr; column-gap: 14px; }
+.render-facts .fact { font-size: 10px; }
+.render-facts .fact strong { font-size: 10px; }
+.render-start .readiness-note { font-size: 10px; }
+.render-left .render-cost { padding: 7px 9px; }
+.render-left .render-cost-note { margin-top: 3px; font-size: 10px; }
+
+.render-left .render-setting { gap: 2px; }
+.render-left .render-setting .setting-head { font-size: 10px; }
+.render-left .render-setting select, .render-left .render-setting .readonly { height: 28px; }
+.render-left .toggle-row { min-height: 26px; }
+.render-left .render-setting .small.muted { font-size: 9px; line-height: 1.25; margin: 0; }
+.render-left .render-setting .btn.small { height: 22px; padding: 0 7px; font-size: 10px; }
+.render-left .render-settings { gap: 6px; padding-top: 4px; }
+.render-start { padding-top: 0; gap: 3px; }
+.render-start .start { height: 42px; }
+.render-facts { grid-template-columns: repeat(3, 1fr); gap: 2px 10px; }
+.render-facts .fact { display: grid; gap: 0; font-size: 9px; line-height: 1.2; }
+.render-facts .fact strong { font-size: 9px; text-align: left; }
+.render-left .render-cost { padding: 6px 8px; }
+.render-left .render-cost-line strong { font-size: 11px; }
+
+.workspace.preview { min-height: calc(100vh - 140px); align-items: stretch; }
+.workspace.check > section:nth-child(2) { grid-template-rows: auto 1fr; }
+.workspace.check > section:nth-child(2) > .panel:last-child { align-self: stretch; }
+.render-facts { grid-template-columns: 1fr 1fr; }
+.workspace.render { min-height: calc(100vh - 128px); align-items: stretch; }
+.render-right { max-height: none; }
+.render-queue { align-self: start; }
+.render-done { align-self: start; }
+.render-left { align-self: start; }
