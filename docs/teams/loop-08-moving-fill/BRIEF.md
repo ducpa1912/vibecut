@@ -96,3 +96,40 @@ with what must be seen at each step. The founder runs it; do not run the app you
 
 No fill output change is expected. If one happens, bump `textfill.VERSION` and say the next render
 is cold. Add a "Revision 1" section on top of `review.md`.
+
+## Revision 2 (Senior PO, 2026-11-12) — after review of `85482ac`
+
+The estimate is right now (6.7 % low) and too slow: 66.7 s on the first call, 24 s on every later
+call, inside the request at `duckcore/main.py:1767`, and again in the render queue before each
+render. The user sees nothing while it runs.
+
+1. **Build the ink once.** `inkcheck.build_inks` is run by the estimate, by the queue's estimate
+   and by the render. Store its result on disk, keyed by the source file stamp, the layer boxes
+   and ranges, and a version constant of `ink.py`; the estimate, the queue and the render read the
+   same store. A changed layer rebuilds only that layer. Test: second call reads no frame.
+2. **The dry run is paid once.** A span whose units are stored must not decode. An edit with one
+   changed layer re-plans only the spans that layer touches. Test it.
+3. **The request does not block.** The estimate endpoint answers at once with what is stored and a
+   state: `ready`, or `working` with progress 0–1. The work runs in one background worker; a
+   second request joins it, it does not start a second one. A render that starts while it works
+   waits for it or takes over its result; it does not repeat it.
+4. **The UI says it.** While `working`: "Measuring the fill…" with the progress, and the last
+   known figure marked as old if there is one. No model name. When the fill speed is unknown or
+   varies, show the figure as a range: this Mac rendered the same edit cold in 620.6 s and
+   847.2 s, so one number hides a limit.
+5. **Do not let the estimate hold the fill lock or the GPU** while a render runs.
+
+Accept, measured on `prj_e95348a97316` in the built app's server, not in a test double:
+
+- Warm call (nothing changed): under 1 s. State the number.
+- First call ever: the request returns under 1 s; the background work's wall clock is stated.
+- One layer's range changed: stated, and less than a third of the cold figure.
+- Queue to first fill frame: no second ink build; state the seconds before and after.
+- The estimate's total for the unchanged edit equals the figure of `85482ac` (790.4 s at the same
+  stored rate), so speed did not cost accuracy.
+- No fill output change, `textfill.VERSION` stays 17. If it must change, stop and say why.
+- Tests, `node --check`, `./scripts/build-xcode-dev.sh` pass.
+
+Do not open the app window or click in it; the founder does that. Add a step to
+`founder-test.md` for the "Measuring the fill…" line. "Revision 2" section on top of `review.md`,
+one commit with `MEMORY.md`, `TODO.md`, the test counts and the scripted report row, pushed.
