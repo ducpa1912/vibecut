@@ -314,3 +314,8 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] REQ-20261112-01 · loop 11: proofs are a blurred frame, clicked by the user, never auto
 - [x] REQ-20261112-01 · loop 11: Detect / Compare / Review steps with a step label
 - [x] REQ-20261112-01 · loop 11: Re-clean this scene opens Clean Focus on that scene, with box edit, brush and re-apply
+
+## Loop 12 — transcript (closed 2026-11-12)
+
+- [x] REQ-20261112-02 · loop 12: transcript opacity slider, 30–100 %, persisted
+- [x] REQ-20261112-02 · loop 12: transcript never covers the player time, volume, scrub or full screen

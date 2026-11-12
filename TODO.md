@@ -13,8 +13,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
 
-- [ ] REQ-20261112-02 · loop 12: transcript opacity slider, 30–100 %, persisted
-- [ ] REQ-20261112-02 · loop 12: transcript never covers the player time, volume, scrub or full screen
 - [ ] REQ-20261112-03 · loop 13: timeline zoom fit–16x, adaptive ruler, internal scroll
 - [ ] REQ-20261112-04 · loop 14: Cut tab and Cut Focus shell with Output (crop, aspect, resize) and Look
 - [ ] REQ-20261112-04 · loop 14: move Warm / Cool / B&W / Vivid out of SFX into Cut

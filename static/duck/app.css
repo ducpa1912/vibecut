@@ -1911,3 +1911,16 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .box-actions { display: flex; gap: 6px; }/* Portrait pictures are narrow: the step strip drops below the corner tag. */
 .workspace.preview.portrait .proof-steps { top: 40px; }
 .proof-step { white-space: nowrap; }
+
+/* Transcript opacity: the panel fades, the words keep their contrast. */
+.transcript-side {
+  background: color-mix(in srgb, var(--panel) calc(var(--ta, 1) * 100%), transparent);
+}
+.transcript-alpha-row {
+  display: flex; align-items: center; gap: 7px;
+  color: var(--muted); font-size: 9.5px;
+}
+.transcript-alpha-row input { flex: 1; min-width: 0; height: 3px; accent-color: var(--amber); }
+.transcript-alpha-row span { font: 9px var(--mono); min-width: 26px; text-align: right; }
+/* The before/after image must never sit over the player overlay. */
+.split-stage .media-overlay { z-index: 4; }

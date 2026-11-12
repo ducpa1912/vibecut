@@ -359,3 +359,10 @@ back to Clean Focus.
 steps, Re-clean routing, editable fill box (track dropped so render and proof agree).
 **Numbers:** blur proof 0.98 s cold / 0.02 s cached at 1080p; 0 auto requests on opening Edit,
 Preview or Clean; 0 fill files; `textfill.VERSION` 17; 183 tests.
+
+### REQ-20261112-02 · 2026-11-12 · loop 12 closed
+**Request:** the transcript had no transparency slider and blocked the player time and volume.
+**Shipped:** 30–100 % opacity, persisted per project; panel background fades, text keeps contrast;
+the before/after image no longer paints over the player overlay.
+**Numbers:** alpha 0.50 applied and restored; play/time/scrub/volume/full hit tests all true;
+blocked controls 0 on Edit, Preview and Clean; transcript/picture 0 px²; contrast 14.99:1.

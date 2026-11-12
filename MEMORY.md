@@ -68,12 +68,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-### REQ-20261112-02 · 2026-11-12
-**Request:** "In edit: the transcript overlay did not have the tranparency slider. Player runtime being block by the transcript, volume is block by the transcript overlay".
-**Read as:** The transcript gets an opacity control and never covers the player time, volume or scrub.
-**Response:** Loop 12: 30-100 % opacity, persisted; hit-test proof at both sizes.
-**Outcome:** open.
-
 ### REQ-20261112-03 · 2026-11-12
 **Request:** "Timeline should be zoom in & out to go into mini detailed of each beat/scene."
 **Read as:** The time axis zooms and scrolls so one beat fills the ruler.

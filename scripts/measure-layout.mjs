@@ -262,10 +262,17 @@ const MEASURE = String.raw`(() => {
     }
   }
   const rgb = (value) => {
-    const m = String(value || '').match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    const parts = m[1].split(',').map((x) => parseFloat(x));
-    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+    const text = String(value || '');
+    const m = text.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].split(',').map((x) => parseFloat(x));
+      return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+    }
+    const c = text.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/);
+    if (c) {
+      return { r: parseFloat(c[1]) * 255, g: parseFloat(c[2]) * 255, b: parseFloat(c[3]) * 255, a: c[4] === undefined ? 1 : parseFloat(c[4]) };
+    }
+    return null;
   };
   const lum = (c) => {
     const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -298,6 +305,22 @@ const MEASURE = String.raw`(() => {
       if (ix > 1 && iy > 1) hits += 1;
     }
     return hits;
+  })();
+  const transcriptHit = (() => {
+    const controls = [...document.querySelectorAll('.player-bar button, .player-bar input, .media-overlay button')];
+    let blocked = 0;
+    const who = [];
+    for (const el of controls) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!hit) continue;
+      if (!(hit === el || el.contains(hit) || (el.closest('.player-bar') || el).contains(hit))) {
+        blocked += 1;
+        who.push(String(hit.className || hit.tagName).slice(0, 30));
+      }
+    }
+    return { blocked, who: who.slice(0, 5) };
   })();
   const side = document.querySelector('.transcript-side');
   let transcript = null;
@@ -388,7 +411,7 @@ const MEASURE = String.raw`(() => {
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
     scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
     picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
-    nativeControls, controlOverlaps, transcript, listEdges, videoBars, stepOverlaps,
+    nativeControls, controlOverlaps, transcript, listEdges, videoBars, stepOverlaps, transcriptHit,
     renderCols: left && right ? {
       left: Math.round(left.getBoundingClientRect().height),
       right: Math.round(right.getBoundingClientRect().height),

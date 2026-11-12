@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">Loop 12 · transcript</strong><span>12 Nov · opacity, and nothing sits on the controls</span></div>
+      <div class="timeline-body">
+        <strong>The transcript fades and never blocks the player.</strong>
+        <ul class="clean">
+          <li>Opacity <b>30–100 %</b>, persisted per project: 50 % applies alpha 0.50 and survives a reload.</li>
+          <li>Play, time, scrub, mute, volume, full screen: <b>all</b> answer a hit test at 50 %. Blocked controls <b>0</b> on Edit, Preview and Clean.</li>
+          <li>The before/after image was painting over the player overlay; fixed. Preview/Clean blocked controls <b>1 → 0</b>.</li>
+          <li>Transcript vs picture <b>0 px²</b>, contrast <b>14.99 : 1</b>; 1 line (16:9), 2 (9:16). Layout unchanged; 183 tests.</li>
+        </ul>
+        <span class="mono">183 tests</span> · review: <span class="mono">docs/teams/loop-12-transcript/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 11 · proofs</strong><span>12 Nov · a proof is a blur, and the user asks for it</span></div>
       <div class="timeline-body">
         <strong>Proofs are opt-in, three steps, and open Clean Focus on the scene.</strong>

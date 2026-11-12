@@ -91,6 +91,7 @@ const state = {
   editorReady: false,
   showAllLayers: false,
   transcriptSideHidden: false,
+  transcriptAlpha: 100,
   cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
@@ -315,6 +316,12 @@ async function openProject(id, { startCheck = false } = {}) {
   state.editorReady = false;
   state.brushMode = false;
   state.brushStrokes = [];
+  try {
+    const stored = Number(localStorage.getItem(`duck.transcriptAlpha.${encodeURIComponent(id)}`));
+    state.transcriptAlpha = Number.isFinite(stored) && stored >= 30 && stored <= 100 ? stored : 100;
+  } catch (_error) {
+    state.transcriptAlpha = 100;
+  }
   state.editScope = 'scene';
   state.focusMode = '';
   state.transcriptOverlay = true;
@@ -1439,8 +1446,9 @@ function screenEditor() {
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
               ${playerBar()}
             </div>
-            ${overlayCues.length ? `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" aria-label="Transcript">
+            ${overlayCues.length ? `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
+              <div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>
               ${state.transcriptSideHidden ? '' : overlayCues.map((cue) => `<div class="transcript-side-row">
                 <button class="transcript-row-main" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
                   <span class="transcript-side-time">${fmtTC(cue.start, 24)}</span>
@@ -2202,6 +2210,7 @@ function timelinePanel() {
         <div class="timeline-track sfx${visualFx.length ? '' : ' is-empty'}">${visualFx.length ? visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('') : `<button class="lane-add" type="button" data-action="open-focus" data-focus="sfx">${icon('plus', 10)} Add an effect</button>`}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
+    </div>
     </div>
   </section>`;
 }
@@ -4573,6 +4582,18 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'transcript-alpha') {
+    const value = Math.max(30, Math.min(100, Number(event.target.value) || 100));
+    state.transcriptAlpha = value;
+    const panel = event.target.closest('.transcript-side');
+    if (panel) {
+      panel.style.setProperty('--ta', String(value / 100));
+      const read = panel.querySelector('[data-alpha-value]');
+      if (read) read.textContent = `${value}%`;
+    }
+    try { localStorage.setItem(`duck.transcriptAlpha.${encodeURIComponent(state.project?.id || '')}`, String(value)); } catch (_error) { /* storage off */ }
+    return;
+  }
   if (event.target.id === 'project-search') {
     state.welcomeQuery = event.target.value;
     render();

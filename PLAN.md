@@ -46,8 +46,8 @@ PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Next: the
 | Loop | Work | Request | State |
 |---|---|---|---|
 | 11 | Proofs: blur not fill, opt-in, three steps, Re-clean → Clean Focus | REQ-20261112-01 | **closed 2026-11-12** |
-| 12 | Transcript opacity + never blocks player time/volume | REQ-20261112-02 | building |
-| 13 | Timeline zoom for beats and scenes | REQ-20261112-03 | queued |
+| 12 | Transcript opacity + never blocks player time/volume | REQ-20261112-02 | **closed 2026-11-12** |
+| 13 | Timeline zoom for beats and scenes | REQ-20261112-03 | building |
 | 14 | Cut Focus phase 1: crop, aspect, resize, look presets moved | REQ-20261112-04 | queued |
 | 15 | Safe zones on Preview, on the Cut output frame | REQ-20261112-05 | queued |
 | 16 | Preview sequence: all scenes, or the story order | REQ-20261112-06 | queued |
