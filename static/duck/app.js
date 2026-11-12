@@ -95,6 +95,12 @@ const state = {
   timelineZoom: 1,
   safeZone: 'off',
   safeZoneOpen: false,
+  sequenceActive: false,
+  sequenceSegments: [],
+  sequenceIndex: 0,
+  sequenceSkipped: 0,
+  sequenceTotal: 0,
+  sequencePlaying: false,
   cueMenu: '',
   showAllCues: false,
   sceneQuery: '',
@@ -767,6 +773,10 @@ async function route() {
       await openProject(routeInfo.projectId);
     }
     state.screen = routeInfo.screen;
+    if (routeInfo.screen !== 'preview') {
+      state.sequenceActive = false;
+      state.sequencePlaying = false;
+    }
     if (['edit', 'clean', 'preview', 'render'].includes(routeInfo.screen)) await ensureEdit();
     if (routeInfo.screen === 'check' && state.check?.state === 'idle') await startCheck();
     render();
@@ -3018,9 +3028,139 @@ function proofStepBar(hasProof) {
   </div>`;
 }
 
+function sequenceSegments() {
+  if (isStoryEdit()) {
+    const out = [];
+    let skipped = 0;
+    (state.edit?.clips || []).forEach((clip) => {
+      if (clip.kind === 'media') { skipped += 1; return; }
+      const start = Number(clip.start || 0);
+      const end = Number(clip.end || 0);
+      if (end > start + 0.02) out.push({ start, end, label: storyClipLabel(clip, out.length) });
+    });
+    return { segments: out, skipped };
+  }
+  const segments = getScenes()
+    .map((scene, index) => ({ start: Number(scene.start || 0), end: Number(scene.end || 0), label: `Scene ${pad(index + 1)}` }))
+    .filter((segment) => segment.end > segment.start + 0.02);
+  return { segments, skipped: 0 };
+}
+
+function sequenceBar() {
+  return `<div class="sequence-bar" data-sequence-bar>
+    <button class="player-play" type="button" data-action="sequence-play" aria-label="Play or pause the sequence">${icon('play', 13)}</button>
+    <span class="sequence-time" data-sequence-time>00:00 / 00:00</span>
+    <input id="sequence-scrub" class="sequence-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek in the sequence">
+    <span class="sequence-label" data-sequence-label></span>
+    <button class="sequence-close" type="button" data-action="sequence-close" aria-label="Close the sequence">${icon('close', 12)}</button>
+  </div>`;
+}
+
+function sequenceElapsed(video) {
+  const before = state.sequenceSegments.slice(0, state.sequenceIndex).reduce((sum, item) => sum + Math.max(0, item.end - item.start), 0);
+  const seg = state.sequenceSegments[state.sequenceIndex] || { start: 0 };
+  return before + Math.max(0, Math.min(Number(video.currentTime || 0) - seg.start, (state.sequenceSegments[state.sequenceIndex]?.end || 0) - seg.start));
+}
+
+function paintSequence(video) {
+  const bar = document.querySelector('[data-sequence-bar]');
+  if (!bar || !video) return;
+  const total = state.sequenceTotal || 0;
+  const elapsed = sequenceElapsed(video);
+  const time = bar.querySelector('[data-sequence-time]');
+  if (time) time.textContent = `${clockText(elapsed)} / ${clockText(total)}`;
+  const scrub = bar.querySelector('#sequence-scrub');
+  if (scrub && total > 0) scrub.value = String(Math.round((elapsed / total) * 1000));
+  const label = bar.querySelector('[data-sequence-label]');
+  if (label) {
+    const seg = state.sequenceSegments[state.sequenceIndex] || { label: '' };
+    label.textContent = `${isStoryEdit() ? 'Story' : 'All scenes'} · ${state.sequenceIndex + 1} of ${state.sequenceSegments.length} · ${seg.label}${state.sequenceSkipped ? ` · ${state.sequenceSkipped} image beat${state.sequenceSkipped === 1 ? '' : 's'} skipped` : ''}`;
+  }
+  const play = bar.querySelector('.player-play');
+  if (play) play.innerHTML = video.paused ? icon('play', 13) : icon('pause', 13);
+}
+
+function advanceSequence(video) {
+  if (state.sequenceIndex + 1 < state.sequenceSegments.length) {
+    state.sequenceIndex += 1;
+    const next = state.sequenceSegments[state.sequenceIndex];
+    try { video.currentTime = next.start; } catch (_error) { /* metadata not ready */ }
+    video.play().catch(() => {});
+  } else {
+    video.pause();
+    state.sequencePlaying = false;
+  }
+  paintSequence(video);
+}
+
+function setupSequencePlayer() {
+  const video = document.querySelector('[data-sequence-player]');
+  if (!video) return;
+  const first = state.sequenceSegments[state.sequenceIndex];
+  const start = () => {
+    try { video.currentTime = first.start; } catch (_error) { /* metadata not ready */ }
+    video.play().then(() => { state.sequencePlaying = true; paintSequence(video); }).catch(() => {});
+  };
+  video.addEventListener('timeupdate', () => {
+    if (!state.sequenceActive) return;
+    const seg = state.sequenceSegments[state.sequenceIndex];
+    if (seg && video.currentTime >= seg.end - 0.03) advanceSequence(video);
+    paintSequence(video);
+  });
+  video.addEventListener('loadedmetadata', start, { once: true });
+  video.addEventListener('play', () => { state.sequencePlaying = true; paintSequence(video); });
+  video.addEventListener('pause', () => { state.sequencePlaying = false; paintSequence(video); });
+  if (video.readyState >= 1) start();
+  paintSequence(video);
+}
+
+function startSequence() {
+  const { segments, skipped } = sequenceSegments();
+  if (!segments.length) {
+    toast('Nothing to play in this edit.', 'bad');
+    return;
+  }
+  state.sequenceActive = true;
+  state.sequenceSegments = segments;
+  state.sequenceIndex = 0;
+  state.sequenceSkipped = skipped;
+  state.sequenceTotal = segments.reduce((sum, item) => sum + Math.max(0, item.end - item.start), 0);
+  state.sequencePlaying = false;
+  state.inlinePlaying = false;
+  render();
+  setupSequencePlayer();
+}
+
+function sequenceSeek(fraction) {
+  const video = document.querySelector('[data-sequence-player]');
+  if (!video || !state.sequenceSegments.length) return;
+  const target = Math.max(0, Math.min(1, Number(fraction) || 0)) * (state.sequenceTotal || 0);
+  let before = 0;
+  let index = 0;
+  for (let i = 0; i < state.sequenceSegments.length; i += 1) {
+    const length = Math.max(0, state.sequenceSegments[i].end - state.sequenceSegments[i].start);
+    if (target <= before + length || i === state.sequenceSegments.length - 1) {
+      index = i;
+      break;
+    }
+    before += length;
+  }
+  state.sequenceIndex = index;
+  const seg = state.sequenceSegments[index];
+  try { video.currentTime = seg.start + Math.max(0, target - before); } catch (_error) { /* metadata not ready */ }
+  paintSequence(video);
+}
+
 function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = false, inlineCta = true, overlay = '' } = {}) {
   const view = state.previewView || 'compare';
   if (!scene) return '';
+  if (state.sequenceActive) {
+    const first = state.sequenceSegments[state.sequenceIndex] || { start: scene.start || 0 };
+    return `<div class="split-stage inline-player sequence-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
+      <video data-sequence-player playsinline poster="${frameUrl(first.start || 0)}" src="${sourceUrl()}"></video>
+      ${sequenceBar()}
+    </div>`;
+  }
   if (state.inlinePlaying) {
     return `<div class="split-stage inline-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
       <video data-inline-player data-app-player data-start="${Number(scene.start || 0).toFixed(3)}" data-end="${Number(scene.end || 0).toFixed(3)}" autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>${playerBar()}
@@ -3254,7 +3394,7 @@ function screenPreview() {
         <section class="panel preview-actions">
           <div class="panel-head" style="padding-bottom:8px"><h2>Preview</h2><span class="meta">${ready}/${proofScenes.length}</span></div>
           <div class="panel-pad" style="padding-top:0;display:grid;gap:9px">
-            <button class="btn wide" type="button" data-action="play-source">${icon('play', 14)} Play detection review</button>
+            <button class="btn wide" type="button" data-action="play-sequence">${icon('play', 14)} ${isStoryEdit() ? 'Play story order' : 'Play all scenes'}</button>
             <button class="btn wide" type="button" data-action="prove-scene" data-index="${state.selectedScene}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${state.previewCache.has(scene.id) ? 'Prove this scene again · blur' : 'Prove this scene · blur'}</button>
             ${safeZonePanel()}
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
@@ -4662,6 +4802,18 @@ document.addEventListener('click', async (event) => {
     else if (action === 'audio-mute' || action === 'audio-solo') await toggleAudioTrack(target.dataset.track || '', action === 'audio-mute' ? 'muted' : 'solo');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
+    else if (action === 'play-sequence') { startSequence(); }
+    else if (action === 'sequence-play') {
+      const video = document.querySelector('[data-sequence-player]');
+      if (video) { if (video.paused) video.play().catch(() => {}); else video.pause(); }
+    }
+    else if (action === 'sequence-close') {
+      const video = document.querySelector('[data-sequence-player]');
+      if (video) video.pause();
+      state.sequenceActive = false;
+      state.sequencePlaying = false;
+      render();
+    }
     else if (action === 'safe-zone-toggle') { state.safeZoneOpen = !state.safeZoneOpen; render(); }
     else if (action === 'safe-zone') {
       state.safeZone = target.dataset.zone || 'off';
@@ -4846,6 +4998,10 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'sequence-scrub') {
+    sequenceSeek(Number(event.target.value || 0) / 1000);
+    return;
+  }
   if (event.target.id === 'transcript-alpha') {
     const value = Math.max(30, Math.min(100, Number(event.target.value) || 100));
     state.transcriptAlpha = value;

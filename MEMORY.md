@@ -71,12 +71,6 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit.
 
-### REQ-20261112-06 · 2026-11-12
-**Request:** "In Preview block, the preview panel can only preview one cut scenes at a time, it should either play all the scenes (if no story selected), or the scene in the story in the storytelling order."
-**Read as:** Preview plays a sequence: all scenes in source order, or the story's beats in story order.
-**Response:** Loop 16: sequence player across clip boundaries, one bar.
-**Outcome:** open.
-
 ### REQ-20261112-07 · 2026-11-12
 **Request:** "Story is not fixed. The story should be to understand the whole context of the video then select several beat and scene that fit together and no need to be in the same consequence or timely order, and to rewrite or focus on 1 specific narrative or bold statement."
 **Read as:** Story picks fitting beats anywhere in the source, orders them by narrative, and writes one thesis; local model, transcript context.

@@ -1971,3 +1971,15 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .sz-warn { margin: 2px 0 0; color: var(--red); font-size: 9.5px; line-height: 1.35; }
 .safe-zone { overflow: hidden; }
 .safe-frame { box-shadow: 0 0 0 100vmax rgba(10, 10, 10, .52); outline: 1px solid rgba(255,255,255,.85); }
+
+/* Preview sequence: all scenes, or the story order, on one timeline. */
+.sequence-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: flex; align-items: center; gap: 8px;
+  padding: 24px 10px 8px; color: #fff;
+  background: linear-gradient(180deg, rgba(12,12,13,0), rgba(12,12,13,.88));
+}
+.sequence-time { font: 10.5px var(--mono); white-space: nowrap; opacity: .94; }
+.sequence-scrub { flex: 1; min-width: 40px; height: 4px; accent-color: #fff; }
+.sequence-label { font-size: 9.5px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 42%; }
+.sequence-close { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.3); border-radius: 50%; background: transparent; color: #fff; cursor: pointer; }

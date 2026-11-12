@@ -388,3 +388,10 @@ chain unchanged (test); proof cache key includes the Cut; 188 tests.
 outside dimmed; no guide on a mismatched shape, a warning instead; refresh follows a Cut change.
 **Numbers:** 7 chips; TikTok frame 331x588 / 280x498, ratio 0.563, 5 bands + block; IG 4:5/1:1 4
 bands; Cut 1:1 -> frame ratio 1.000 without reload; YouTube on a 1:1 Cut draws nothing and warns.
+
+### REQ-20261112-06 · 2026-11-12 · loop 16 closed
+**Request:** Preview plays one scene only; it should play all scenes or the story order.
+**Shipped:** one sequence player over source segments with a time/scrub bar; Play all scenes on the
+full edit, Play story order on a story edit; image beats skipped and counted.
+**Numbers:** 35 segments / 02:40 on the fixture; 50 % seek -> Scene 15 at 01:20; a 3-clip story
+(5,1,3) plays source 26.5 s then 5.3 s, proving clip order over source order.

@@ -334,3 +334,7 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 ## Loop 15 — safe zones (closed 2026-11-12)
 
 - [x] REQ-20261112-05 · loop 15: safe-zone button on Preview, five cited guides, redraw on Cut aspect
+
+## Loop 16 — preview sequence (closed 2026-11-12)
+
+- [x] REQ-20261112-06 · loop 16: preview plays all scenes in source order, or the story beats in story order
