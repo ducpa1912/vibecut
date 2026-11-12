@@ -28,6 +28,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -56,10 +60,10 @@
    },
    {
     "a": "img:",
-    "b": "text:00:00:00 / 00:02:40",
-    "area": 1680,
+    "b": "text:00:00 / 02:40",
+    "area": 1149,
     "aCls": "VIDEO",
-    "bCls": "tc",
+    "bCls": "player-time",
     "intended": true
    },
    {
@@ -124,6 +128,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -144,70 +152,14 @@
    },
    {
     "a": "img:",
-    "b": "text:00:00:00 / 00:02:40",
-    "area": 1680,
+    "b": "text:00:00 / 02:40",
+    "area": 1149,
     "aCls": "VIDEO",
-    "bCls": "tc",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "button:CC",
-    "area": 616,
-    "aCls": "VIDEO",
-    "bCls": "overlay-toggle",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "button:⇕",
-    "area": 616,
-    "aCls": "VIDEO",
-    "bCls": "overlay-toggle",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:Transcript",
-    "area": 1055,
-    "aCls": "VIDEO",
-    "bCls": "STRONG",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:1 line in this scene",
-    "area": 1018,
-    "aCls": "VIDEO",
-    "bCls": "SPAN",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:00:01:30:00",
-    "area": 768,
-    "aCls": "VIDEO",
-    "bCls": "ghost-tc",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:Speaker",
-    "area": 560,
-    "aCls": "VIDEO",
-    "bCls": "ghost-speaker",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:I'm going to eat a lit",
-    "area": 3189,
-    "aCls": "VIDEO",
-    "bCls": "SPAN",
+    "bCls": "player-time",
     "intended": true
    }
   ],
-  "overlapCount": 9,
+  "overlapCount": 2,
   "layoutOverlaps": [],
   "layoutOverlapCount": 0,
   "scrolls": [
@@ -232,22 +184,29 @@
    "w": 303,
    "h": 537,
    "box": [
-    534,
+    407,
     67
    ]
   },
-  "pictureShare": 99.4,
+  "pictureShare": 99.8,
   "stageBlack": 0,
-  "controls": {
-   "overlap": 0,
-   "hit": "VIDEO",
-   "clickable": true
-  },
+  "controls": null,
   "cutText": 0,
   "cut": [],
   "filterInsets": {
    "left": 14,
    "right": 14
+  },
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": {
+   "intersect": 0,
+   "contrast": 14.99,
+   "lines": 1
+  },
+  "listEdges": {
+   "dark": 0,
+   "sample": []
   },
   "renderCols": null,
   "preview": null,
@@ -369,6 +328,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -456,6 +419,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": {
    "portrait": true,
@@ -492,6 +459,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": {
    "left": 673,
    "right": 1221,
@@ -528,6 +499,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -556,10 +531,10 @@
    },
    {
     "a": "img:",
-    "b": "text:00:00:00 / 00:02:40",
-    "area": 1680,
+    "b": "text:00:00 / 02:40",
+    "area": 1149,
     "aCls": "VIDEO",
-    "bCls": "tc",
+    "bCls": "player-time",
     "intended": true
    },
    {
@@ -624,6 +599,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -644,70 +623,14 @@
    },
    {
     "a": "img:",
-    "b": "text:00:00:00 / 00:02:40",
-    "area": 1680,
+    "b": "text:00:00 / 02:40",
+    "area": 1149,
     "aCls": "VIDEO",
-    "bCls": "tc",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "button:CC",
-    "area": 561,
-    "aCls": "VIDEO",
-    "bCls": "overlay-toggle",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "button:⇕",
-    "area": 616,
-    "aCls": "VIDEO",
-    "bCls": "overlay-toggle",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:Transcript",
-    "area": 1055,
-    "aCls": "VIDEO",
-    "bCls": "STRONG",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:1 line in this scene",
-    "area": 1018,
-    "aCls": "VIDEO",
-    "bCls": "SPAN",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:00:01:30:00",
-    "area": 768,
-    "aCls": "VIDEO",
-    "bCls": "ghost-tc",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:Speaker",
-    "area": 560,
-    "aCls": "VIDEO",
-    "bCls": "ghost-speaker",
-    "intended": true
-   },
-   {
-    "a": "img:",
-    "b": "text:I'm going to eat a lit",
-    "area": 3400,
-    "aCls": "VIDEO",
-    "bCls": "SPAN",
+    "bCls": "player-time",
     "intended": true
    }
   ],
-  "overlapCount": 9,
+  "overlapCount": 2,
   "layoutOverlaps": [],
   "layoutOverlapCount": 0,
   "scrolls": [
@@ -739,22 +662,29 @@
    "w": 269,
    "h": 477,
    "box": [
-    471,
+    344,
     67
    ]
   },
-  "pictureShare": 99.3,
+  "pictureShare": 99.8,
   "stageBlack": 0,
-  "controls": {
-   "overlap": 0,
-   "hit": "VIDEO",
-   "clickable": true
-  },
+  "controls": null,
   "cutText": 0,
   "cut": [],
   "filterInsets": {
    "left": 14,
    "right": 14
+  },
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": {
+   "intersect": 0,
+   "contrast": 14.99,
+   "lines": 1
+  },
+  "listEdges": {
+   "dark": 0,
+   "sample": []
   },
   "renderCols": null,
   "preview": null,
@@ -868,6 +798,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": null
  },
@@ -947,6 +881,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": null,
   "preview": {
    "portrait": true,
@@ -983,6 +921,10 @@
   "cutText": 0,
   "cut": [],
   "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
   "renderCols": {
    "left": 673,
    "right": 1221,

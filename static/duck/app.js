@@ -943,8 +943,7 @@ function screenCheck() {
       <section style="display:grid;gap:14px;min-width:0">
         <section class="panel" style="overflow:hidden">
           <div class="media-card" style="height:min(56vh, 540px)">
-            <video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || 0.5)}" src="${sourceUrl()}"></video><span class="media-badge right">${mediaResolution()}</span>
-            <div class="media-overlay"><span class="tc">${fmtTC(state.previewTime || 0.5)} / ${fmtTC(state.check?.result?.meta?.duration || state.edit?.source?.duration || 0)}</span><span class="spacer"></span></div>
+            <video data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || 0.5)}" src="${sourceUrl()}"></video><span class="media-badge right">${mediaResolution()}</span>${playerBar()}
           </div>
         </section>
         <section class="panel">
@@ -1437,19 +1436,20 @@ function screenEditor() {
       <section class="editor-center">
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
-          <div class="media-card preview-large" style="--media-ratio:${(Number(sourceMeta.width) && Number(sourceMeta.height)) ? (Number(sourceMeta.width) / Number(sourceMeta.height)).toFixed(4) : '1.7778'}">
-            ${mediaClip
-              ? mediaClip.media === 'image'
-                ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
-                : `<video class="story-media-preview" data-story-media controls preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
-              : `<video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
-            <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
-            <div class="media-overlay"><span class="tc">${fmtTC(mediaClip ? state.timelineTime : (state.previewTime || scene.start))} / ${fmtTC(mediaClip ? timelineDuration() : (state.edit?.end || state.check?.result?.meta?.duration || 0))}</span><span class="spacer"></span></div>
-            ${mediaClip || !overlayCues.length ? '' : `<div class="transcript-overlay above-controls${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
-              <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
-              <button class="overlay-toggle overlay-move" type="button" data-action="overlay-position" title="Move transcript between bottom and top">⇕</button>
-              <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
-            </div>`}
+          <div class="preview-row${Number(sourceMeta.height || 0) > Number(sourceMeta.width || 0) ? ' portrait' : ' landscape'}">
+            <div class="media-card preview-large" style="--media-ratio:${(Number(sourceMeta.width) && Number(sourceMeta.height)) ? (Number(sourceMeta.width) / Number(sourceMeta.height)).toFixed(4) : '1.7778'}">
+              ${mediaClip
+                ? mediaClip.media === 'image'
+                  ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
+                  : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
+                : `<video data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+              <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
+              ${playerBar()}
+            </div>
+            ${overlayCues.length ? `<aside class="transcript-side" aria-label="Transcript">
+              <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span></div>
+              ${overlayCues.map((cue) => `<div class="transcript-side-row"><span class="transcript-side-time">${fmtTC(cue.start, 24)}</span><p>${esc(cue.text || '')}</p></div>`).join('')}
+            </aside>` : ''}
           </div>
         </section>
       </section>
@@ -2839,7 +2839,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
   if (!scene) return '';
   if (state.inlinePlaying) {
     return `<div class="split-stage inline-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
-      <video data-inline-player data-start="${Number(scene.start || 0).toFixed(3)}" data-end="${Number(scene.end || 0).toFixed(3)}" controls autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>
+      <video data-inline-player data-app-player data-start="${Number(scene.start || 0).toFixed(3)}" data-end="${Number(scene.end || 0).toFixed(3)}" autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>${playerBar()}
       <div class="detect-overlay" data-detect-overlay></div>
       <span class="detect-legend">Detection review · blur preview</span>
       <button class="btn small inline-close" type="button" data-action="close-inline-player">${icon('arrowLeft', 12)} Back to proof</button>
@@ -4459,12 +4459,57 @@ document.addEventListener('scroll', (event) => {
   if (target && target.matches && target.matches('[data-layer-list], .inspector-body, .proof-list, .clean-scene-list, .scene-strip')) syncLayerFades();
 }, true);
 
+function playerBar() {
+  return `<div class="player-bar" data-player-bar>
+    <button class="player-play" type="button" data-action="player-play" aria-label="Play or pause">${icon('play', 13)}</button>
+    <span class="player-time" data-player-time>00:00 / 00:00</span>
+    <input class="player-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+  </div>`;
+}
+
+function clockText(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+}
+
+function setupPlayerBars() {
+  document.querySelectorAll('[data-app-player]').forEach((video) => {
+    const bar = video.parentElement?.querySelector('[data-player-bar]');
+    if (!bar) return;
+    const play = bar.querySelector('.player-play');
+    const time = bar.querySelector('[data-player-time]');
+    const scrub = bar.querySelector('.player-scrub');
+    const paint = () => {
+      if (time) time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
+      if (scrub && Number.isFinite(video.duration) && video.duration > 0) {
+        scrub.value = String(Math.round((video.currentTime / video.duration) * 1000));
+      }
+    };
+    play?.addEventListener('click', () => {
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+      play.innerHTML = video.paused ? icon('play', 13) : icon('pause', 13);
+    });
+    scrub?.addEventListener('input', () => {
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        video.currentTime = (Number(scrub.value) / 1000) * video.duration;
+      }
+    });
+    video.addEventListener('timeupdate', paint);
+    video.addEventListener('loadedmetadata', paint);
+    video.addEventListener('play', () => { play.innerHTML = icon('pause', 13); });
+    video.addEventListener('pause', () => { play.innerHTML = icon('play', 13); });
+    paint();
+  });
+}
+
 function afterRender() {
   setupBrushCanvas();
   setupTimelineRuler();
   setupAudioRows();
   loadAudioWaveforms();
   setupAudioDrag();
+  setupPlayerBars();
   syncLayerFades();
   const inline = document.querySelector('video[data-inline-player]');
   if (inline) {

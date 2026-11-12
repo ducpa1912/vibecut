@@ -261,6 +261,69 @@ const MEASURE = String.raw`(() => {
       if (c.bottom > box.bottom - 1 && c.top < box.bottom) { cut.push({ cls: String(child.className || child.tagName).split(' ')[0], text: own.slice(0, 20) }); break; }
     }
   }
+  const rgb = (value) => {
+    const m = String(value || '').match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const parts = m[1].split(',').map((x) => parseFloat(x));
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  };
+  const lum = (c) => {
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const contrast = (a, b) => {
+    const la = lum(a), lb = lum(b);
+    return Math.round(((Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)) * 100) / 100;
+  };
+  const nativeControls = document.querySelectorAll('video[controls]').length;
+  const controlBoxes = [];
+  for (const el of document.querySelectorAll('.player-bar button, .player-bar .player-time, .player-bar .player-scrub, .media-overlay .tc, .overlay-toggle')) {
+    const b = el.getBoundingClientRect();
+    if (b.width > 2 && b.height > 2) controlBoxes.push({ el, b, cls: String(el.className || el.tagName).split(' ')[0] });
+  }
+  let controlOverlaps = 0;
+  for (let i = 0; i < controlBoxes.length; i += 1) for (let j = i + 1; j < controlBoxes.length; j += 1) {
+    const a = controlBoxes[i].b, b = controlBoxes[j].b;
+    const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    if (ix > 1 && iy > 1) controlOverlaps += 1;
+  }
+  const side = document.querySelector('.transcript-side');
+  let transcript = null;
+  if (side) {
+    const s = side.getBoundingClientRect();
+    const picBox = media ? media.getBoundingClientRect() : null;
+    const ix = picBox ? Math.min(s.right, picBox.right) - Math.max(s.left, picBox.left) : 0;
+    const iy = picBox ? Math.min(s.bottom, picBox.bottom) - Math.max(s.top, picBox.top) : 0;
+    const p = side.querySelector('.transcript-side-row p');
+    const fg = rgb(p ? getComputedStyle(p).color : '');
+    const bg = rgb(getComputedStyle(side).backgroundColor);
+    const lineHeight = p ? parseFloat(getComputedStyle(p).lineHeight) || 15 : 15;
+    transcript = {
+      intersect: ix > 1 && iy > 1 ? Math.round(ix * iy) : 0,
+      contrast: fg && bg ? contrast(fg, bg) : null,
+      lines: p ? Math.max(1, Math.round(p.getBoundingClientRect().height / lineHeight)) : 0,
+    };
+  }
+  const listEl = document.querySelector('.proof-list');
+  let listEdges = null;
+  if (listEl) {
+    const panel = listEl.closest('.panel');
+    const line = panel ? rgb(getComputedStyle(panel).borderTopColor) : null;
+    const lineLum = line ? lum(line) : null;
+    const dark = [];
+    for (const el of [listEl, ...listEl.querySelectorAll('.proof-row')]) {
+      const s = getComputedStyle(el);
+      for (const sideName of ['borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'outlineTop']) {
+        const width = parseFloat(s[sideName + 'Width'] || 0);
+        if (!width) continue;
+        const c = rgb(s[sideName + 'Color'] || '');
+        if (!c || c.a === 0) continue;
+        if (lineLum !== null && lum(c) < lineLum - 0.01) dark.push({ cls: String(el.className || el.tagName).split(' ')[0], side: sideName, color: s[sideName + 'Color'] });
+      }
+    }
+    listEdges = { dark: dark.length, sample: dark.slice(0, 4) };
+  }
   const filter = document.querySelector('.scene-filter input');
   const filterPanel = filter ? filter.closest('.panel') : null;
   let filterInsets = null;
@@ -286,6 +349,7 @@ const MEASURE = String.raw`(() => {
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
     scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
     picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
+    nativeControls, controlOverlaps, transcript, listEdges,
     renderCols: left && right ? {
       left: Math.round(left.getBoundingClientRect().height),
       right: Math.round(right.getBoundingClientRect().height),

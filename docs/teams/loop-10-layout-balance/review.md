@@ -1,3 +1,53 @@
+# Loop 10 review — Revision 2 (Senior PO, 2026-11-12)
+
+Preview was accepted; Edit had three faults. Fixed in this commit.
+
+## Item 1 — one control set on the Edit player
+
+The browser's controls are gone: no `<video>` on any screen carries `controls`. The app's own bar
+(play/pause, current/total, scrub) sits at the bottom of the picture, styled like Preview's.
+
+| Measure | 1440×900 | 1280×800 |
+|---|---|---|
+| `<video controls>` on the page | **0** | **0** |
+| Intersecting control/timecode boxes | **0** | **0** |
+| Play/pause through the bar | works (probe: `paused` toggles) | same |
+| Seek through the bar | works (probe: 80 s of 160 s after a 50 % drag) | same |
+
+## Item 2 — the transcript in the paper, not on the picture
+
+Portrait: the transcript is a panel in the paper beside the picture; landscape: it sits under the
+picture. Dark text on the panel colour.
+
+| Measure | 1440×900 | 1280×800 |
+|---|---|---|
+| Transcript vs picture intersection | **0 px²** | **0 px²** |
+| Text contrast (computed from the two colours) | **14.99 : 1** | **14.99 : 1** |
+| Lines for this project's cue | **1** | **1** |
+
+The picture is clear of the transcript at both sizes, portrait and the 16:9 fixture.
+
+## Item 3 — no dark bars on the scenes list
+
+The dark 2 px lines were the browser's default `<button>` border (`border-left/right: 2px outset
+black`) that the hairlines did not reset. Removed at the list and the rows.
+
+| Measure | 1440×900 | 1280×800 |
+|---|---|---|
+| Borders/outlines darker than the panel border on the list or its rows | **0** | **0** |
+| Rows | `border-bottom: 1px solid var(--line)` | same |
+
+## Earlier items still pass
+
+Content bottoms **87.3–100 %**; layout overlaps **0**; every scroll area fades; picture share
+**95.8 / 95.2 %** (Preview 9:16), **99.8 / 99.8 %** (Edit 9:16), **100.2 / 99.5 %** (16:9 Preview and
+Edit); “text cut” **0**; no horizontal scroll; **0** clipped buttons. Captures `after-*` and
+`landscape-*` replaced and each looked at (Edit at both sizes in both orientations this pass).
+
+**178 tests**, `node --check` clean, app builds. `textfill.VERSION` stays 17.
+
+---
+
 # Loop 10 review — Revision 1 (Senior PO, 2026-11-12)
 
 The first pass met the numbers with a black stage and a script that hid the transcript-over-controls

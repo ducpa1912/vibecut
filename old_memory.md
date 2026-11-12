@@ -333,3 +333,12 @@ picture (Preview 15 px black, Edit 0); the transcript sits above the controls (0
 filter insets 14/14; hairlines; fades on every scroll area; five exclusions with crops.
 **Numbers:** Preview 95.8/95.2 % (height 90.5/89.2 %), Edit 99.4/99.3 %, 16:9 100/99.7 %; cut text 0;
 layout overlaps 0. 178 tests; `VERSION` 17.
+
+### Loop 10 revision 2 · 2026-11-12
+**Faults:** browser video controls plus the app timecode on the scrub bar; white transcript over the
+blurred picture; dark 2 px bars on the scenes list (the UA button border).
+**Fixed:** no `<video controls>` anywhere; one app bar (play/time/scrub) styled like Preview; the
+transcript is a panel in the paper beside the picture (portrait) or under it (landscape), dark on
+panel; list/row borders reset to the hairline.
+**Numbers:** native controls 0, control overlaps 0, play/seek probed; transcript intersection 0,
+contrast 14.99:1, 1 line at 1280; dark list borders 0. 178 tests; `VERSION` 17.

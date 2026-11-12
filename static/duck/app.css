@@ -1815,3 +1815,34 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent);
 }
+
+.preview-row { display: flex; gap: 14px; align-items: flex-start; justify-content: center; height: 100%; }
+.preview-row .media-card.preview-large { flex: 0 0 auto; margin: 0; }
+.transcript-side {
+  width: 240px; flex: 0 0 240px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+  display: grid; gap: 8px; align-content: start;
+}
+.transcript-side-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; }
+.transcript-side-head strong { color: var(--ink); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.transcript-side-row p { margin: 2px 0 0; color: var(--ink); font-size: 11.5px; line-height: 1.35; }
+.transcript-side-time { color: var(--muted); font: 9px var(--mono); }
+.preview-row.landscape { flex-direction: column; align-items: center; }
+.preview-row.landscape .transcript-side { width: min(100%, 560px); flex: 0 0 auto; }
+.player-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  display: flex; align-items: center; gap: 10px; padding: 26px 12px 8px;
+  background: linear-gradient(180deg, rgba(12,12,13,0), rgba(12,12,13,.86));
+  color: #fff;
+}
+.player-play {
+  width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,.35); border-radius: 50%;
+  background: rgba(0,0,0,.45); color: #fff; cursor: pointer;
+}
+.player-time { font: 11px var(--mono); white-space: nowrap; opacity: .92; }
+.player-scrub { flex: 1; min-width: 40px; height: 4px; accent-color: #fff; }
+.proof-row { border-left: 0; border-right: 0; }
+.preview-row.landscape { gap: 10px; }
+.preview-row.landscape .media-card.preview-large { height: min(48vh, 460px); }
+.preview-row.landscape .transcript-side { width: min(100%, 560px); }
