@@ -62,6 +62,51 @@ GLYPH_MIN_PIXELS = 60
 Rect = tuple[int, int, int, int]  # x0, y0, x1, y1; x1 and y1 exclusive
 
 
+@dataclass(frozen=True)
+class View:
+    """How a render turns a source frame into an output frame.
+
+    ``chain`` is the render's own picture filters (crop, scale, pad or crop to
+    the output, sharpen, grade) without the frame rate, so a source read through
+    it has the output's pixels. A source point maps to the output as
+    ``(x - crop_x) * scale_x + offset_x``; only the search box uses this, the
+    pixels themselves always come from ``chain``.
+    """
+
+    chain: str
+    width: int
+    height: int
+    crop_x: float = 0.0
+    crop_y: float = 0.0
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+
+    @classmethod
+    def scaled(cls, size: tuple[int, int], source_size: tuple[int, int]) -> "View":
+        """A plain stretch to ``size``: what a bare (width, height) means."""
+        width, height = int(size[0]), int(size[1])
+        src_w, src_h = max(1, int(source_size[0])), max(1, int(source_size[1]))
+        return cls(
+            chain=f"scale={width}:{height}", width=width, height=height,
+            scale_x=width / src_w, scale_y=height / src_h,
+        )
+
+    def point(self, x: float, y: float) -> tuple[float, float]:
+        return (
+            (x - self.crop_x) * self.scale_x + self.offset_x,
+            (y - self.crop_y) * self.scale_y + self.offset_y,
+        )
+
+
+def as_view(size, source_size: tuple[int, int]) -> View | None:
+    """``None``, a ``View``, or a bare (width, height) read as a stretch."""
+    if size is None or isinstance(size, View):
+        return size
+    return View.scaled((int(size[0]), int(size[1])), source_size)
+
+
 class InkError(RuntimeError):
     """The frames could not be read, so nothing can be said about the text."""
 
@@ -329,12 +374,14 @@ def analyse(edges: np.ndarray, core: tuple[int, int], *, first_index: int, rect:
 
 
 def read_box(path: str | Path, first: int, count: int, rect: Rect, fps: float, *,
-             size: tuple[int, int] | None = None, colour: bool = False) -> np.ndarray:
+             size: "tuple[int, int] | View | None" = None, colour: bool = False) -> np.ndarray:
     """Decode ``count`` frames of a rectangle, starting at frame ``first``.
 
     ``size`` (width, height) scales the picture first, so a render at another
-    size is read in source pixels. Shape (T, h, w) or (T, h, w, 3), uint8. Fewer
-    frames come back at the end of the file. Raises InkError when ffmpeg fails.
+    size is read in source pixels. A :class:`View` runs the render's own picture
+    filters instead, so a cropped, padded or graded render is read in its own
+    pixels. Shape (T, h, w) or (T, h, w, 3), uint8. Fewer frames come back at
+    the end of the file. Raises InkError when ffmpeg fails.
     """
     from duckcore import media
 
@@ -347,7 +394,9 @@ def read_box(path: str | Path, first: int, count: int, rect: Rect, fps: float, *
     # Half a frame early: the first frame returned is exactly ``first``.
     seek = max(0.0, (first - 0.5) / fps)
     chain = [f"fps={fps:.6f}"]
-    if size:
+    if isinstance(size, View):
+        chain.append(size.chain)
+    elif size:
         chain.append(f"scale={int(size[0])}:{int(size[1])}")
     # Format first: a crop on subsampled video rounds odd offsets and sizes,
     # and the frames would come back in another shape than asked for.
@@ -373,11 +422,11 @@ def read_box(path: str | Path, first: int, count: int, rect: Rect, fps: float, *
 
 
 def build(source: str | Path, rect: Rect, *, start: float, end: float, fps: float,
-          reach: float = REACH, size: tuple[int, int] | None = None) -> Ink | None:
+          reach: float = REACH, size: "tuple[int, int] | View | None" = None) -> Ink | None:
     """The ink of the line that a range ``[start, end)`` of the source points at.
 
-    ``size`` reads the source scaled to (width, height); ``rect`` is then in
-    those pixels.
+    ``size`` reads the source scaled to (width, height), or through a
+    :class:`View`; ``rect`` is then in those pixels.
     """
     fps = float(fps)
     low = first_frame(start, fps)

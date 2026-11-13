@@ -185,3 +185,69 @@ def test_layer_strokes_give_each_glyph_its_hole_and_frames(tmp_path) -> None:
     assert (rect[2] - rect[0]) * (rect[3] - rect[1]) < (search[2] - search[0]) * (search[3] - search[1])
     # Each glyph's hole stays on its own glyph.
     assert not pieces[0][2][:, 40:].any()
+
+
+# A Cut that crops, letterboxes and grades: the render's picture is not the
+# source scaled, so the check must read the source through the same filters.
+CUT_CHAIN = (
+    "crop=288:160:16:40,"
+    "scale=320:240:force_original_aspect_ratio=decrease,"
+    "pad=320:240:(ow-iw)/2:(oh-ih)/2:color=black,"
+    "eq=contrast=0.700:saturation=1.000,setsar=1"
+)
+CUT_SCALE = min(320 / 288, 240 / 160)
+CUT_VIEW = ink.View(
+    chain=CUT_CHAIN, width=W, height=H, crop_x=16, crop_y=40,
+    scale_x=CUT_SCALE, scale_y=CUT_SCALE,
+    offset_x=(W - 288 * CUT_SCALE) / 2, offset_y=(H - 160 * CUT_SCALE) / 2,
+)
+
+
+def _through(tmp_path: Path, frames: np.ndarray, name: str, chain: str) -> Path:
+    """Encode ``frames`` and run them through ``chain``, as a render would."""
+    plain = _write(tmp_path / f"{name}-plain.mkv", frames)
+    out = tmp_path / f"{name}.mkv"
+    done = subprocess.run(
+        [_ffmpeg(), "-y", "-v", "error", "-i", str(plain), "-vf", chain,
+         "-c:v", "ffv1", str(out)], capture_output=True, check=False,
+    )
+    assert done.returncode == 0, done.stderr.decode()[-300:]
+    return out
+
+
+def test_text_left_in_a_cropped_graded_render_is_found(tmp_path) -> None:
+    """Before the view, the source was only scaled: the crop and the grade made
+    untouched text look different, and it was reported clean."""
+    source, frames = _source(tmp_path)
+    output = _through(tmp_path, frames, "leftover", CUT_CHAIN)
+    report = inkcheck.check(output, _edit(), META, source=source, size=CUT_VIEW)
+    assert report["checked"] == 1
+    assert report["hits"], report["unchecked"]
+    assert 1.0 <= min(report["times"]) and max(report["times"]) < 2.0
+
+
+def test_a_clean_cropped_graded_render_has_no_hits(tmp_path) -> None:
+    source, _frames = _source(tmp_path)
+    output = _through(tmp_path, _picture(90), "clean", CUT_CHAIN)
+    report = inkcheck.check(output, _edit(), META, source=source, size=CUT_VIEW)
+    assert report["checked"] == 1
+    assert report["hits"] == []
+
+
+def test_a_line_the_cut_crops_away_is_not_checked_and_says_why(tmp_path) -> None:
+    source, frames = _source(tmp_path)
+    chain = "crop=160:80:0:0,scale=320:160,setsar=1"
+    view = ink.View(chain=chain, width=320, height=160, scale_x=2.0, scale_y=2.0)
+    output = _through(tmp_path, frames, "away", chain)
+    report = inkcheck.check(output, _edit(), META, source=source, size=view)
+    assert report["checked"] == 0 and report["hits"] == []
+    assert "out of the frame" in report["unchecked"][0]["reason"]
+
+
+def test_the_ink_store_keeps_views_apart(tmp_path) -> None:
+    layer = _edit()["clean"][0]
+    source, _frames = _source(tmp_path)
+    plain = inkcheck._store_key(layer, META, source, None)
+    viewed = inkcheck._store_key(layer, META, source, CUT_VIEW)
+    stretched = inkcheck._store_key(layer, META, source, (240, 180))
+    assert len({plain, viewed, stretched}) == 3

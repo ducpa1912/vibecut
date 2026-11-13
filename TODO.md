@@ -43,6 +43,18 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 - [ ] Copy text in the transcript menu was not checked against the real clipboard.
 - [ ] 1024×700 and browser zoom not measured.
 
+## Code review 2026-11-13 (`docs/reviews/2026-11-13-loops-07-19.md`)
+
+Finding #1 (check ignores the Cut) is fixed. Still open, most severe first:
+
+- [ ] #2 enhance compares the output with the source, not the crop: a cropped upscale gets no Lanczos
+- [ ] #3 grade runs after `pad`: letterbox bars turn grey or tinted
+- [ ] #4 estimate jobs queue per save with no dedupe; a render waits up to 900 s for its estimate
+- [ ] #5 one leftover hit re-renders the whole edit; retry only the spans that kept text
+- [ ] #6–#11 low: long-scene stories, resident user model, estimate prune race, sequence overshoot,
+  ONNX slot without onnxruntime, Play on a missing render file and dead SFX filter modal
+- [ ] D1–D7 docs gaps listed in the review (dropped items, stale headings, test counts, request log)
+
 ## Fill and leftover check — open after brief loops 7–9
 
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.

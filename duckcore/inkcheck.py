@@ -51,11 +51,14 @@ ALIGN_LIMIT = 30.0
 FLICKER_LIMIT = 2.2
 
 
-def search_rect(layer: dict, width: int, height: int) -> inkmod.Rect:
+def search_rect(layer: dict, width: int, height: int,
+                view: inkmod.View | None = None) -> inkmod.Rect:
     """Where a layer's strokes are looked for: its box and a margin.
 
     The OCR box is often a little tight; a clipped letter or an emoji at the
-    end of the line still belongs to the line.
+    end of the line still belongs to the line. ``width`` and ``height`` are the
+    source's; with a ``view`` the box is carried into the output's pixels and
+    cut to its frame, so a line the Cut crops away comes back empty.
     """
     box = layer.get("box") or {}
     x = float(box.get("x", 0.0)) * width
@@ -63,10 +66,16 @@ def search_rect(layer: dict, width: int, height: int) -> inkmod.Rect:
     w = float(box.get("w", 0.0)) * width
     h = float(box.get("h", 0.0)) * height
     side, top = 0.5 * h, 0.3 * h
-    x0 = max(0, int(x - side))
-    y0 = max(0, int(y - top))
-    x1 = min(width, int(np.ceil(x + w + side)))
-    y1 = min(height, int(np.ceil(y + h + top)))
+    left, upper, right, lower = x - side, y - top, x + w + side, y + h + top
+    out_w, out_h = width, height
+    if view is not None:
+        left, upper = view.point(left, upper)
+        right, lower = view.point(right, lower)
+        out_w, out_h = view.width, view.height
+    x0 = max(0, int(left))
+    y0 = max(0, int(upper))
+    x1 = min(out_w, int(np.ceil(right)))
+    y1 = min(out_h, int(np.ceil(lower)))
     return x0, y0, max(x0, x1), max(y0, y1)
 
 
@@ -79,20 +88,26 @@ def _clean_layers(edit: dict) -> list[dict]:
 
 
 def layer_inks(layer: dict, meta: dict, *, source: str | Path,
-               size: tuple[int, int] | None = None) -> tuple[list[inkmod.Ink], str]:
+               size: "tuple[int, int] | inkmod.View | None" = None) -> tuple[list[inkmod.Ink], str]:
     """One ink for each range of a layer, and why there is none when there is none.
 
-    ``size`` reads the source at another (width, height): the ink is then in
-    those pixels, for a render that is not the source's size.
+    ``size`` reads the source at another (width, height), or through the
+    render's :class:`ink.View` (crop, pad, grade): the ink is then in those
+    pixels, for a render that is not the source's picture.
     """
-    width = int(size[0] if size else meta.get("width") or 0)
-    height = int(size[1] if size else meta.get("height") or 0)
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
     fps = float(meta.get("fps") or 0.0)
     if width < 2 or height < 2 or fps <= 0:
         return [], "the video size is unknown"
-    rect = search_rect(layer, width, height)
+    view = inkmod.as_view(size, (width, height))
+    rect = search_rect(layer, width, height, view)
     if rect[2] - rect[0] < 4 or rect[3] - rect[1] < 4:
+        whole = search_rect(layer, width, height)
+        if view is not None and whole[2] - whole[0] >= 4 and whole[3] - whole[1] >= 4:
+            return [], "the Cut leaves this line out of the frame"
         return [], "the box is empty"
+    size = view
     out: list[inkmod.Ink] = []
     short = False
     try:
@@ -117,15 +132,17 @@ def layer_inks(layer: dict, meta: dict, *, source: str | Path,
 
 
 def _store_key(layer: dict, meta: dict, source: str | Path,
-               size: tuple[int, int] | None) -> str:
+               size: "tuple[int, int] | inkmod.View | None") -> str:
     """What the stored ink depends on: the source, the size, and the layer."""
     stat = os.stat(source)
     payload = {
         "v": inkmod.STORE_VERSION,
         "source": [Path(source).name, stat.st_size, stat.st_mtime_ns],
-        "size": [int(size[0]), int(size[1])] if size else [
-            int(meta.get("width") or 0), int(meta.get("height") or 0),
-        ],
+        "size": (
+            dataclasses.asdict(size) if isinstance(size, inkmod.View)
+            else [int(size[0]), int(size[1])] if size
+            else [int(meta.get("width") or 0), int(meta.get("height") or 0)]
+        ),
         "fps": float(meta.get("fps") or 0.0),
         "layer": {
             "id": layer.get("id"),
@@ -215,7 +232,7 @@ def _load_ink(path: Path) -> tuple[list[inkmod.Ink], str] | None:
 
 
 def build_inks(edit: dict, meta: dict, *, source: str | Path,
-               size: tuple[int, int] | None = None,
+               size: "tuple[int, int] | inkmod.View | None" = None,
                data_root: str | Path | None = None,
                progress=None) -> dict:
     """``{layer id: {"inks": [...], "reason": str}}`` for every clean layer.
@@ -362,7 +379,7 @@ def _flicker(output: np.ndarray, hole: np.ndarray) -> float | None:
 
 def _judge(layer: dict, built: inkmod.Ink, output: str | Path, source: str | Path,
            spans: list[tuple[float, float, int]], *, fps: float,
-           size: tuple[int, int] | None) -> dict:
+           size: "inkmod.View | None") -> dict:
     """Judge one line on every output frame near it."""
     rect = built.rect
     hole = built.hole()
@@ -443,19 +460,21 @@ def _judge(layer: dict, built: inkmod.Ink, output: str | Path, source: str | Pat
 
 def check(output: str | Path, edit: dict, meta: dict, *, source: str | Path,
           inks: dict | None = None, fps: float | None = None,
-          size: tuple[int, int] | None = None) -> dict:
+          size: "tuple[int, int] | inkmod.View | None" = None) -> dict:
     """Judge every clean layer of ``edit`` on ``output``.
 
-    ``fps`` and ``size`` are the output's frame rate and (width, height); the
-    source's when not given. A render at another size is judged in its own
-    pixels: the source is scaled to it, so the ink is rebuilt there and ``inks``
-    made at the source's size is not used. Returns the frames judged, the hits,
-    the lines that could not be judged and why, and a flicker number per line.
+    ``fps`` and ``size`` are the output's frame rate and picture; the source's
+    when not given. ``size`` is a bare (width, height) stretch, or the render's
+    :class:`ink.View` when the Cut crops, pads, sharpens or grades. Either way
+    the source is read through the same picture filters as the render, so the
+    ink is rebuilt in the output's pixels and ``inks`` made at the source's size
+    is not used. Returns the frames judged, the hits, the lines that could not
+    be judged and why, and a flicker number per line.
     """
     native = (int(meta.get("width") or 0), int(meta.get("height") or 0))
-    size = tuple(int(value) for value in size) if size else None
-    if size == native:
-        size = None
+    if size is not None and not isinstance(size, inkmod.View):
+        size = tuple(int(value) for value in size)
+        size = None if size == native else inkmod.View.scaled(size, native)
     fps = float(fps or meta.get("fps") or 30.0)
     layers = _clean_layers(edit)
     if inks is None or size is not None:

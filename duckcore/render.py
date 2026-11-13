@@ -158,13 +158,21 @@ def _even(value: float) -> int:
     return max(2, int(round(value)) // 2 * 2)
 
 
-def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tuple[int, int, str]:
+def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
+    """The render's picture filters, and where a source pixel lands in the output.
+
+    One plan feeds the render's chain and the leftover check's
+    :class:`ink.View`, so the check reads the source exactly as the render
+    drew it: cropped, scaled, padded or cropped to the output, sharpened and
+    graded.
+    """
     out_w, out_h = cut_size(meta, edit)
     cut = (edit or {}).get("cut") or {}
     parts: list[str] = []
     crop = cut.get("crop") if isinstance(cut.get("crop"), dict) else None
     width = max(2, int(meta.get("width") or 0))
     height = max(2, int(meta.get("height") or 0))
+    region = (0, 0, width, height)
     if crop:
         try:
             cw = _even(width * float(crop.get("w") or 0))
@@ -174,13 +182,15 @@ def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tu
             cx = max(0, min(width - cw, cx))
             cy = max(0, min(height - ch, cy))
             parts.append(f"crop={cw}:{ch}:{cx}:{cy}")
+            region = (cx, cy, cw, ch)
         except (TypeError, ValueError):
             pass
     enhance = cut.get("enhance") if isinstance(cut.get("enhance"), dict) else {}
     upscaling = out_w > width or out_h > height
     use_lanczos = bool(enhance.get("enabled")) and upscaling
     flags = ":flags=lanczos+accurate_rnd" if use_lanczos else ""
-    if str(cut.get("fit") or "fit") == "fill":
+    fill = str(cut.get("fit") or "fit") == "fill"
+    if fill:
         parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase{flags}")
         parts.append(f"crop={out_w}:{out_h}")
     else:
@@ -207,8 +217,45 @@ def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tu
         parts.append(f"eq=contrast={contrast:.3f}:saturation={saturation:.3f}")
     if abs(temperature) > 0.001:
         parts.append(f"colorbalance=rs={0.15 * temperature:.3f}:gs=0:bs={-0.15 * temperature:.3f}")
-    parts += ["setsar=1", f"fps={target_fps}"]
-    return out_w, out_h, ",".join(parts)
+    cx, cy, cw, ch = region
+    scale = (max if fill else min)(out_w / max(1, cw), out_h / max(1, ch))
+    return {
+        "width": out_w, "height": out_h, "parts": parts,
+        "crop": (cx, cy), "scale": scale,
+        "offset": ((out_w - cw * scale) / 2.0, (out_h - ch * scale) / 2.0),
+        # Nothing between source and output pixels but a same-size re-encode.
+        "identity": (
+            region == (0, 0, width, height) and (out_w, out_h) == (width, height)
+            and len(parts) == 2 and parts[1].startswith("pad=")
+        ),
+    }
+
+
+def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tuple[int, int, str]:
+    plan = _picture_plan(meta, edit)
+    parts = [*plan["parts"], "setsar=1", f"fps={target_fps}"]
+    return plan["width"], plan["height"], ",".join(parts)
+
+
+def check_view(meta: dict, edit: dict | None = None):
+    """The leftover check's view of the output, or None when it is the source.
+
+    The Cut's crop, aspect, fit, enhance and grade all change the output's
+    pixels; the check must read the source through the same filters or it
+    compares the wrong pixels and calls leftover text clean.
+    """
+    from duckcore import ink
+
+    plan = _picture_plan(meta, edit)
+    if plan["identity"]:
+        return None
+    return ink.View(
+        chain=",".join([*plan["parts"], "setsar=1"]),
+        width=int(plan["width"]), height=int(plan["height"]),
+        crop_x=float(plan["crop"][0]), crop_y=float(plan["crop"][1]),
+        scale_x=float(plan["scale"]), scale_y=float(plan["scale"]),
+        offset_x=float(plan["offset"][0]), offset_y=float(plan["offset"][1]),
+    )
 
 
 def proof_window(start: float, duration: float, when: float, size: float = 0.6) -> tuple[float, float]:
@@ -230,7 +277,7 @@ def proof_window(start: float, duration: float, when: float, size: float = 0.6) 
 
 def _check_output(output: Path, edit: dict, meta: dict, *, source: str,
                   inks: dict, fps: float, data_root: Path,
-                  size: tuple[int, int] | None = None) -> dict:
+                  size=None) -> dict:
     from duckcore import inkcheck
 
     started = time.monotonic()
@@ -959,7 +1006,7 @@ def render_edit(
                 progress(0.97, "Checking every cleaned line for leftover text")
             report = _check_output(
                 output, edit, meta, source=source, inks=inks,
-                fps=float(target_fps), data_root=Path(data_root), size=(out_w, out_h),
+                fps=float(target_fps), data_root=Path(data_root), size=check_view(meta, edit),
             )
             sidecar = output.with_suffix(".check.json")
             if report.get("hits") and _retry:

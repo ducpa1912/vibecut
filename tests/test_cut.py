@@ -114,3 +114,39 @@ def test_enhance_clamps_and_only_lifts_a_small_source() -> None:
     assert "unsharp" not in big
     _, _, off = _scale_filter(small, 30, {"cut": {"enhance": {"enabled": False, "sharpen": 50}}})
     assert "lanczos" not in off and "unsharp" not in off
+
+
+def test_the_check_view_is_the_render_chain_without_the_frame_rate() -> None:
+    from duckcore.render import check_view
+
+    meta = {"width": 1080, "height": 1920, "fps": 30}
+    assert check_view(meta, {}) is None
+    assert check_view(meta, {"cut": {"aspect": "9:16", "fit": "fit"}}) is None
+    edit = {"cut": {
+        "aspect": "16:9", "fit": "fit",
+        "crop": {"x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5},
+        "grade": {"contrast": -40, "exposure": 0, "saturation": 0, "temperature": 30},
+        "enhance": {"enabled": True, "sharpen": 50},
+    }}
+    view = check_view(meta, edit)
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert chain == f"{view.chain},fps=30"
+    assert "crop=540:960:270:480" in view.chain and "eq=contrast=0.600" in view.chain
+    assert (view.width, view.height) == (1920, 1080)
+    # The crop's corner lands on the left edge of the picture, inside the pad.
+    x, y = view.point(270, 480)
+    assert abs(y) < 1e-6 and abs(x - (1920 - 540 * 1080 / 960) / 2) < 1e-6
+    # The far corner lands on the far edge.
+    x, y = view.point(270 + 540, 480 + 960)
+    assert abs(y - 1080) < 1e-6 and abs(x - (1920 + 540 * 1080 / 960) / 2) < 1e-6
+
+
+def test_a_fill_cut_maps_the_box_past_the_edges() -> None:
+    from duckcore.render import check_view
+
+    meta = {"width": 1920, "height": 1080, "fps": 30}
+    view = check_view(meta, {"cut": {"aspect": "9:16", "fit": "fill"}})
+    assert "force_original_aspect_ratio=increase" in view.chain
+    x0, _y0 = view.point(0, 0)
+    x1, _y1 = view.point(1920, 1080)
+    assert x0 < 0 and x1 > 1080  # the sides are cut away
