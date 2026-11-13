@@ -150,3 +150,60 @@ def test_a_fill_cut_maps_the_box_past_the_edges() -> None:
     x0, _y0 = view.point(0, 0)
     x1, _y1 = view.point(1920, 1080)
     assert x0 < 0 and x1 > 1080  # the sides are cut away
+
+
+def test_a_cropped_upscale_gets_lanczos_and_sharpen() -> None:
+    """A 50 % crop back to full size is a 2x upscale, though the output is the
+    source's size: the enhance must compare with the crop, not the source."""
+    meta = {"width": 1080, "height": 1920}
+    edit = {"cut": {
+        "aspect": "9:16", "fit": "fill",
+        "crop": {"x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5},
+        "enhance": {"enabled": True, "sharpen": 60},
+    }}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert "flags=lanczos+accurate_rnd" in chain
+    assert "unsharp=5:5:0.900:5:5" in chain
+    # No crop, same size: nothing is upscaled, so nothing is added.
+    edit["cut"]["crop"] = None
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert "lanczos" not in chain and "unsharp" not in chain
+
+
+def test_the_grade_runs_before_the_letterbox_so_the_bars_stay_black() -> None:
+    meta = {"width": 1080, "height": 1920}
+    edit = {"cut": {"aspect": "16:9", "fit": "fit",
+                    "grade": {"contrast": -50, "temperature": 40}}}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    parts = chain.split(",")
+    pad = next(i for i, part in enumerate(parts) if part.startswith("pad="))
+    assert pad > next(i for i, part in enumerate(parts) if part.startswith("eq="))
+    assert pad > next(i for i, part in enumerate(parts) if part.startswith("colorbalance="))
+
+
+def test_letterbox_bars_are_black_in_a_graded_render(tmp_path) -> None:
+    """Run the chain on a grey frame: the picture is graded, the bars are 0."""
+    import subprocess
+
+    import numpy as np
+
+    from duckcore import media
+
+    try:
+        ffmpeg = media.ffmpeg()
+    except Exception:  # noqa: BLE001 - no ffmpeg on this machine
+        import pytest
+        pytest.skip("ffmpeg is not available")
+    meta = {"width": 108, "height": 192}
+    edit = {"cut": {"aspect": "16:9", "fit": "fit", "grade": {"contrast": -50}}}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    chain = chain.replace("1920", "192").replace("1080", "108")
+    done = subprocess.run(
+        [ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=108x192:d=0.04",
+         "-vf", f"{chain},format=gray", "-frames:v", "1", "-f", "rawvideo", "-"],
+        capture_output=True, check=False,
+    )
+    assert done.returncode == 0, done.stderr.decode()[-300:]
+    frame = np.frombuffer(done.stdout, dtype=np.uint8).reshape(108, 192)
+    assert int(frame[:, :10].max()) <= 16  # left bar: black (limited range)
+    assert 100 < int(frame[54, 96]) < 160  # the picture is still grey

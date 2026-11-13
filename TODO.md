@@ -45,10 +45,8 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 
 ## Code review 2026-11-13 (`docs/reviews/2026-11-13-loops-07-19.md`)
 
-Finding #1 (check ignores the Cut) is fixed. Still open, most severe first:
+Findings #1–#3 are fixed. Still open, most severe first:
 
-- [ ] #2 enhance compares the output with the source, not the crop: a cropped upscale gets no Lanczos
-- [ ] #3 grade runs after `pad`: letterbox bars turn grey or tinted
 - [ ] #4 estimate jobs queue per save with no dedupe; a render waits up to 900 s for its estimate
 - [ ] #5 one leftover hit re-renders the whole edit; retry only the spans that kept text
 - [ ] #6–#11 low: long-scene stories, resident user model, estimate prune race, sequence overshoot,

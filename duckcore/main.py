@@ -45,7 +45,7 @@ if not STATIC.is_dir():
     if bundled_static.is_dir():
         STATIC = bundled_static
 APP_VERSION = "1.0.0"
-PROOF_VERSION = 10
+PROOF_VERSION = 11
 MAX_IMPORT_BYTES = 8 * 1024**3
 
 

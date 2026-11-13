@@ -347,3 +347,9 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 ## Loop 19 — Cut enhance (closed 2026-11-12)
 
 - [x] REQ-20261112-04 · loop 19: enhance 360p→1080p with lanczos, honest "no new detail" label; optional CoreML pack only after licence check and an M1/8 GB benchmark
+
+## Code review 2026-11-13 — fixed items
+
+- [x] #1 the leftover check reads the source through the Cut (`docs/teams/fix-01-check-follows-cut/review.md`)
+- [x] #2 enhance compares with the kept picture (crop or source); the Cut card shows the real output size
+- [x] #3 grade and sharpen run before the letterbox pad; the bars stay black (`docs/teams/fix-02-enhance-grade-order/review.md`)

@@ -27,10 +27,11 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   and the `moves` warning stays. A user fill model folder (ONNX or TorchScript) replaces LaMa when set.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
 - Cut grading ships (loop 18): exposure, contrast, saturation, temperature in `edit.cut.grade`,
-  applied by ffmpeg after crop/scale; the player preview is CSS and labelled approximate.
+  applied by ffmpeg after crop/scale and before the letterbox pad (bars stay black); the player preview
+  is CSS and labelled approximate.
 - The leftover check follows the Cut (2026-11-13): it reads the source through the render's own
   picture filters (`render.check_view` → `ink.View`); a line the Cut crops away is "not checked".
-- Cut enhance ships (loop 19): Lanczos + unsharp only when the output is larger than the source,
+- Cut enhance ships (loop 19): Lanczos + unsharp only when the kept picture (crop or source) is drawn larger,
   `edit.cut.enhance`; the UI says it invents no detail. A CoreML super-resolution pack is research
   only, not built.
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
@@ -43,7 +44,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 204 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 207 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |

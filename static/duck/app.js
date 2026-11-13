@@ -1719,13 +1719,7 @@ function cutOutputSize() {
     '9:16': { w: 1080, h: 1920 }, '1:1': { w: 1080, h: 1080 },
     '4:5': { w: 1080, h: 1350 }, '16:9': { w: 1920, h: 1080 },
   };
-  if (cut.crop) {
-    const sw = Number(meta.width || 0);
-    const sh = Number(meta.height || 0);
-    const cw = Math.max(0.02, Number(cut.crop.w) || 1);
-    const ch = Math.max(0.02, Number(cut.crop.h) || 1);
-    return { w: Math.round((sw || 1080) * cw), h: Math.round((sh || 1920) * ch) };
-  }
+  // Same as render.cut_size: the crop is scaled to the output, it does not set it.
   if (sizes[cut.aspect]) return sizes[cut.aspect];
   const sw = Number(meta.width || 0);
   const sh = Number(meta.height || 0);
@@ -1738,10 +1732,21 @@ function cutOutputSize() {
 
 function enhanceInfo() {
   const meta = state.check?.result?.meta || state.edit?.source || state.sourceMeta || {};
-  const source = { w: Number(meta.width || 0), h: Number(meta.height || 0) };
+  const cut = state.edit?.cut || {};
+  const full = { w: Number(meta.width || 0), h: Number(meta.height || 0) };
+  // The picture the render keeps: the crop, or the whole source.
+  const source = cut.crop && full.w && full.h
+    ? {
+      w: Math.round(full.w * Math.max(0.02, Number(cut.crop.w) || 1)),
+      h: Math.round(full.h * Math.max(0.02, Number(cut.crop.h) || 1)),
+    }
+    : full;
   const output = cutOutputSize();
-  const upscale = Boolean(source.w && source.h) && (output.w > source.w || output.h > source.h);
-  return { upscale, source, output };
+  // Same rule as render._picture_plan: the kept picture drawn larger.
+  const pick = cut.fit === 'fill' ? Math.max : Math.min;
+  const scale = source.w && source.h ? pick(output.w / source.w, output.h / source.h) : 0;
+  const upscale = scale > 1 + 1e-6;
+  return { upscale, source, output, cropped: Boolean(cut.crop) };
 }
 
 function cutOutputLabel() {
@@ -1810,7 +1815,7 @@ function cutFocus() {
         const info = enhanceInfo();
         const enhance = state.edit?.cut?.enhance || { enabled: false, sharpen: 0 };
         if (!info.upscale) {
-          return `<p class="small muted">Source is ${info.source.w}×${info.source.h}; the output is ${info.output.w}×${info.output.h}. No upscale is added.</p>`;
+          return `<p class="small muted">${info.cropped ? 'The crop' : 'Source'} is ${info.source.w}×${info.source.h}; the output is ${info.output.w}×${info.output.h}. No upscale is added.</p>`;
         }
         return `<p class="small muted">${info.source.w}×${info.source.h} → ${info.output.w}×${info.output.h}. Lanczos keeps edges; it invents no detail.</p>
         <label class="enhance-row"><input type="checkbox" data-enhance="enabled" ${enhance.enabled ? 'checked' : ''}> Lanczos upscale</label>

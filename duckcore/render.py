@@ -186,16 +186,20 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
         except (TypeError, ValueError):
             pass
     enhance = cut.get("enhance") if isinstance(cut.get("enhance"), dict) else {}
-    upscaling = out_w > width or out_h > height
+    fill = str(cut.get("fit") or "fit") == "fill"
+    cx, cy, cw, ch = region
+    scale = (max if fill else min)(out_w / max(1, cw), out_h / max(1, ch))
+    # An upscale is the picture the render keeps (the crop, or the whole
+    # source) drawn larger, not the output against the source frame: a 50 %
+    # crop back to full size is a 2x upscale.
+    upscaling = scale > 1.0 + 1e-6
     use_lanczos = bool(enhance.get("enabled")) and upscaling
     flags = ":flags=lanczos+accurate_rnd" if use_lanczos else ""
-    fill = str(cut.get("fit") or "fit") == "fill"
     if fill:
         parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase{flags}")
         parts.append(f"crop={out_w}:{out_h}")
     else:
         parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease{flags}")
-        parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
     try:
         sharpen = max(0.0, min(100.0, float(enhance.get("sharpen") or 0))) if use_lanczos else 0.0
     except (TypeError, ValueError):
@@ -209,16 +213,17 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
         saturation = max(0.0, min(3.0, 1.0 + float(grade.get("saturation") or 0) / 100.0))
         temperature = max(-1.0, min(1.0, float(grade.get("temperature") or 0) / 100.0))
     except (TypeError, ValueError):
-        exposure = contrast = temperature = 0.0
-        saturation = 1.0
+        exposure = temperature = 0.0
+        contrast = saturation = 1.0
     if abs(exposure) > 0.001:
         parts.append(f"exposure=exposure={exposure:.3f}")
     if abs(contrast - 1.0) > 0.001 or abs(saturation - 1.0) > 0.001:
         parts.append(f"eq=contrast={contrast:.3f}:saturation={saturation:.3f}")
     if abs(temperature) > 0.001:
         parts.append(f"colorbalance=rs={0.15 * temperature:.3f}:gs=0:bs={-0.15 * temperature:.3f}")
-    cx, cy, cw, ch = region
-    scale = (max if fill else min)(out_w / max(1, cw), out_h / max(1, ch))
+    if not fill:
+        # The bars go on after the grade and the sharpen: they stay black.
+        parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
     return {
         "width": out_w, "height": out_h, "parts": parts,
         "crop": (cx, cy), "scale": scale,
@@ -226,7 +231,7 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
         # Nothing between source and output pixels but a same-size re-encode.
         "identity": (
             region == (0, 0, width, height) and (out_w, out_h) == (width, height)
-            and len(parts) == 2 and parts[1].startswith("pad=")
+            and len(parts) == 2 and parts[-1].startswith("pad=")
         ),
     }
 
