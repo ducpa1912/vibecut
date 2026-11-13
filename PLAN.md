@@ -8,7 +8,7 @@ not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open ch
 
 | Fact | Value |
 |---|---|
-| Branch / tests | `ducksuite`, 214 pass (2026-11-13), `node --check` clean |
+| Branch / tests | `ducksuite`, 228 pass (2026-11-13), `node --check` clean |
 | Bundle | ≈ 981 MB (torch 565, GPU LaMa 196, sidecar 136, ffmpeg 41; no ONNX) |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2 |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |

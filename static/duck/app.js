@@ -866,7 +866,7 @@ function screenWelcome() {
           ${latest ? `<div class="latest-card">
             <div class="latest-thumb">
               <img src="${frameUrl(0.5, latest.project_id)}" alt="">
-              <button class="play" type="button" data-action="play-render" data-project="${esc(latest.project_id)}" data-edit="${esc(latest.edit_id)}" aria-label="Play latest render">${icon('play', 14)}</button>
+              <button class="play" type="button" data-action="play-render" data-job="${esc(latest.id || '')}" data-project="${esc(latest.project_id)}" data-edit="${esc(latest.edit_id)}" aria-label="Play latest render">${icon('play', 14)}</button>
               <span class="duration">1080p</span>
             </div>
             <div class="latest-copy">
@@ -874,7 +874,7 @@ function screenWelcome() {
               <p>${esc(latest.stage || 'Render complete')} · H.264 · 1080p</p>
               <p>${esc(latest.message || '')}</p>
               <div class="actions">
-                <button class="btn small" type="button" data-action="play-render" data-project="${esc(latest.project_id)}" data-edit="${esc(latest.edit_id)}">${icon('play', 13)} Play</button>
+                <button class="btn small" type="button" data-action="play-render" data-job="${esc(latest.id || '')}" data-project="${esc(latest.project_id)}" data-edit="${esc(latest.edit_id)}">${icon('play', 13)} Play</button>
                 <button class="btn small" type="button" data-action="reveal" data-path="${esc(latest.output || '')}">${icon('folderOpen', 13)} Show in Finder</button>
               </div>
             </div>
@@ -912,7 +912,7 @@ function queueCard(item) {
     ${active ? `<div class="queue-row"><div class="progress"><span style="width:${pct}%"></span></div><span class="mono small">${pct}%</span></div>` : ''}
     <div class="queue-foot">
       <span class="small muted">${item.state === 'done' ? '1080p · MP4' : esc(item.message || '')}</span>
-      ${item.state === 'done' ? `<button class="btn small" type="button" data-action="play-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 12)} Play</button>` : ''}
+      ${item.state === 'done' ? `<button class="btn small" type="button" data-action="play-render" data-job="${esc(item.id || '')}" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 12)} Play</button>` : ''}
     </div>
   </div>`;
 }
@@ -1247,14 +1247,9 @@ function storyContextBar() {
 }
 
 function outputSizeLabel() {
-  const meta = state.edit?.source || state.sourceMeta || {};
-  const width = Number(meta.width || 0);
-  const height = Number(meta.height || 0);
-  if (!width || !height) return '1080 × 1920';
-  const outW = width >= height ? Math.round((width * 1080) / height) : 1080;
-  const outH = width >= height ? 1080 : Math.round((height * 1080) / width);
-  const even = (value) => (value % 2 === 0 ? value : value + 1);
-  return `${even(outW)} × ${even(outH)}`;
+  // The Cut decides the output size (render.cut_size), not the source alone.
+  const size = cutOutputSize();
+  return `${size.w} × ${size.h}`;
 }
 
 function editSwitch() {
@@ -1724,7 +1719,8 @@ function cutOutputSize() {
   const sw = Number(meta.width || 0);
   const sh = Number(meta.height || 0);
   if (!sw || !sh) return { w: 1920, h: 1080 };
-  const even = (value) => Math.round(value / 2) * 2;
+  // render._target_size: round, then up to the next even number.
+  const even = (value) => { const rounded = Math.round(value); return rounded + (rounded % 2); };
   return sw >= sh
     ? { w: even((sw * 1080) / sh), h: 1080 }
     : { w: 1080, h: even((sh * 1080) / sw) };
@@ -3674,7 +3670,9 @@ function screenRender() {
   const outputLabel = outputPath
     ? outputPath.replace(state.settings?.storage?.data_root || '', '').replace(/^\//, '')
     : 'Project render folder';
-  const fps = Math.round(Number(state.edit?.source?.fps || 24));
+  // render.render_edit: 24 fps when the source is within 0.6 of 24, else 30.
+  const sourceFps = Number(state.edit?.source?.fps || state.check?.result?.meta?.fps || 0);
+  const fps = sourceFps && Math.abs(sourceFps - 24) < 0.6 ? 24 : 30;
   const sourceMeta = state.edit?.source || state.sourceMeta || {};
   const sourceW = Number(sourceMeta.width || 0);
   const sourceH = Number(sourceMeta.height || 0);
@@ -3689,7 +3687,8 @@ function screenRender() {
   const elsewhere = state.queue.length - mine.length;
   const cleanOn = (state.edit?.clean || []).filter((layer) => layer.enabled !== false);
   const lastCheck = state.queue.find(
-    (item) => item.state === 'done' && item.edit_id === state.edit?.id && item.checked_frames,
+    (item) => item.state === 'done' && item.edit_id === state.edit?.id
+      && (Number(item.check_ran) || Number(item.checked_frames) || Number(item.check_unchecked) || Number(item.check_hits)),
   ) || null;
   let checkTimes = [];
   try { checkTimes = lastCheck ? JSON.parse(lastCheck.check_times || '[]') : []; } catch (_) { checkTimes = []; }
@@ -3702,7 +3701,9 @@ function screenRender() {
   const movingFill = cleanOn.filter((layer) => layer.kind !== 'blur' && layer.quality === 'moving').length;
   ensureRenderEstimate();
   const done = queue.filter((item) => item.state === 'done');
-  const leftover = lastCheck
+  const leftover = lastCheck && !Number(lastCheck.checked_frames) && !Number(lastCheck.check_unchecked)
+    ? 'Checked · no cleaned line to judge'
+    : lastCheck
     ? `Checked ${lastCheck.checked_frames} frames · ${lastCheck.check_hits} found${Number(lastCheck.check_unchecked) ? ` · ${lastCheck.check_unchecked} line${Number(lastCheck.check_unchecked) === 1 ? '' : 's'} not checked` : ''}`
     : 'No check yet';
   return `<main class="screen">${storyContextBar()}
@@ -3712,7 +3713,7 @@ function screenRender() {
           <div class="panel-head"><h2>Render settings</h2><span class="meta">${resolutionLabel}</span></div>
           <div class="render-settings">
             <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
-            <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
+            <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><div class="readonly">${fps} fps · set from the source${sourceFps ? ` (${Math.round(sourceFps * 100) / 100} fps)` : ''}</div></div>
             <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
             <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div>
                 <div class="toggle-row"><span>Burn into video</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div>
@@ -3761,7 +3762,7 @@ function doneCard(item) {
     <strong title="${esc(item.title || 'Render')}">${esc(item.title || 'Render')}</strong>
     <span>${esc(item.project_name || 'Project')} · ${real}${real && estimate ? ' · ' : ''}${estimate}</span>
     <div class="done-actions">
-      <button class="btn small" type="button" data-action="play-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 11)} Play</button>
+      <button class="btn small" type="button" data-action="play-render" data-job="${esc(item.id || '')}" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 11)} Play</button>
       <button class="btn small" type="button" data-action="reveal" data-path="${esc(item.output || '')}">${icon('folderOpen', 11)} Show</button>
     </div>
   </article>`;
@@ -3779,7 +3780,7 @@ function renderQueueRow(item) {
     <span class="chip ${item.state === 'done' ? 'green' : item.state === 'failed' || item.state === 'cancelled' ? 'red' : active ? 'amber' : ''}">${esc(queueLabel(item.state))}</span>
     ${item.state === 'cancelled' ? '<div class="queue-cell">—</div>' : `<div class="queue-progress"><div class="progress"><span style="width:${pct}%"></span></div><span>${active ? `${pct}%` : item.state === 'done' ? '100%' : '—'}</span></div>`}
     <div class="queue-actions">
-      ${item.state === 'done' ? `<button class="btn small" type="button" data-action="play-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 11)} Play</button><button class="btn small" type="button" data-action="reveal" data-path="${esc(item.output || '')}">${icon('folderOpen', 11)}</button>` : ''}
+      ${item.state === 'done' ? `<button class="btn small" type="button" data-action="play-render" data-job="${esc(item.id || '')}" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 11)} Play</button><button class="btn small" type="button" data-action="reveal" data-path="${esc(item.output || '')}">${icon('folderOpen', 11)}</button>` : ''}
       ${active ? `<button class="btn small" type="button" data-action="cancel-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('close', 11)} Cancel</button>` : ''}
       ${item.state === 'failed' || item.state === 'cancelled' ? `<button class="btn small" type="button" data-action="start-render" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('loader', 11)} Retry</button>` : ''}
     </div>
@@ -3807,6 +3808,8 @@ function openVideoModal(url, title = 'Preview') {
     <div class="modal-head"><h2>${esc(title)}</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body"><video data-app-player autoplay src="${url}"></video>${playerBar()}</div>
   </dialog>`);
+  // The modal sits outside app, so render()/afterRender() never wires its bar.
+  setupPlayerBars();
 }
 
 function openAudioModal(url, title = 'Voice-over') {
@@ -4705,8 +4708,9 @@ async function revealPath(path) {
   }
 }
 
-function playRender(projectId, editId) {
-  const url = mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/edits/${encodeURIComponent(editId)}/render/file`);
+function playRender(projectId, editId, jobId = '') {
+  // The job id makes a card play its own render, not the edit's latest one.
+  const url = mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/edits/${encodeURIComponent(editId)}/render/file`, { job: jobId });
   openVideoModal(url, 'Rendered story');
 }
 
@@ -4888,7 +4892,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'cancel-render') await cancelRender(target.dataset.project || '', target.dataset.edit || '');
     else if (action === 'pause-queue') await queueAction('pause');
     else if (action === 'resume-queue') await queueAction('resume');
-    else if (action === 'play-render') playRender(target.dataset.project || '', target.dataset.edit || '');
+    else if (action === 'play-render') playRender(target.dataset.project || '', target.dataset.edit || '', target.dataset.job || '');
     else if (action === 'play-source') playSource();
     else if (action === 'close-inline-player') { state.inlinePlaying = false; render(); }
     else if (action === 'open-script') { state.focusMode = 'script'; state.scriptOpen = false; render(); }
@@ -5225,6 +5229,9 @@ function setupPlayerBars() {
   document.querySelectorAll('[data-app-player]').forEach((video) => {
     const bar = video.parentElement?.querySelector('[data-player-bar]');
     if (!bar) return;
+    // A modal player outlives render(): wire each player once, never twice.
+    if (video.dataset.barWired) return;
+    video.dataset.barWired = '1';
     const play = bar.querySelector('.player-play');
     const time = bar.querySelector('[data-player-time]');
     const scrub = bar.querySelector('.player-scrub');
@@ -5384,18 +5391,26 @@ function focusSignature(el) {
   if (!el || el === document.body) return '';
   if (el.id) return `#${el.id}`;
   const label = el.getAttribute('aria-label') || '';
-  const action = el.dataset?.action || '';
+  // Every data-* value, not just the action: each queue card has its own
+  // "Show" and "Play", told apart only by data-job, data-path or data-edit.
+  const data = Object.entries(el.dataset || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
+  const name = el.getAttribute('name') || '';
   const text = (el.textContent || '').trim().slice(0, 24);
   const tag = el.tagName.toLowerCase();
-  if (!label && !action && !text) return '';
-  return `${tag}|${label}|${action}|${text}`;
+  if (!label && !data && !name && !text) return '';
+  return `${tag}|${label}|${name}|${data}|${text}`;
 }
 
 function focusTarget(signature) {
   if (!signature) return null;
   if (signature.startsWith('#')) return document.getElementById(signature.slice(1));
-  return [...app.querySelectorAll('button,input,select,textarea,a')]
-    .find((el) => focusSignature(el) === signature) || null;
+  const matches = [...app.querySelectorAll('button,input,select,textarea,a')]
+    .filter((el) => focusSignature(el) === signature);
+  // Two controls alike in every way: guessing would move focus somewhere else.
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function render() {

@@ -1451,6 +1451,7 @@ class RenderQueue:
                 ("check_times", "TEXT DEFAULT ''"),
                 ("check_flicker", "TEXT DEFAULT ''"),
                 ("check_unchecked", "INTEGER DEFAULT 0"),
+                ("check_ran", "INTEGER DEFAULT 0"),
             ):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE render_queue ADD COLUMN {name} {kind}")
@@ -1542,6 +1543,14 @@ class RenderQueue:
                 "message": "", "output": "",
             }
         return self._row(row)
+
+    def job(self, item_id: str) -> dict | None:
+        """One queue job by its id, or None."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM render_queue WHERE id = ?", (str(item_id),)
+            ).fetchone()
+        return self._row(row) if row is not None else None
 
     def list(self, limit: int = 50) -> list[dict]:
         with self._connect() as connection:
@@ -1654,7 +1663,7 @@ class RenderQueue:
         allowed = {"state", "stage", "progress", "message", "output",
                    "estimate_seconds", "elapsed_seconds", "worker_pid",
                    "checked_frames", "check_hits", "check_times", "check_flicker",
-                   "check_unchecked"}
+                   "check_unchecked", "check_ran"}
         fields = [key for key in values if key in allowed]
         if not fields:
             return
@@ -1728,6 +1737,9 @@ class RenderQueue:
                         check_times=json.dumps(report.get("times") or []),
                         check_flicker=json.dumps(report.get("flicker") or {}),
                         check_unchecked=len(report.get("unchecked") or []),
+                        # A check that judged no frame still ran: its unchecked
+                        # lines are the report, not "no check yet".
+                        check_ran=1 if report else 0,
                         worker_pid=0,
                     )
             except Exception as exc:  # noqa: BLE001

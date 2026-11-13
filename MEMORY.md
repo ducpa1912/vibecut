@@ -17,12 +17,11 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - App Store, signing and TestFlight are paused by the founder. Do not start them.
 - v1 is completely local: no account, no upload, no telemetry, no keys. A step may take a
   user-supplied local model; no step needs a download.
-- LaMa is the only shipped model. GPU (PyTorch MPS) is the render default; CPU fill is an optional
-  198 MB pack. Bundle ≈ 981 MB.
-- Translation ships no weights and hosts no download: the user supplies a CTranslate2 folder.
+- LaMa is the only shipped model. GPU (MPS) is the default; CPU fill is a 198 MB pack. Bundle ≈ 981 MB.
+- Translation ships no weights and hosts no download (user CTranslate2 folder). Packs live in app data.
 - A line over a moving background is flagged `moves`, never silently switched to blur. Only a flash
   under 0.6 s read once defaults to blur.
-- Do not hide a limit: measure it and say it in the UI.
+- Do not hide a limit: measure it and say it in the UI. Old information is never deleted (`old_*.md`).
 - Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence; LaMa and the
   `moves` warning stay. A user fill model folder (ONNX needs onnxruntime, not bundled) replaces LaMa.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
@@ -31,11 +30,9 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   kept picture is drawn larger; it invents no detail; a CoreML pack is research only. The player grade
   is CSS, labelled approximate. The leftover check reads the source through the same filters
   (`render.check_view`); a line the Cut crops away is "not checked".
-- QA repair 2026-11-13: the nine findings of `docs/reviews/independent-qa-2026-11-13.md` are fixed
-  (stale proofs, crop offsets, estimate key, atomic enqueue, focus, sidecar reap, proof source key,
-  always-on layers, docs). Two UI fixes are code-verified only, not re-probed.
-- Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
-- Model packs live in app data, never in a Hugging Face cache.
+- Independent QA 2026-11-13 (`docs/reviews/independent-qa-2026-11-13.md`): all 14 findings fixed
+  (`qa-repair-2026-11-13`, `fix-04-qa-followup`). Output fps is automatic: 24 when the source is
+  within 0.6 of 24, else 30; Render shows it, no selector. Each finished card plays its own job.
 - Native UI track planned (`PLAN.md`, N1–N8): SwiftUI + AppKit, the Python core and its HTTP API stay,
   WKWebView goes at cutover; decisions open in `TODO.md`. No headless Chrome once N1 opens.
 
@@ -43,7 +40,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 219 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 228 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |

@@ -6,8 +6,10 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [ ] QA repair 2026-11-13: re-probe in a browser that a Cut change clears proofs and that a queue
-  refresh keeps focus (the `/tmp` fixture was lost; the founder project stays read-only).
+- [ ] QA repair + fix-04, by hand in the app (`docs/teams/fix-04-qa-followup/review.md`): a Cut change
+  clears proofs; focus stays on the same card's button across a queue refresh; an older card's Play
+  opens its own render; the render player's timer, play/pause and scrub move; Render shows the Cut
+  size, the automatic fps, and "1 line not checked" when no frame was judged.
 - [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
   new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
 - [ ] Founder, by hand, one script per loop: `docs/teams/loop-11-proofs/`, `loop-12-transcript/`,

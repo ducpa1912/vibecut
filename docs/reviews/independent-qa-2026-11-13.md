@@ -1,5 +1,27 @@
 # Independent QA — 2026-11-13
 
+## Packaged-app test on the real project
+
+**Outcome:** Full render completed, but packaged-app playback controls have a confirmed defect. This section reports a later build than the reviews below. Commits `576b7f3`, `a3a732b`, and `68ae8d4` landed after those reviews; their earlier severity totals and findings are historical, not a current defect count. No comprehensive regression review of those fixes was performed here.
+
+- With the owner's explicit permission, opened `build/DuckSuite-Xcode.app` and selected project `prj_e95348a97316` (`人吃啥咪吃啥`) through the app. Selecting the project automatically started Check; no Re-check button was pressed. Check took over five minutes and completed with 35 scenes. This action wrote real project data.
+- The app created/selected full-video edit `ed_df9bccd4e4aa`. At render time the UI reported **41 fill, 1 blur, 32 moving**; inspection of that edit found 42 layers and zero `auto: false` layers. This is not the historical edit `ed_38a4c36a3aae` described in earlier project notes. The pre-Check contents and whether this edit should inherit an earlier manual choice were not established, so no data-loss claim is made.
+- Started render from the actual app. Job `rq_f0ae6e34f251` completed in **1,163.6 s** (19 min 23.6 s); stored estimate was 1,182.8 s. Disk free after completion was 18.02 GiB. The resulting file is `projects/prj_e95348a97316/renders/ed_df9bccd4e4aa_20261113-164953.mp4` under the DuckSuite app-data root.
+- `ffprobe` measured **H.264, 1080×1920, 30 fps, AAC, 160.032993 s, 161,134,753 bytes**. Queue and Render screen both reported **2,995 checked frames, 0 found, 1 line not checked**. This does not prove the unchecked line or undetected text is clean. A low-resolution contact sheet of sparse frames was inspected; it cannot establish temporal fill quality or every-frame text removal.
+- Clicking the completed job's Play opened a real video in the packaged app. The rendered picture appeared, but the custom player bar stayed at `00:00 / 00:00`; clicking Play or pause did not update the control or timer. The AAC stream exists, but audio was not independently auditioned.
+
+### New P2 — Render playback modal's custom controls are not wired
+
+**Location:** `static/duck/app.js:3805`, `static/duck/app.js:5224`, `static/duck/app.js:5275`.
+
+**Evidence:** In the packaged macOS app, opened the completed real-project render and waited over five seconds. The modal displayed video but its timer remained `00:00 / 00:00`; pressing its accessible “Play or pause” control did not change the timer. `openVideoModal` inserts the player through `openModal`, but `setupPlayerBars()` is invoked by `afterRender()` rather than after modal insertion. Thus the modal's play/pause, seek, mute, volume, fullscreen and time-update listeners are not attached by this path. Not every individual control was separately exercised.
+
+**Impact:** Users cannot reliably control or navigate rendered playback or see its duration in the app, even though the output file is valid.
+
+**Suggested fix:** Initialize player controls when inserting the modal, avoiding duplicate listeners on existing players. Add a real WKWebView test for time, play/pause, seek, mute, volume and fullscreen.
+
+**Limits:** The app's project open and Check were real, as was the full render. No exhaustive quality inspection, full audio audition, keyboard/VoiceOver audit, or real-project comparative A/B render was done. Only this review document was changed in the repository. The app and its sidecar were left running; project render, Check, edit and cache data may have changed as a result of the authorized workflow.
+
 ## Follow-up: isolated interactive QA and synthetic renders
 
 **Updated verdict: not ready for sign-off.** Total findings are now **P0 0 · P1 0 · P2 11 · P3 2**: the nine findings below plus four new P2 findings in this follow-up. The earlier static-only limitations below apply to the first review, not to this follow-up.

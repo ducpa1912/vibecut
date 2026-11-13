@@ -368,3 +368,12 @@ Entries above are kept as written; these notes correct them.
   licence check nor the benchmark was done; the pack is research only, open in `TODO.md`.
 - Loop 18 (grading) has no section of its own: its item is the "loop 18" line under Loop 14.
 - Loop 7 "fill local slot" moved here from `TODO.md`: shipped in brief loop 8 (`7bda48d`).
+
+## Independent QA follow-up 2026-11-13 — fixed (`docs/teams/fix-04-qa-followup/review.md`)
+
+- [x] Finished-render Play opens the selected job (`?job=`, ownership and folder checked)
+- [x] Frame-rate selector removed; Render shows the automatic 24/30 fps rule
+- [x] Render settings size follows the Cut (`cutOutputSize`, the render's even rule)
+- [x] A check that judged no frame shows its unchecked lines (`check_ran`)
+- [x] Render playback modal wires its player bar, once per player
+- [x] Focus restore tells repeated buttons apart (all data-* values; no guess between twins)

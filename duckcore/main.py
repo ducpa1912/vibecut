@@ -1869,12 +1869,27 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edit_id: str,
         request: Request,
         t: str | None = None,
+        job: str | None = None,
     ) -> FileResponse:
         require_media(request, t)
-        status = renders.status(project_id, edit_id)
+        if job:
+            # One finished card plays its own file, not the edit's latest render.
+            status = renders.job(job)
+            if (
+                status is None or str(status.get("project_id")) != project_id
+                or str(status.get("edit_id")) != edit_id
+            ):
+                raise HTTPException(status_code=404, detail="Render job not found.")
+        else:
+            status = renders.status(project_id, edit_id)
         if status.get("state") != "done" or not status.get("output"):
             raise HTTPException(status_code=409, detail="Render is not ready.")
         path = Path(str(status["output"]))
+        renders_dir = (data_root / "projects" / project_id / "renders").resolve()
+        try:
+            path.resolve().relative_to(renders_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Render file is missing.") from exc
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Render file is missing.")
         return FileResponse(path, media_type="video/mp4", filename=path.name)
