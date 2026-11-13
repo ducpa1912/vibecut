@@ -386,16 +386,20 @@ def _planned_units(
     return round(total, 2)
 
 
-def units_key(meta: dict, layers: Iterable[dict], start: float, duration: float) -> str:
+def units_key(
+    meta: dict, layers: Iterable[dict], start: float, duration: float,
+    *, method: str = "", device: str = "", source_key: str = "",
+) -> str:
     """What identifies a span's fill work, for a cache of estimated units.
 
-    Only the layers that are on screen in this span are part of the key, so a
-    changed layer re-plans the spans it touches and leaves the rest stored.
+    Every input the dry planner reads is in the key: geometry, track, mask,
+    method, device and a source stamp. Only layers on screen in this span are
+    included, so a changed layer re-plans the spans it touches.
     """
     end = float(start) + float(duration)
     active = [
         layer for layer in layers
-        if any(
+        if not (layer.get("ranges") or []) or any(
             float(item.get("start") or 0.0) < end and float(item.get("end") or 0.0) > float(start)
             for item in layer.get("ranges") or []
         )
@@ -406,9 +410,16 @@ def units_key(meta: dict, layers: Iterable[dict], start: float, duration: float)
         "duration": round(float(duration), 3),
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": float(meta.get("fps") or 0.0),
+        "method": method,
+        "device": device,
+        "source": source_key,
         "layers": [
-            {"id": layer.get("id"), "ink_key": layer.get("ink_key"),
-             "ink_rect": layer.get("ink_rect"), "ranges": layer.get("ranges") or []}
+            {"id": layer.get("id"), "kind": layer.get("kind"),
+             "method": layer.get("method"), "enabled": layer.get("enabled"),
+             "box": layer.get("box"), "track": layer.get("track"),
+             "mask": layer.get("mask"), "ranges": layer.get("ranges") or [],
+             "ink_key": layer.get("ink_key"), "ink_rect": layer.get("ink_rect"),
+             "fill_keys": layer.get("fill_keys")}
             for layer in active
         ],
     }

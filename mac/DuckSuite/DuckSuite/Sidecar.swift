@@ -74,28 +74,39 @@ final class Sidecar {
     }
 
     func start() throws -> SidecarSession {
-        try process.run()
+        do {
+            try process.run()
 
-        let input = stdin.fileHandleForWriting
-        try input.write(contentsOf: Data((token + "\n").utf8))
-        try input.close()
+            let input = stdin.fileHandleForWriting
+            try input.write(contentsOf: Data((token + "\n").utf8))
+            try input.close()
 
-        let line = try readLine(timeout: 12)
-        guard
-            let data = line.data(using: .utf8),
-            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let port = object["port"] as? Int
-        else {
-            throw SidecarError.invalidHandshake
+            let line = try readLine(timeout: 12)
+            guard
+                let data = line.data(using: .utf8),
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let port = object["port"] as? Int
+            else {
+                throw SidecarError.invalidHandshake
+            }
+
+            guard
+                let baseURL = URL(string: "http://127.0.0.1:\(port)/"),
+                let launchURL = URL(string: "http://127.0.0.1:\(port)/#t=\(token)")
+            else {
+                throw SidecarError.invalidHandshake
+            }
+            return SidecarSession(baseURL: baseURL, launchURL: launchURL, token: token)
+        } catch {
+            // The core is already running at this point: a failed handshake must
+            // not leave it behind for the next attempt.
+            stop()
+            throw error
         }
+    }
 
-        guard
-            let baseURL = URL(string: "http://127.0.0.1:\(port)/"),
-            let launchURL = URL(string: "http://127.0.0.1:\(port)/#t=\(token)")
-        else {
-            throw SidecarError.invalidHandshake
-        }
-        return SidecarSession(baseURL: baseURL, launchURL: launchURL, token: token)
+    deinit {
+        stop()
     }
 
     func stop() {

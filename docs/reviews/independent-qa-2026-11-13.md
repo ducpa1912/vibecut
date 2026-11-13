@@ -1,5 +1,69 @@
 # Independent QA — 2026-11-13
 
+## Follow-up: isolated interactive QA and synthetic renders
+
+**Updated verdict: not ready for sign-off.** Total findings are now **P0 0 · P1 0 · P2 11 · P3 2**: the nine findings below plus four new P2 findings in this follow-up. The earlier static-only limitations below apply to the first review, not to this follow-up.
+
+### Environment and actual workflow
+
+- Started the current Python core and the actual web UI in a separate Chrome profile with a fresh temporary data root. The packaged WKWebView shell was **not** launched: its normal data root can resume queued jobs, and the founder project remains off-limits. Chrome is not a substitute for macOS WKWebView, VoiceOver, native picker, or real-device acceptance.
+- Generated a 3-second 320×180, 24 fps `ffmpeg testsrc2` video with a 440 Hz audio track. Imported it into isolated project `prj_067a174ad383`, ran Check to completion, opened Edit, changed a detected layer to Blur, generated a proof, and rendered through the UI. Check found one scene and nine text tracklets. The fixture includes a timestamp and frame numbers; these detections must **not** be called false positives without further ground truth.
+- Render 1, Blur: completed in 2.5 s; `ffprobe` reported H.264 1920×1080, 24 fps, AAC, 3.021322 s. The queue reported 0 checked frames and 1 unchecked line.
+- Changed Cut to 1:1 Fill, changed that layer to Fill, and rendered again. Render 2 completed in 15.7 s; `ffprobe` reported H.264 1080×1080, 24 fps, AAC, 3.021322 s. The queue reported 0 checked frames and 1 unchecked line. A third, warm render completed in 1.2 s and also reported 1080×1080 at 24 fps. These are synthetic observations, not general speed measurements or fill-quality sign-off.
+- Viewed the Render screen at browser viewport sizes 1024×700 and 1440×900. Both had document width equal to viewport width and no buttons with detected text overflow. Visually inspected the 1024×700 screenshot. This is not a full layout or accessibility audit.
+- The temporary root, screenshots, source and render outputs are under `/private/var/folders/m_/jn7hsp456dvff8hrf0lmtgqm0000gn/T/opencode/duck-qa-isolated/`. They are synthetic artifacts, not committed evidence. No founder-project Check, render, or write occurred.
+
+### New P2 — Finished-render Play opens the latest render, not the selected job
+
+**Location:** `static/duck/app.js:3759`, `static/duck/app.js:4703`, `duckcore/main.py:1858`.
+
+**Impact:** Older finished cards can play a different output. A user reviewing versions can approve the wrong render. If the newest job is not done, an older completed job can instead fail to play.
+
+**Evidence:** The first isolated job produced 1920×1080; subsequent jobs produced 1080×1080. Clicking the oldest finished Play control opened a video whose `loadedmetadata` dimensions were **1080×1080**. The control passes only project and edit IDs, and the endpoint resolves the latest job for that edit rather than the selected queue job.
+
+**Suggested fix:** Pass a queue job ID through the card and a job-specific authenticated media endpoint; verify ownership and file containment. Test multiple outputs for one edit, including when the latest job is running or failed.
+
+### New P2 — Frame-rate selector does not control output
+
+**Location:** `static/duck/app.js:3710`, `duckcore/render.py:940`.
+
+**Impact:** A user selecting 30 fps from a 24 fps source receives 24 fps without an error; the control then silently resets.
+
+**Evidence:** In the live isolated UI, selected `30 fps` and clicked Start render. The control reverted to `24 fps` after queue refresh. `ffprobe` on the resulting file returned `r_frame_rate=24/1`. The selector has no other `render-fps` handler, and the renderer chooses 24 or 30 from source fps.
+
+**Suggested fix:** Persist a validated frame-rate setting and pass it into render, preview and check timing; or remove the selector and clearly show the automatic output rate.
+
+### New P2 — Render settings show source-aspect size instead of Cut output
+
+**Location:** `static/duck/app.js:1249`, `static/duck/app.js:3676`.
+
+**Impact:** Render settings tell users the wrong resolution when they select a non-source aspect.
+
+**Evidence:** After the live Cut was saved as `1:1`, Render settings displayed **1920 × 1080** for the 320×180 source. Both square outputs were independently measured by `ffprobe` as **1080×1080**. `outputSizeLabel` uses only source dimensions while `cutOutputSize` separately models Cut.
+
+**Suggested fix:** Use the Cut-aware output-size calculation in Render settings, including even dimensions, and cover every aspect and source orientation.
+
+### New P2 — All-unchecked leftover report is hidden
+
+**Location:** `static/duck/app.js:3686`, `static/duck/app.js:3700`.
+
+**Impact:** When no frames can be checked, Render displays “No check yet” and omits the unchecked-line count even after the check ran. The user cannot see that the completed render contains unverified lines.
+
+**Evidence:** Each of the three completed synthetic jobs reported `checked_frames: 0` and `check_unchecked: 1` in `/api/queue`, while the live Render panel displayed **Leftover: No check yet**. The selector requires a truthy `checked_frames` before it will display any report.
+
+**Suggested fix:** Represent whether a check ran independently of its checked-frame count; display zero checked and the unchecked count/reasons, including check failure states.
+
+### Earlier findings: follow-up evidence
+
+- **Stale proof:** reproduced interactively. Generated a blur proof, selected 1:1 Cut, then returned to Clean. The image was still marked “After · blur proof” and its data URL was byte-for-byte identical to the pre-Cut proof. This confirms the client invalidation defect; it does not independently establish the separate server source-key collision.
+- **Queue focus loss:** reproduced in the isolated Render screen. Focused the Show button while a job was updating. Seven seconds later `document.activeElement` was `BODY` and the original button was disconnected.
+- **Duplicate enqueue:** reproduced deterministically using two threads, two SQLite connections, a temporary separate queue database, and a barrier immediately after both lookups. The real `RenderQueue.enqueue` returned two distinct IDs and left **2 queued rows** for the same project/edit. The barrier forces the race; it does not estimate its frequency in normal use.
+- The prior crop-origin and estimate-key probes remain valid; no rendered-pixel crop-edge comparison or end-to-end timing-cache measurement was performed in this follow-up.
+
+### Remaining limits
+
+No packaged-app, native import picker, real project, Vietnamese transcription, microphone, VoiceOver, physical keyboard, long video, source replacement, multi-core endurance, or every-frame OCR acceptance test was performed. The fill render's one unchecked layer prevents claiming text-removal quality. The test suite was not rerun in this follow-up; the first review's **214 passed** result remains historical. No code, test, configuration, or other document was edited.
+
 ## Verdict
 
 **Not ready for sign-off.** The automated suite passes, but code inspection and small, read-only probes found correctness and recovery defects. No full render, app interaction, product change, or founder-project access was performed. This is a targeted review, not an exhaustive audit of every requested file or commit.

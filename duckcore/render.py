@@ -158,6 +158,10 @@ def _even(value: float) -> int:
     return max(2, int(round(value)) // 2 * 2)
 
 
+def _even_offset(value: float) -> int:
+    return max(0, int(round(value)) // 2 * 2)
+
+
 def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
     """The render's picture filters, and where a source pixel lands in the output.
 
@@ -177,8 +181,8 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
         try:
             cw = _even(width * float(crop.get("w") or 0))
             ch = _even(height * float(crop.get("h") or 0))
-            cx = _even(width * float(crop.get("x") or 0))
-            cy = _even(height * float(crop.get("y") or 0))
+            cx = _even_offset(width * float(crop.get("x") or 0))
+            cy = _even_offset(height * float(crop.get("y") or 0))
             cx = max(0, min(width - cw, cx))
             cy = max(0, min(height - ch, cy))
             parts.append(f"crop={cw}:{ch}:{cx}:{cy}")
@@ -846,7 +850,15 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path,
             if end <= start or str(clip.get("kind")) == "media":
                 continue
             duration = max(0.04, end - start)
-            key = textfill.units_key(meta, layers, start, duration)
+            try:
+                stamp = Path(source).stat()
+                source_key = f"{stamp.st_size}:{stamp.st_mtime_ns}"
+            except OSError:
+                source_key = str(source)
+            key = textfill.units_key(
+                meta, layers, start, duration,
+                method="lama", device=device, source_key=source_key,
+            )
             row = textfill.estimate_span(
                 meta=meta, start=start, duration=duration, layers=layers,
                 method="lama", cache_dir=cache, data_root=data_root,
@@ -1480,6 +1492,7 @@ class RenderQueue:
 
     def enqueue(self, project_id: str, edit_id: str, title: str) -> dict:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 """
                 SELECT * FROM render_queue

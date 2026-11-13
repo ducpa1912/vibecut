@@ -178,7 +178,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 117 pass; 1 skips when node is not on PATH
+python3 -m pytest -q tests      # 219 pass (2026-11-13)
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth
@@ -210,8 +210,8 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 - The app is macOS 26.0, Apple silicon only. FoundationModels (26.0) and SpeechAnalyzer
   (`anyAppleOS 26`) set the floor; Translation alone would allow 15.0. The target and
   `LSMinimumSystemVersion` are 26.0. Lowering it is a feature change, not a flag.
-- The bundle is ~377 MB: LaMa 198 MB, sidecar 136 MB, ffmpeg/ffprobe 41 MB. LaMa cannot move to a
-  download without shipping an app whose main feature is missing.
+- The bundle is ≈ 981 MB: torch 565 MB, GPU LaMa 196 MB, sidecar 136 MB, ffmpeg/ffprobe 41 MB.
+  LaMa cannot move to a download without shipping an app whose main feature is missing.
 
 ## Invariants
 

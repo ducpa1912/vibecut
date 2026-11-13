@@ -88,7 +88,7 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
   model. The UI names no model for a user slot and links no download.
 - **Text clean is LaMa fill or explicit Blur.** Never a silent switch to blur.
 - **Dub is required**, with an editable script in English, Vietnamese and Chinese.
-- **1080p, 24 or 30 fps.** No LUTs, no grading, no publish kit.
+- **1080p, 24 or 30 fps.** No LUTs. The four-slider Cut grade and Lanczos enhance ship; no curves, LUT import or colour management.
 - **Do not hide a limit.** Measure it and show it.
 
 ### Pricing

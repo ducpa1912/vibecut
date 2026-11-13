@@ -1761,6 +1761,11 @@ async function saveCut(patch) {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/cut`, { method: 'PATCH', body: JSON.stringify(cut) });
     state.edit = data.edit;
     state.cleanVersion += 1;
+    // Every proof was drawn through the old Cut: drop them and any run.
+    state.previewCache.clear();
+    state.previewStatus.clear();
+    state.previewRun += 1;
+    state.previewRunning = false;
     render();
     toast(`Cut saved · ${cutOutputLabel()}.`);
   } catch (error) {
@@ -5375,8 +5380,28 @@ function afterRender() {
 
 /* ------------------------------------------------------------------ render */
 
+function focusSignature(el) {
+  if (!el || el === document.body) return '';
+  if (el.id) return `#${el.id}`;
+  const label = el.getAttribute('aria-label') || '';
+  const action = el.dataset?.action || '';
+  const text = (el.textContent || '').trim().slice(0, 24);
+  const tag = el.tagName.toLowerCase();
+  if (!label && !action && !text) return '';
+  return `${tag}|${label}|${action}|${text}`;
+}
+
+function focusTarget(signature) {
+  if (!signature) return null;
+  if (signature.startsWith('#')) return document.getElementById(signature.slice(1));
+  return [...app.querySelectorAll('button,input,select,textarea,a')]
+    .find((el) => focusSignature(el) === signature) || null;
+}
+
 function render() {
   if (!state.project && state.screen !== 'welcome') state.screen = 'welcome';
+  const active = document.activeElement;
+  const signature = active && app.contains(active) ? focusSignature(active) : '';
   const screen = state.screen === 'welcome'
     ? screenWelcome()
     : state.screen === 'check'
@@ -5389,6 +5414,16 @@ function render() {
             ? screenPreview()
             : screenRender();
   app.innerHTML = `${topbar()}${screen}`;
+  if (signature) {
+    const target = focusTarget(signature);
+    if (target) {
+      target.focus({ preventScroll: true });
+      if (typeof target.selectionStart === 'number' && target.value !== undefined) {
+        const end = String(target.value).length;
+        try { target.setSelectionRange(end, end); } catch (_error) { /* not a text field */ }
+      }
+    }
+  }
   afterRender();
 }
 

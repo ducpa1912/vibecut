@@ -228,7 +228,12 @@ def _active_clean(edit: dict, when: float) -> list[dict]:
     for layer in edit.get("clean") or []:
         if not isinstance(layer, dict):
             continue
-        for item in layer.get("ranges") or []:
+        ranges = layer.get("ranges") or []
+        if not ranges:
+            # The fill planner treats a layer with no ranges as always on.
+            active.append(layer)
+            continue
+        for item in ranges:
             try:
                 if float(item.get("start") or 0.0) <= when <= float(item.get("end") or 0.0):
                     active.append(layer)
@@ -257,6 +262,22 @@ def _proof_scope(edit: dict, when: float) -> tuple[list[dict], dict]:
         "start": round(float(clip.get("start") or 0.0), 3),
         "end": round(float(clip.get("end") or 0.0), 3),
     }
+
+
+def _proof_cache_key(
+    project: dict, edit: dict, active: list[dict], clip_scope: dict, mode: str,
+) -> str:
+    """The proof cache key: layers, clip, mode, Cut and the source generation."""
+    try:
+        stat = Path(str(project.get("source_path") or "")).stat()
+        source_key = [stat.st_size, stat.st_mtime_ns]
+    except OSError:
+        source_key = []
+    payload = {
+        "clean": active, "clip": clip_scope, "mode": mode,
+        "cut": edit.get("cut") or {}, "source": source_key,
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
 def create_app(token: str, data_root: Path) -> FastAPI:
@@ -1251,12 +1272,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         from duckcore.preview import proof_layers
 
         active = proof_layers(active, mode)
-        clean_hash = hashlib.sha1(
-            json.dumps(
-                {"clean": active, "clip": clip_scope, "mode": mode, "cut": edit.get("cut") or {}},
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()[:12]
+        clean_hash = _proof_cache_key(project, edit, active, clip_scope, mode)
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():
             return FileResponse(output, media_type="image/jpeg")
