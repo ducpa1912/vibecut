@@ -353,3 +353,6 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] #1 the leftover check reads the source through the Cut (`docs/teams/fix-01-check-follows-cut/review.md`)
 - [x] #2 enhance compares with the kept picture (crop or source); the Cut card shows the real output size
 - [x] #3 grade and sharpen run before the letterbox pad; the bars stay black (`docs/teams/fix-02-enhance-grade-order/review.md`)
+- [x] #4 one queued estimate per edit; a starting render takes a ready, running or last figure and never waits in the queue
+- [x] #5 a refill redraws only the clips a leftover hit falls in (`docs/teams/fix-03-estimate-queue-and-retry/review.md`)
+- [x] #8 a ready estimate trimmed from the map still answers

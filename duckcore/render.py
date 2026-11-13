@@ -380,6 +380,27 @@ def _widen_edit(edit: dict, hits: list[dict], fps: float) -> dict | None:
     return {**edit, "clean": clean}
 
 
+def _retry_clips(clips: list[dict], hits: list[dict], fps: float) -> set[int]:
+    """The clips a refill changes: those the widened spans of :func:`_widen_edit` touch.
+
+    Every other clip renders the same pixels again, so its first-pass file is kept.
+    """
+    step = 1.0 / max(1.0, float(fps))
+    spans = [
+        (max(0.0, at - 2 * step), at + 3 * step)
+        for at in (float(hit.get("source_time", hit.get("time")) or 0.0) for hit in hits)
+    ]
+    out: set[int] = set()
+    for index, clip in enumerate(clips):
+        if str(clip.get("kind")) == "media":
+            continue
+        start = float(clip.get("start") or 0.0)
+        end = float(clip.get("end") or 0.0)
+        if any(lo < end and hi > start for lo, hi in spans):
+            out.add(index)
+    return out
+
+
 def render_frame(
     project: dict,
     edit: dict,
@@ -547,6 +568,8 @@ _ESTIMATE_QUEUE: list[tuple] = []
 _ESTIMATE_WAKE = threading.Event()
 _ESTIMATE_THREAD: threading.Thread | None = None
 _ESTIMATE_LAST: dict[str, dict] = {}
+# The key the worker is measuring now, or None.
+_ESTIMATE_RUNNING: str | None = None
 
 
 def _estimate_key(edit: dict, meta: dict, data_root: Path | None = None) -> str:
@@ -600,42 +623,52 @@ def _ensure_estimate_worker() -> None:
 
 def _estimate_worker() -> None:
     """One worker: it takes one estimate job at a time, in order."""
+    global _ESTIMATE_RUNNING
     while True:
         job = None
         with _ESTIMATE_LOCK:
             if _ESTIMATE_QUEUE:
                 job = _ESTIMATE_QUEUE.pop(0)
+                _ESTIMATE_RUNNING = job[0]
         if job is None:
             _ESTIMATE_WAKE.wait(0.5)
             _ESTIMATE_WAKE.clear()
             continue
-        key, edit, meta, data_root = job
         try:
-            result = estimate_edit(
-                edit, meta, data_root,
-                progress=(lambda fraction, message: _set_estimate_progress(key, fraction, message)),
-            )
-        except Exception as exc:  # noqa: BLE001 - the endpoint reports it, never crashes
-            LOGGER.warning("estimate failed: %s", exc)
+            _run_estimate_job(*job)
+        finally:
             with _ESTIMATE_LOCK:
-                item = _ESTIMATE_JOBS.get(key)
-                if item is not None:
-                    item.update(
-                        state="ready", progress=1.0, error=str(exc)[:300],
-                        message="The fill time could not be measured.",
-                    )
-            continue
-        try:
-            with _ESTIMATE_LOCK:
-                item = _ESTIMATE_JOBS.get(key)
-                if item is not None:
-                    item.update(
-                        state="ready", progress=1.0, estimate=result,
-                        message="Fill time measured.", finished=time.time(),
-                    )
-                _ESTIMATE_LAST[str(edit.get("id"))] = result
-        except Exception as exc:  # noqa: BLE001 - the worker must outlive one bad job
-            LOGGER.warning("estimate result dropped: %s", exc)
+                _ESTIMATE_RUNNING = None
+
+
+def _run_estimate_job(key: str, edit: dict, meta: dict, data_root: Path) -> None:
+    """Measure one job and publish the result; a failure is a message."""
+    try:
+        result = estimate_edit(
+            edit, meta, data_root,
+            progress=(lambda fraction, message: _set_estimate_progress(key, fraction, message)),
+        )
+    except Exception as exc:  # noqa: BLE001 - the endpoint reports it, never crashes
+        LOGGER.warning("estimate failed: %s", exc)
+        with _ESTIMATE_LOCK:
+            item = _ESTIMATE_JOBS.get(key)
+            if item is not None:
+                item.update(
+                    state="ready", progress=1.0, error=str(exc)[:300],
+                    message="The fill time could not be measured.",
+                )
+        return
+    try:
+        with _ESTIMATE_LOCK:
+            item = _ESTIMATE_JOBS.get(key)
+            if item is not None:
+                item.update(
+                    state="ready", progress=1.0, estimate=result,
+                    message="Fill time measured.", finished=time.time(),
+                )
+            _ESTIMATE_LAST[str(edit.get("id"))] = result
+    except Exception as exc:  # noqa: BLE001 - the worker must outlive one bad job
+        LOGGER.warning("estimate result dropped: %s", exc)
 
 
 def _set_estimate_progress(key: str, fraction: float, message: str) -> None:
@@ -671,6 +704,9 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
                 ]
                 for name in ready[:max(0, len(_ESTIMATE_JOBS) - 8)]:
                     _ESTIMATE_JOBS.pop(name, None)
+            # A saved edit makes a new key. The older versions of this edit that
+            # have not started are answered by this one: they never run.
+            _drop_queued(str(edit.get("id")), keep=key)
             _ESTIMATE_QUEUE.append((key, edit, meta, Path(data_root)))
             _ensure_estimate_worker()
             _ESTIMATE_WAKE.set()
@@ -678,11 +714,13 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
         deadline = time.monotonic() + float(wait)
         while time.monotonic() < deadline:
             with _ESTIMATE_LOCK:
-                if _ESTIMATE_JOBS[key]["state"] == "ready":
+                if job["state"] == "ready":
                     break
             time.sleep(0.02)
+    # Read the job we hold, not the map: another request may trim a ready job
+    # out of the map between the two looks.
     with _ESTIMATE_LOCK:
-        job = dict(_ESTIMATE_JOBS[key])
+        job = dict(job)
     return {
         "state": job["state"],
         "progress": round(float(job.get("progress") or 0.0), 3),
@@ -711,9 +749,59 @@ def wait_for_estimate(edit: dict, meta: dict, data_root: Path, *,
                 if job and job["state"] == "ready":
                     return job.get("estimate") or {}
             time.sleep(0.2)
-        # Nothing came back: measure here rather than start the render blind.
-        return estimate_edit(edit, meta, data_root)
+        # Nothing came back in time: the last known figure, or none.
+        return _ESTIMATE_LAST.get(str(edit.get("id"))) or {}
     return (job or {}).get("estimate") or {}
+
+
+def _drop_queued(edit_id: str, *, keep: str | None = None) -> int:
+    """Take this edit's jobs that have not started out of the queue.
+
+    Call with ``_ESTIMATE_LOCK`` held. A dropped job is answered at once with
+    the last known estimate, so nobody waits on a job that will never run.
+    """
+    kept: list[tuple] = []
+    dropped = 0
+    for item in _ESTIMATE_QUEUE:
+        if str(item[1].get("id")) == edit_id and item[0] != keep:
+            job = _ESTIMATE_JOBS.get(item[0])
+            if job is not None and job["state"] != "ready":
+                job.update(
+                    state="ready", progress=1.0, superseded=True,
+                    message="A newer version of this edit is being measured.",
+                )
+            dropped += 1
+        else:
+            kept.append(item)
+    _ESTIMATE_QUEUE[:] = kept
+    return dropped
+
+
+def estimate_for_render(edit: dict, meta: dict, data_root: Path, *,
+                        timeout: float = 900.0) -> dict:
+    """The estimate a starting render shows. The render never waits in the queue.
+
+    Ready: that figure. Being measured now for this very edit: wait for it,
+    since its first step is the ink the render reads next from the same store.
+    Queued or never asked: drop it and start now with the last known figure,
+    or none; the render's own time is the real answer.
+    """
+    key = _estimate_key(edit, meta, data_root)
+    with _ESTIMATE_LOCK:
+        job = _ESTIMATE_JOBS.get(key)
+        if job is not None and job["state"] == "ready" and not job.get("superseded"):
+            return job.get("estimate") or {}
+        running = _ESTIMATE_RUNNING == key and job is not None
+        if not running:
+            _drop_queued(str(edit.get("id")))
+            return _ESTIMATE_LAST.get(str(edit.get("id"))) or {}
+    deadline = time.monotonic() + float(timeout)
+    while time.monotonic() < deadline:
+        with _ESTIMATE_LOCK:
+            if job["state"] == "ready":
+                return job.get("estimate") or {}
+        time.sleep(0.2)
+    return _ESTIMATE_LAST.get(str(edit.get("id"))) or {}
 
 
 def estimate_edit(edit: dict, meta: dict, data_root: Path,
@@ -831,7 +919,15 @@ def render_edit(
     cancel_event: threading.Event | None = None,
     check: bool = True,
     _retry: bool = True,
+    _reuse: frozenset[int] = frozenset(),
+    _started: float | None = None,
 ) -> Path:
+    """Render ``edit`` to one MP4, then check it for leftover text.
+
+    One leftover hit refills once: only the clips the hit falls in are drawn
+    again (``_reuse`` names the clips whose first-pass file is kept), not the
+    whole edit.
+    """
     from duckcore.engine import pipeline, textfill
 
     def check_cancel() -> None:
@@ -843,7 +939,8 @@ def render_edit(
     meta = pipeline.probe(source)
     target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
     out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
-    started = time.monotonic()
+    # A refill pass counts from the first pass: the rate learns what the user waited.
+    started = _started if _started is not None else time.monotonic()
     project_id = str(project["id"])
     job_dir = Path(data_root) / "projects" / project_id
     cache = job_dir / "fill"
@@ -875,6 +972,11 @@ def render_edit(
             duration = max(0.04, float(clip.get("end") or 0.0) - start)
             if progress:
                 progress(index / max(1, len(clips)), f"Rendering clip {index + 1}/{len(clips)}")
+            kept = output_dir / f".{edit['id']}_{index:04d}.mp4"
+            if index in _reuse and kept.is_file():
+                # The refill does not touch this clip: its first pass stands.
+                segments.append(kept)
+                continue
             if str(clip.get("kind")) == "media":
                 media_path = job_dir / str(clip.get("file") or "")
                 if not media_path.is_file():
@@ -977,8 +1079,6 @@ def render_edit(
             "-c", "copy", "-movflags", "+faststart", str(output),
         ])
         listing.unlink(missing_ok=True)
-        for segment in segments:
-            segment.unlink(missing_ok=True)
 
         track = edit.get("captions")
         if captions.wants_srt(track) and track.get("cues"):
@@ -1015,20 +1115,27 @@ def render_edit(
             )
             sidecar = output.with_suffix(".check.json")
             if report.get("hits") and _retry:
-                widened = _widen_edit(edit, report["hits"], float(meta.get("fps") or 30.0))
+                source_fps = float(meta.get("fps") or 30.0)
+                widened = _widen_edit(edit, report["hits"], source_fps)
                 if widened is not None:
+                    redo = _retry_clips(clips, report["hits"], source_fps)
                     if progress:
-                        progress(0.98, "Refilling the leftover text")
+                        progress(0.98, f"Refilling the leftover text · {len(redo)} of {len(clips)} clips")
                     # This file is the failed first pass of this same render,
-                    # not a render the user asked to keep.
+                    # not a render the user asked to keep. Its clip files are.
                     output.unlink(missing_ok=True)
                     return render_edit(
                         project, widened, data_root,
                         progress=progress, cancel_event=cancel_event,
                         check=True, _retry=False,
+                        _reuse=frozenset(set(range(len(clips))) - redo),
+                        _started=started,
                     )
             report["retried"] = not _retry
+            report["refilled_clips"] = (len(clips) - len(_reuse)) if not _retry else 0
             sidecar.write_text(json.dumps(report, indent=1), encoding="utf-8")
+        for segment in segments:
+            segment.unlink(missing_ok=True)
         remember_render_time(Path(data_root), rendered, time.monotonic() - started)
         return output
     except Exception:
@@ -1577,7 +1684,7 @@ class RenderQueue:
 
                     meta = pipeline.probe(str(project["source_path"]))
                     meta["path"] = str(project["source_path"])
-                    guess = wait_for_estimate(edit, meta, self.data_root)
+                    guess = estimate_for_render(edit, meta, self.data_root)
                     seconds = guess.get("total_seconds") or guess.get("seconds") or 0
                     self._update(item["id"], estimate_seconds=float(seconds))
                 except Exception:  # noqa: BLE001 - the estimate never blocks a render
