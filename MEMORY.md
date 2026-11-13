@@ -23,24 +23,20 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - A line over a moving background is flagged `moves`, never silently switched to blur. Only a flash
   under 0.6 s read once defaults to blur.
 - Do not hide a limit: measure it and say it in the UI.
-- Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence, so LaMa stays
-  and the `moves` warning stays. A user fill model folder (ONNX or TorchScript) replaces LaMa when set.
+- Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence; LaMa and the
+  `moves` warning stay. A user fill model folder (ONNX needs onnxruntime, not bundled) replaces LaMa.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
-- Cut grading ships (loop 18): exposure, contrast, saturation, temperature in `edit.cut.grade`,
-  applied by ffmpeg after crop/scale and before the letterbox pad (bars stay black); the player preview
-  is CSS and labelled approximate.
-- The leftover check follows the Cut (2026-11-13): it reads the source through the render's own
-  picture filters (`render.check_view` → `ink.View`); a line the Cut crops away is "not checked".
-- Cut enhance ships (loop 19): Lanczos + unsharp only when the kept picture (crop or source) is drawn larger,
-  `edit.cut.enhance`; the UI says it invents no detail. A CoreML super-resolution pack is research
-  only, not built.
+- Cut (loops 14–19): crop, aspect, fit, look, grade and enhance (`edit.cut`) run in ffmpeg as crop →
+  scale → sharpen → grade → pad, so letterbox bars stay black. Enhance (Lanczos + unsharp) only when the
+  kept picture is drawn larger; it invents no detail; a CoreML pack is research only. The player grade
+  is CSS, labelled approximate. The leftover check reads the source through the same filters
+  (`render.check_view`); a line the Cut crops away is "not checked".
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
 - Model packs live in app data, never in a Hugging Face cache.
-- Native UI track is planned (`PLAN.md`, N1–N8): SwiftUI + AppKit bridges, the Python core and its
-  local HTTP API stay, WKWebView goes at cutover. Decisions are open in `TODO.md`; the web UI still
-  carries loops 15–17 until the track starts. No headless Chrome is used for UI evidence once N1 opens.
+- Native UI track planned (`PLAN.md`, N1–N8): SwiftUI + AppKit, the Python core and its HTTP API stay,
+  WKWebView goes at cutover; decisions open in `TODO.md`. No headless Chrome once N1 opens.
 
-## Where the build stands (2026-11-12)
+## Where the build stands (2026-11-13)
 
 | Fact | Value |
 |---|---|
@@ -70,11 +66,16 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 ## Open questions for the founder
 
-- None blocking. New briefs arrive as `docs/teams/<loop>/BRIEF.md`; the loop starts when the brief
-  exists.
+- None blocking. A loop starts when its `docs/teams/<loop>/BRIEF.md` exists.
 
 ## Request log
 
 Only requests whose loop is still open stay here. A new request appends one entry before code; a
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
-the loop's commit.
+the loop's commit. Open requests, one line each (open work in `TODO.md`):
+
+- REQ-20261111-02 · $29 build readiness · PLAN loop 8.
+- REQ-20261111-03 · local model slots · PLAN loop 7; fill slot shipped; registry + 3 slots left.
+- REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
+- REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
+- REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).

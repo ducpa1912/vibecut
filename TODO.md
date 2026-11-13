@@ -8,11 +8,11 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
   new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
-
-## Founder hand-test 2026-11-12 — workflows
-
-One loop per request, each ends in its own commit. Cut phases 18–19 are roadmap, not now.
-
+- [ ] Founder, by hand, one script per loop: `docs/teams/loop-11-proofs/`, `loop-12-transcript/`,
+  `loop-13-timeline-zoom/`, `loop-14-cut/`, `loop-15-safe-zones/`, `loop-16-preview-sequence/`,
+  `loop-17-story/`, `loop-18-grading/`, `loop-19-enhance/` (each `founder-test.md`).
+- [ ] Founder, by hand: fix-02 step in `docs/teams/fix-02-enhance-grade-order/review.md` (crop to
+  half → Enhance offers Lanczos, output 1080 × 1920; 16:9 fit, contrast −50 → bars stay black).
 
 ## Native UI (planned 2026-11-12)
 
@@ -31,8 +31,12 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 - [ ] N8 · delete the web UI and WKWebView; parity audit with XCUITest
 - [ ] N1-N8 · XCUITest measurement: 1024×700, 1280×800, 1440×900; no headless Chrome
 
-## Cut — phase 3 (open)
+## Cut and story — open after brief loops 14–20
 
+- [ ] REQ-20261112-04 · loop 19: CoreML super-resolution pack is research only. Before any build: a
+  licence check of the weights and an M1/8 GB benchmark. Neither has been done.
+- [ ] REQ-20261112-07 · loop 20: optional local VLM scene captions for story (roadmap; multi-GB,
+  minutes per clip, an optional pack only, never a default).
 
 ## Layout — open after brief loop 10
 
@@ -45,14 +49,15 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 
 ## Code review 2026-11-13 (`docs/reviews/2026-11-13-loops-07-19.md`)
 
-Findings #1–#5 and #8 are fixed. Still open, most severe first:
+Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most severe first:
 
 - [ ] #6, #7, #9–#11 low: long-scene stories, resident user model, sequence overshoot, ONNX slot
   without onnxruntime, Play on a missing render file and dead SFX filter modal
-- [ ] D1–D7 docs gaps listed in the review (dropped items, stale headings, test counts, request log)
 
 ## Fill and leftover check — open after brief loops 7–9
 
+- [ ] REQ-20261111-11 · D8 per-frame fill where the picture changes fast: not shipped, no number.
+  Dropped from this file when loop 7 closed; restored 2026-11-13.
 - [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
 - [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
 - [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
@@ -76,7 +81,6 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
 - [ ] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check
 - [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
-- [x] REQ-20261111-03 · fill local slot: shipped in brief loop 8 (`7bda48d`); founder test open above
 
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 
@@ -89,6 +93,10 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 
 ## Later
 
+- [ ] Model pack manager polish: an in-app "verify all" and storage cleanup. Dropped from this file
+  in loop 6/9; restored 2026-11-13.
+- [ ] Render queue lists "Done" jobs whose file is gone; Play must not be offered for a missing file
+  (review finding #11). Dropped in loop 6/9; restored 2026-11-13.
 - [ ] Cold render cost beyond the estimate: warm the cache after Clean all, or cap fill work by plan.
 - [ ] `pipeline._first_still` adds one ffmpeg seek per Check; measure on a 10-minute source.
 - [ ] Title blur runs 0.0–0.317 s for a 0.066 s title: about 7 frames carry a soft patch; consider an

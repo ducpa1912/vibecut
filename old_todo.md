@@ -356,3 +356,15 @@ Brief: `docs/teams/loop-07-ink-check/BRIEF.md`. Review: `docs/teams/loop-07-ink-
 - [x] #4 one queued estimate per edit; a starting render takes a ready, running or last figure and never waits in the queue
 - [x] #5 a refill redraws only the clips a leftover hit falls in (`docs/teams/fix-03-estimate-queue-and-retry/review.md`)
 - [x] #8 a ready estimate trimmed from the map still answers
+
+## Corrections 2026-11-13 (docs gaps D1–D7 of the code review)
+
+Entries above are kept as written; these notes correct them.
+
+- Loop 6/9 "Render queue lists Done jobs whose file is gone" and "Model pack manager polish" were
+  never done; they are open again in `TODO.md` → Later.
+- Loop 7 "D8 per-frame fill where the picture changes fast" was never done; open again in `TODO.md`.
+- Loop 14 / loop 19 "optional CoreML pack after licence and benchmark" is ticked, but neither the
+  licence check nor the benchmark was done; the pack is research only, open in `TODO.md`.
+- Loop 18 (grading) has no section of its own: its item is the "loop 18" line under Loop 14.
+- Loop 7 "fill local slot" moved here from `TODO.md`: shipped in brief loop 8 (`7bda48d`).
