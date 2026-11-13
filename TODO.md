@@ -6,6 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [ ] QA repair 2026-11-13: re-probe in a browser that a Cut change clears proofs and that a queue
+  refresh keeps focus (the `/tmp` fixture was lost; the founder project stays read-only).
 - [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
   new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
 - [ ] Founder, by hand, one script per loop: `docs/teams/loop-11-proofs/`, `loop-12-transcript/`,

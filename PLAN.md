@@ -75,6 +75,13 @@ clip, so they are an optional pack, never a default. Upscale: ffmpeg lanczos inv
 Real-ESRGAN via CoreML is the plug-and-play candidate after a licence check and an M1/8 GB
 benchmark.
 
+### QA repair — 2026-11-13
+
+`docs/reviews/independent-qa-2026-11-13.md` found 0 P0, 0 P1, 7 P2, 2 P3. All nine are fixed in
+`docs/teams/qa-repair-2026-11-13/review.md`: stale proofs after a Cut change, crop offsets, estimate
+unit keys, atomic enqueue, focus across a queue refresh, sidecar reap, proof source generation,
+always-on layers, and the documents. 219 tests. Two UI fixes are code-verified only.
+
 ### Loops 5 and 6 — closed 2026-11-12
 
 - Loop 5 (moving fill): `docs/teams/loop-08-moving-fill/review.md`. No licensed engine; a user fill

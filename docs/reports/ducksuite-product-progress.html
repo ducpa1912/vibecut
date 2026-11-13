@@ -150,6 +150,19 @@ ul.clean li { margin:6px 0; }
 
   <div class="timeline" style="margin-top:14px">
     <div class="timeline-row">
+      <div class="timeline-key"><strong class="mono">QA repair</strong><span>13 Nov · all nine findings fixed</span></div>
+      <div class="timeline-body">
+        <strong>Independent QA found 7 P2 and 2 P3; all are fixed.</strong>
+        <ul class="clean">
+          <li>Cut changes clear client proofs and cancel the run; crop x/y = 0 stays 0 (<span class="mono">crop=960:540:0:0</span>).</li>
+          <li>Estimate units key now includes geometry, mask, method, device and source; enqueue is one <span class="mono">BEGIN IMMEDIATE</span> transaction (8 concurrent calls → 1 job).</li>
+          <li>Proof key includes the source size/mtime; no-range layers count as always on; failed sidecar handshake stops the core; focus survives a queue refresh.</li>
+          <li>Docs reconciled: 219 tests, bundle ≈981 MB, grading wording. Two UI fixes are code-verified only, not re-probed.</li>
+        </ul>
+        <span class="mono">219 tests</span> · review: <span class="mono">docs/teams/qa-repair-2026-11-13/review.md</span>
+      </div>
+    </div>
+    <div class="timeline-row">
       <div class="timeline-key"><strong class="mono">Loop 19 · enhance</strong><span>12 Nov · 360p to 1080p, honestly</span></div>
       <div class="timeline-body">
         <strong>Cut → Enhance upscales a small source with Lanczos and optional sharpen.</strong>
