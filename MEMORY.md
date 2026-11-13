@@ -31,6 +31,9 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   kept picture is drawn larger; it invents no detail; a CoreML pack is research only. The player grade
   is CSS, labelled approximate. The leftover check reads the source through the same filters
   (`render.check_view`); a line the Cut crops away is "not checked".
+- QA repair 2026-11-13: the nine findings of `docs/reviews/independent-qa-2026-11-13.md` are fixed
+  (stale proofs, crop offsets, estimate key, atomic enqueue, focus, sidecar reap, proof source key,
+  always-on layers, docs). Two UI fixes are code-verified only, not re-probed.
 - Old information is never deleted. The archives (`old_*.md`) and the HTML reports hold it.
 - Model packs live in app data, never in a Hugging Face cache.
 - Native UI track planned (`PLAN.md`, N1–N8): SwiftUI + AppKit, the Python core and its HTTP API stay,
@@ -40,7 +43,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 214 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 219 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
