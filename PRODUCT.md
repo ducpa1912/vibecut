@@ -73,8 +73,8 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 - **The leftover-text check judges only lines that have a clean layer.** A line under 5 frames long,
   or with no steady strokes, cannot be told from scenery: it is shown as "not checked", never as
   clean. Text that Check did not find is not judged.
-- **GPU fill is fast, not instant.** Cold render on the review project: 698 s (11 min 38 s) for
-  160 s of video; CPU fill is 4.6× slower or worse under load.
+- **GPU fill is fast, not instant.** Cold render on the review project: 620–847 s for 160 s of
+  video, varying with load (measured 2026-11-12); CPU fill is 4.6× slower or worse under load.
 - **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe it.
 - **Apple Intelligence must be enabled** for rewrite; without it the rewrite is a basic cleanup.
 - **macOS 26 only.**

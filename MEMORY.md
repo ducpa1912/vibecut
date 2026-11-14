@@ -79,3 +79,9 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 - REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
 - REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).
+
+### REQ-20261115-01 · 2026-11-15
+**Request:** "git pull to review the current dev of the ducksuite program, there're a lot going on. then delegate the task to sub-leader"
+**Read as:** fix the review of `eeec649..4c07225`: A check inks unstored with a Cut, B cropped-out lines still filled (loop 21); C check under grade, D fps change unstated (loop 22); E one founder test script.
+**Response:** sub-leader briefs loops 21–22 to OpenCode, writes E itself.
+**Outcome:** open.

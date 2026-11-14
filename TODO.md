@@ -18,6 +18,14 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand: fix-02 step in `docs/teams/fix-02-enhance-grade-order/review.md` (crop to
   half → Enhance offers Lanczos, output 1080 × 1920; 16:9 fit, contrast −50 → bars stay black).
 
+## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
+
+- [ ] REQ-20261115-01 · A · leftover check stores its View-keyed inks (`data_root` to `inkcheck.check`); second Cut render reads no ink frame (loop 21)
+- [ ] REQ-20261115-01 · B · a fill line the Cut leaves out of the frame is not filled nor estimated (loop 21)
+- [ ] REQ-20261115-01 · C · leftover check under grade/enhance: a leftover line is a hit or "not checked", never clean (loop 22)
+- [ ] REQ-20261115-01 · D · Render states source and output fps when they differ; no selector (loop 22)
+- [ ] REQ-20261115-01 · E · one ordered founder script, `docs/teams/founder-test-all.md`, stale steps removed
+
 ## Native UI (planned 2026-11-12)
 
 Decision open: SwiftUI + AppKit bridges (recommended) or AppKit only. Freeze the web UI, or run both.
