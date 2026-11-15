@@ -943,9 +943,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
 
+    story_jobs = {}
+
+    @app.get("/api/projects/{project_id}/edits/story/jobs/{job_id}")
+    def story_job_status(project_id: str, job_id: str, _: None = Depends(require_token)) -> dict:
+        job = story_jobs.get((project_id, job_id))
+        if job is None:
+            raise HTTPException(status_code=404, detail="Story job not found.")
+        return dict(job)
+
     @app.post("/api/projects/{project_id}/edits/story/write")
     def write_story_edit(
-        project_id: str, body: StoryWriteBody, _: None = Depends(require_token)
+        project_id: str, body: StoryWriteBody, background: bool = False, _: None = Depends(require_token)
     ) -> dict:
         from duckcore import story as story_mod
         from duckcore.engine import stt
@@ -955,12 +964,44 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except HTTPException:
             raise
         transcript = stt.load_latest_transcript(data_root / "projects" / project_id)
+        context = story_mod.scene_context(check, transcript)
+        if background or not story_mod._fits(context):
+            import threading
+            import uuid
+
+            job_id = uuid.uuid4().hex
+            job = {"id": job_id, "state": "working", "progress": 0.0}
+            story_jobs[(project_id, job_id)] = job
+            def work():
+                try:
+                    # Call the synchronous worker with a bounded context path.
+                    result = finish_story(project_id, check, transcript, body.count,
+                                          lambda value: job.update(progress=value))
+                    job.update(result, state="done", progress=1.0)
+                except Exception as exc:
+                    job.update(state="failed", reason=str(exc), progress=1.0)
+            threading.Thread(target=work, daemon=True, name="story-writer").start()
+            return dict(job)
+        return finish_story(project_id, check, transcript, body.count)
+
+    def finish_story(project_id, check, transcript, count, progress=None):
+        from duckcore import story as story_mod
         try:
-            doc = story_mod.write_story(check, transcript, count=body.count)
+            if progress:
+                progress(0.1)
+            doc = story_mod.write_story(check, transcript, count=count, progress=progress)
+            if progress:
+                progress(0.9)
+            if not doc.get("beats"):
+                raise story_mod.StoryError(doc.get("reason") or "No story fits this transcript.")
             edit = edits.create_story_from_scenes(
                 project_id, check, data_root,
                 scene_ids=doc["scene_ids"], title=doc.get("title") or "Story",
             )
+            edit["clips"] = [{"scene": beat["scene_id"], "start": beat["start"],
+                              "end": beat["end"], "dur": beat["end"]-beat["start"],
+                              "role": "body"} for beat in doc["beats"]]
+            edit["end"] = sum(clip["dur"] for clip in edit["clips"])
         except (story_mod.StoryError, edits.EditError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         edit["story_id"] = "written"

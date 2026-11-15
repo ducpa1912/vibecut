@@ -138,17 +138,18 @@ def custom_fill_path(data_root: Path | str) -> Path | None:
 def engine_choice(data_root: Path | str) -> tuple[Path | None, str]:
     """The engine both the estimate and the render will use.
 
-    A custom model is only chosen when it really loads; a file that fails is
-    the fallback reason, exactly as the render will see it. Without this, the
-    estimate could count a custom stamp for a span the render fills with LaMa.
+    Inspect only the file header here. Loading belongs to the fill path, so
+    estimating a custom model does not allocate a model session.
     """
     path, reason = custom_fill_model(data_root)
     if path is None:
         return None, reason or ""
-    try:
-        _custom_filler(path)
-    except FillError as exc:
-        return None, str(exc)
+    with path.open("rb") as stream:
+        header = stream.read(4)
+    if path.suffix == ".pt" and not header.startswith(b"PK\x03\x04"):
+        return None, "Your fill model did not load: expected a TorchScript archive."
+    if path.suffix == ".onnx" and not header.startswith(b"\x08"):
+        return None, "Your fill model did not load: expected an ONNX model header."
     return path, ""
 
 
@@ -567,7 +568,7 @@ def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVIC
     """What identifies an engine's pixels: its model file, or OpenCV's version."""
     if custom is not None:
         # The user's file decides the pixels; the chip is its own business.
-        return f"{_model_stamp(Path(custom))}:custom"
+        return f"{Path(custom).resolve()}:{_model_stamp(Path(custom))}:custom"
     if device == "gpu" and method in GPU_MODEL_FILES:
         return f"{_model_stamp(model_path(method, Path(directory), 'gpu'))}:gpu"
     if method in CLASSIC_METHODS:
@@ -1685,7 +1686,7 @@ def prepare_span(
     directory = models_dir(data_root)
     custom_path, custom_reason = engine_choice(data_root)
     if custom_reason:
-        LOGGER.warning("Your fill model is not usable: %s Using the default engine.", custom_reason)
+        raise FillError(custom_reason)
     custom_filler = None
     custom_fallback = ""
     if custom_path is not None:
@@ -1693,9 +1694,7 @@ def prepare_span(
         try:
             custom_filler = _custom_filler(custom_path)
         except FillError as exc:
-            custom_fallback = str(exc)
-            LOGGER.warning("%s Using the default engine instead.", custom_fallback)
-            custom_path = None
+            raise FillError(str(exc)) from exc
     if custom_path is not None:
         device = DEFAULT_DEVICE
         follow_motion = False

@@ -6,6 +6,9 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [x] REQ-20261115-02 · loop 24 cue-bounded story jobs, lazy custom loading, sequence timer, built ONNX import check and missing-play guards implemented
+- [ ] REQ-20261115-02 · loop 24 verify product Story UI overshoot (real-video harness passes; all Welcome/compact queue markup paths now Node-tested)
+
 - [x] REQ-20261115-02 · P5 unchecked-line reasons locked by two tests (0 checked frames); VERSION stays 17
 - [ ] REQ-20261115-02 · P5 decode, prewarm, motion and key-frame benchmarks remain open; no measured wins shipped
 

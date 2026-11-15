@@ -734,7 +734,7 @@ function queueActiveCount() {
 }
 
 function latestRender() {
-  return state.queue.find((item) => item.state === 'done' && item.output) || null;
+  return state.queue.find((item) => item.state === 'done' && item.output && !item.output_missing) || null;
 }
 
 /* ------------------------------------------------------------------ router */
@@ -912,7 +912,7 @@ function queueCard(item) {
     ${active ? `<div class="queue-row"><div class="progress"><span style="width:${pct}%"></span></div><span class="mono small">${pct}%</span></div>` : ''}
     <div class="queue-foot">
       <span class="small muted">${item.state === 'done' ? '1080p · MP4' : esc(item.message || '')}</span>
-      ${item.state === 'done' ? `<button class="btn small" type="button" data-action="play-render" data-job="${esc(item.id || '')}" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 12)} Play</button>` : ''}
+      ${item.state === 'done' && !item.output_missing ? `<button class="btn small" type="button" data-action="play-render" data-job="${esc(item.id || '')}" data-project="${esc(item.project_id)}" data-edit="${esc(item.edit_id)}">${icon('play', 12)} Play</button>` : item.output_missing ? 'File missing. Render again to play it.' : ''}
     </div>
   </div>`;
 }
@@ -1529,10 +1529,15 @@ async function writeStory() {
   state.storyWriting = true;
   render();
   try {
-    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/story/write`, {
+    let data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/story/write?background=true`, {
       method: 'POST',
       body: JSON.stringify({ count: 4 }),
     });
+    while (data.state === 'working') {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/story/jobs/${encodeURIComponent(data.id)}`);
+    }
+    if (data.state === 'failed') throw new Error(data.reason || 'The story could not be written.');
     state.edit = data.edit;
     state.edits = [{ ...data.edit }, ...(state.edits || []).filter((item) => item.id !== data.edit.id)];
     state.selectedScene = 0;
@@ -3211,6 +3216,26 @@ function setupSequencePlayer() {
   const video = document.querySelector('[data-sequence-player]');
   if (!video) return;
   const first = state.sequenceSegments[state.sequenceIndex];
+  let endTimer = null;
+  const armEnd = () => {
+    clearTimeout(endTimer);
+    if (!state.sequenceActive || video.paused || video.seeking) return;
+    const segment = state.sequenceSegments[state.sequenceIndex];
+    if (!segment) return;
+    const delay = Math.max(0, (segment.end - video.currentTime) / Math.max(.01, video.playbackRate) * 1000);
+    endTimer = setTimeout(() => { advanceSequence(video); armEnd(); }, delay);
+  };
+  const frame = () => {
+    if (!video.isConnected || !state.sequenceActive) return;
+    const segment = state.sequenceSegments[state.sequenceIndex];
+    if (!video.paused && !video.seeking && segment && video.currentTime >= segment.end - .015) {
+      advanceSequence(video);
+      armEnd();
+    }
+    video.requestVideoFrameCallback(frame);
+  };
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(frame);
+  ['play', 'pause', 'seeking', 'seeked', 'ratechange'].forEach((event) => video.addEventListener(event, armEnd));
   const start = () => {
     try { video.currentTime = first.start; } catch (_error) { /* metadata not ready */ }
     video.play().then(() => { state.sequencePlaying = true; paintSequence(video); }).catch(() => {});
@@ -4716,6 +4741,11 @@ async function revealPath(path) {
 }
 
 function playRender(projectId, editId, jobId = '') {
+  const item = state.queue.find((row) => jobId ? row.id === jobId : row.project_id === projectId && row.edit_id === editId);
+  if (!item || item.output_missing || item.state !== 'done') {
+    toast('File missing. Render again to play it.', 'bad');
+    return;
+  }
   // The job id makes a card play its own render, not the edit's latest one.
   const url = mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/edits/${encodeURIComponent(editId)}/render/file`, { job: jobId });
   openVideoModal(url, 'Rendered story');

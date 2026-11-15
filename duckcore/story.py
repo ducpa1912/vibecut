@@ -58,10 +58,20 @@ def scene_context(check: dict, transcript: dict | None) -> list[dict]:
         key=lambda scene: float(scene.get("start") or 0.0),
     )
     rows: list[dict] = []
+    next_id = max((int(scene.get("id") or 0) for scene in scenes), default=0) + 1
     for scene in scenes:
         start = float(scene.get("start") or 0.0)
         end = float(scene.get("end") or 0.0)
         if end - start < 0.4:
+            continue
+        if end - start > MAX_RUNTIME:
+            for cue in segments:
+                a, b = float(cue.get("start") or 0), float(cue.get("end") or 0)
+                if start <= a < b <= end and b - a <= MAX_RUNTIME:
+                    rows.append({"id": next_id, "scene_id": int(scene["id"]),
+                                 "start": a, "end": b, "seconds": b-a,
+                                 "text": _trim(cue["text"], 240), "cue": _trim(cue["text"], 140)})
+                    next_id += 1
             continue
         text = " ".join(
             _clean(seg.get("text"))
@@ -124,7 +134,7 @@ def _model_call(payload: dict) -> dict:
 
 def _beat(row: dict, reason: str) -> dict:
     return {
-        "scene_id": int(row["id"]),
+        "scene_id": int(row.get("scene_id", row["id"])),
         "cue": row["cue"],
         "reason": _trim(reason, 90),
         "start": round(float(row["start"]), 3),
@@ -148,8 +158,9 @@ def _runtime(rows: list[dict]) -> float:
 
 def fallback_story(context: list[dict], count: int = 4, reason: str = "No model") -> dict:
     """Deterministic story: strongest hook, spread beats, a closing line."""
-    if len(context) < 2:
-        raise StoryError("The transcript has too little speech for a story.")
+    if len(context) < MIN_BEATS:
+        return {"beats": [], "scene_ids": [], "runtime": 0,
+                "reason": "The transcript has too little speech for a story.", "model": "none"}
     ranked = sorted(context, key=lambda row: _first_sentence_score(row["cue"]), reverse=True)
     hook = ranked[0]
     closing = next(
@@ -173,7 +184,11 @@ def fallback_story(context: list[dict], count: int = 4, reason: str = "No model"
             chosen.insert(1, middle[index])
         index += 1
     if _runtime(chosen) > MAX_RUNTIME:
-        raise StoryError("The selected scenes run longer than a story.")
+        return {"beats": [], "scene_ids": [], "runtime": 0,
+                "reason": "No sentence-boundary selection fits a 15–90 second story.", "model": "none"}
+    if _runtime(chosen) < MIN_RUNTIME:
+        return {"beats": [], "scene_ids": [], "runtime": 0,
+                "reason": "The transcript has less than 15 seconds of usable speech.", "model": "none"}
     beats = [_beat(chosen[0], "Strongest opening line")]
     beats += [_beat(row, "Development beat") for row in chosen[1:-1]]
     beats += [_beat(chosen[-1], "Closing line")]
@@ -188,7 +203,7 @@ def fallback_story(context: list[dict], count: int = 4, reason: str = "No model"
     }
 
 
-def _select_with_model(context: list[dict], count: int, model: ModelCall) -> dict:
+def _select_with_model(context: list[dict], count: int, model: ModelCall, progress=None) -> dict:
     rows = context if _fits(context) else None
     if rows is not None:
         payload = {
@@ -207,6 +222,8 @@ def _select_with_model(context: list[dict], count: int, model: ModelCall) -> dic
             "batch": index,
         }
         result = model(payload)
+        if progress:
+            progress(0.1 + 0.7 * (index + 1) / len(batches))
         ids = [int(value) for value in result.get("ids") or [] if str(value).isdigit()]
         themes.append({"theme": _trim(result.get("theme") or "", 120), "ids": ids[:3]})
     by_id = {row["id"]: row for row in context}
@@ -243,8 +260,7 @@ def _validated(context: list[dict], result: dict, count: int) -> dict:
         beats.append(_beat(row, str(item.get("reason") or "Model pick")))
     if not (MIN_BEATS <= len(beats) <= MAX_BEATS):
         raise StoryError("The model did not pick 3-6 beats.")
-    chosen = [by_id[beat["scene_id"]] for beat in beats]
-    runtime = _runtime(chosen)
+    runtime = sum(beat["seconds"] for beat in beats)
     if runtime < MIN_RUNTIME or runtime > MAX_RUNTIME:
         raise StoryError(f"The model picked {runtime:.0f}s; a story is {MIN_RUNTIME:.0f}-{MAX_RUNTIME:.0f}s.")
     thesis = _trim(result.get("thesis") or beats[0]["cue"], 180)
@@ -267,6 +283,7 @@ def write_story(
     *,
     count: int = 4,
     model: ModelCall | None = None,
+    progress=None,
 ) -> dict:
     """Return a story document; never raises for a missing model."""
     context = scene_context(check, transcript)
@@ -274,7 +291,7 @@ def write_story(
         raise StoryError("No speech in this project; a story needs the transcript.")
     count = max(MIN_BEATS, min(MAX_BEATS, int(count or 4)))
     try:
-        result = _select_with_model(context, count, model or _model_call)
+        result = _select_with_model(context, count, model or _model_call, progress)
         return _validated(context, result, count)
     except Exception as exc:  # noqa: BLE001 - the fallback is the contract
         return fallback_story(context, count, reason=str(exc)[:160] or "No model")

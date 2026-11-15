@@ -90,4 +90,4 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 **Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
 **Read as:** one OpenCode prompt, five phases: review leftovers, layout odds, PLAN loop 7, PLAN loop 8, fill/check (loop 23).
 **Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`; one commit per phase, verified per phase.
-**Outcome:** loop 23 partial: bounded custom fill versions, missing-file Render cards, strict grade fixture, dead modal removal, frame-time tooltip, local provider contract/URL guard, repair copy and hand steps. Five phase reviews record failures; no layout captures, model-slot integration or fill speed/quality wins. VERSION stays 17. Remaining acceptance stays open in TODO.
+**Outcome:** loop 23 partial; loop 24 adds cue-bounded background story jobs, lazy custom loading, sequence scheduling and missing-play guards. Built sidecar imports onnxruntime. Real-video timer overshoot 207–212 ms → 0 ms in a harness; full product Story UI and every markup path remain unverified. VERSION 17; loop 24 review records incomplete acceptance. Other loop 23 work remains open.
