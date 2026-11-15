@@ -4077,7 +4077,9 @@ async function openSettings() {
           </div>
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
           <p class="small muted">DuckSuite ships no translation model and downloads none. Point it at a CTranslate2 folder you obtained yourself: it needs model.bin, config.json and sentencepiece.bpe.model. The folder is copied into DuckSuite.</p>
-          <h3 style="margin-top:10px">Models</h3>
+        </section>
+        <section class="settings-models">
+          <h3>Models</h3>
           ${[['transcription','Your transcription model'],['rewrite','Your writing model'],['voice','Your voice model']].map(([task,label]) => {
             const slot = state.settings?.model_slots?.[task] || {};
             const text = !slot.path ? 'None' : slot.checking ? 'Checking…' : slot.ready ? `In use · ${slot.file}` : `Not usable · ${slot.problem}`;

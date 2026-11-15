@@ -834,7 +834,7 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
 .model-slot-label { white-space: nowrap; }
 .model-slot-status { min-width: 0; overflow-wrap: anywhere; }
 .model-slot-actions { display: flex; flex-wrap: nowrap; gap: 4px; }
-.settings-grid:has(.model-slot-row) { grid-template-columns: 1fr; }
+.settings-grid .settings-models { grid-column: 1 / -1; order: 1; }
 
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);

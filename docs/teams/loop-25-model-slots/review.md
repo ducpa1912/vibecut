@@ -117,3 +117,35 @@ finishes; that worker can subsequently update the cached result.
 Not tested: founder's app window, native build, inference, or smaller viewport
 layout. Browser measurement used real DOM/CSS with state fixtures, not nine
 independent live API configurations. No new captures required or saved.
+
+## Revision 3 — R10
+
+R10 PASS. Starting HEAD `ab328dc`. Models is now its own section spanning both
+columns, ordered after Local engine/Translation and Storage/Rights/Downloads.
+Removed the whole-dialog single-column override. `.claude/launch.json` untouched.
+
+Measured the served app at `http://127.0.0.1:18829` on the scratch root, using
+isolated Chrome/CDP with browser cache disabled and fresh navigation before
+every measurement. `states.py` changed the real settings/files; the writing
+In use state used its real loopback stub. No DOM fixtures or row text edits.
+Script: `build/loop25-evidence/measure-r3.mjs`; raw measurements:
+`build/loop25-evidence/r3-measurements.json` (both gitignored).
+
+Both window sizes have columns 357.562 / 480.438 px, gap 18 px. All slot/fill
+row measurements below are px; T/W/V = transcription/writing/voice.
+
+| Window | State | T | W | V | Fill | Content bottom at top | Content bottom after scroll | Body bottom | Scroll/client height |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1440×900 | None | 45 | 45 | 45 | 45 | 1221.531 | 866.531 | 883 | 1160 / 805 |
+| 1440×900 | In use | 45 | 45 | 45 | 45 | 1221.531 | 866.531 | 883 | 1160 / 805 |
+| 1440×900 | Not usable | 45 | 48.594 | 45 | 45 | 1225.125 | 867.125 | 883 | 1163 / 805 |
+| 1280×800 | None | 45 | 45 | 45 | 45 | 1221.531 | 766.531 | 783 | 1160 / 705 |
+| 1280×800 | In use | 45 | 45 | 45 | 45 | 1221.531 | 766.531 | 783 | 1160 / 705 |
+| 1280×800 | Not usable | 45 | 48.594 | 45 | 45 | 1225.125 | 767.125 | 783 | 1163 / 705 |
+
+Content bottom is the grid's viewport y-coordinate. It remains scrollable into
+view, with about 16 px of bottom padding. Models alone spans 856 px.
+Validation: 286 tests pass in 35.31 s; 5 existing warnings; node syntax passes.
+What got worse: Models now follows both upper columns, so its controls require
+scrolling. No measured row-height regression. Not tested: native app build,
+smaller sizes, browser zoom, real model inference. No founder-window interaction.
