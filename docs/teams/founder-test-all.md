@@ -151,3 +151,10 @@ It changes the project you import into. **Choose Video** → a short clip → �
 - The exact words of: the estimate line, the frame-rate line, the “not checked” line, any toast.
 - Window sizes used; any page that ends early, runs past the window, or scrolls sideways.
 - Any story beat that is not in the video.
+# Loop 23 hand checks
+
+1. Open a scratch project with a transcript. Open a line's menu and choose Copy text.
+2. Paste into TextEdit. Confirm the pasted text exactly matches that line.
+3. Open the voice recording control. Grant microphone permission when macOS asks.
+4. Record five seconds of speech, stop, then play it back. Confirm sound and duration.
+5. Deny microphone permission in System Settings, retry recording, and confirm an actionable error.

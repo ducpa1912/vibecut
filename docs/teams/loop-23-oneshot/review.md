@@ -16,3 +16,14 @@ Starting HEAD: `49e4a63`. No push. Each phase records incomplete acceptance expl
 What got worse: no measured regression; missing-output checks add a filesystem stat per queue row.
 Not tested: app screen, actual custom weights, story batch latency, sequence boundary timing.
 Validation: 255 tests passed in 30.42 s; node syntax passed; 6 existing warnings.
+
+## P2 — layout odds
+
+1. FAIL: frame timecode available as player-time tooltip, not beside mm:ss; width not measured.
+2. FAIL: 0 story/render playback captures; controls not exercised.
+3. FAIL: 0 six-screen measurements at 1024×700/200% zoom; no layout claim.
+4. PARTIAL/FAIL: real-clipboard hand step added; Node clipboard call not verified.
+
+What got worse: no measured regression; tooltip adds information inaccessible on touch-only input.
+Not tested: browser layout, clipboard, playback controls. Capture paths: none.
+Validation: 255 tests pass; node syntax passes.

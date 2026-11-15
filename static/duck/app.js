@@ -5232,6 +5232,12 @@ function clockText(seconds) {
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
 }
 
+function frameTimecode(seconds, fps) {
+  const value = Math.max(0, Number(seconds) || 0);
+  const rate = Math.max(1, Number(fps) || 30);
+  return `${clockText(value)}:${String(Math.floor((value % 1) * rate)).padStart(2, '0')}`;
+}
+
 function setupPlayerBars() {
   document.querySelectorAll('[data-app-player]').forEach((video) => {
     const bar = video.parentElement?.querySelector('[data-player-bar]');
@@ -5246,7 +5252,10 @@ function setupPlayerBars() {
     const volume = bar.querySelector('.player-volume');
     const full = bar.querySelector('.player-full');
     const paint = () => {
-      if (time) time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
+      if (time) {
+        time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
+        time.title = frameTimecode(video.currentTime, Number(state.edit?.source?.fps || 30));
+      }
       if (scrub && Number.isFinite(video.duration) && video.duration > 0) {
         scrub.value = String(Math.round((video.currentTime / video.duration) * 1000));
       }

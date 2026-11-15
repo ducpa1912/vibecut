@@ -6,6 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [ ] REQ-20261115-02 · P2 layout captures/measurements and clipboard Node check remain open; frame-time tooltip and founder clipboard step added
+
 - [x] REQ-20261115-02 · P1 bounded custom-model versions, missing-output Render cards, strict grade fixtures, dead modal removal; remaining findings in loop 23 review
 
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (merges loop 10, loops 11–19,
