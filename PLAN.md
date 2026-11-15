@@ -44,7 +44,7 @@ proofs, 12 transcript, 13 timeline zoom, 14 Cut). **Build loops** are this file'
 
 Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; the
 PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Next: the founder tests by hand with
-`docs/teams/loop-10-layout-balance/founder-test.md`.
+`docs/teams/founder-test-all.md` (all waiting hand tests, one sitting).
 
 Loop 10 had been mislabelled "Loop 9" in this file and in `old_todo.md`; corrected 2026-11-12. The
 layout evidence is `docs/teams/loop-10-layout-balance/review.md` (revisions 1–3).

@@ -390,3 +390,20 @@ Entries above are kept as written; these notes correct them.
 - [x] REQ-20261115-01 · C · loop 22 matrix passes 7/7; Revision 1 tests −50/+100 contrast with in-memory numpy strokes; no founder-frame fixture in commit
 - [x] REQ-20261115-01 · D · one core fps rule; Render states repeated/dropped frames; Node fallback verified, no qualifying on-disk screen source found (loop 22)
 - [x] REQ-20261115-01 · loop 22 R2 · edit source carries output_fps; failed estimate still shows the rate (two Node cases)
+
+## Founder hand tests merged into `docs/teams/founder-test-all.md` (2026-11-15)
+
+
+- [ ] QA repair + fix-04, by hand in the app (`docs/teams/fix-04-qa-followup/review.md`): a Cut change
+  clears proofs; focus stays on the same card's button across a queue refresh; an older card's Play
+  opens its own render; the render player's timer, play/pause and scrub move; Render shows the Cut
+  size, the automatic fps, and "1 line not checked" when no frame was judged.
+- [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
+  new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
+- [ ] Founder, by hand, one script per loop: `docs/teams/loop-11-proofs/`, `loop-12-transcript/`,
+  `loop-13-timeline-zoom/`, `loop-14-cut/`, `loop-15-safe-zones/`, `loop-16-preview-sequence/`,
+  `loop-17-story/`, `loop-18-grading/`, `loop-19-enhance/` (each `founder-test.md`).
+- [ ] Founder, by hand: fix-02 step in `docs/teams/fix-02-enhance-grade-order/review.md` (crop to
+  half → Enhance offers Lanczos, output 1080 × 1920; 16:9 fit, contrast −50 → bars stay black).
+
+- [x] REQ-20261115-01 · E · one ordered founder script

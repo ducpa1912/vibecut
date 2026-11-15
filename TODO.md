@@ -6,23 +6,13 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [ ] QA repair + fix-04, by hand in the app (`docs/teams/fix-04-qa-followup/review.md`): a Cut change
-  clears proofs; focus stays on the same card's button across a queue refresh; an older card's Play
-  opens its own render; the render player's timer, play/pause and scrub move; Render shows the Cut
-  size, the automatic fps, and "1 line not checked" when no frame was judged.
-- [ ] Founder, by hand: `docs/teams/loop-10-layout-balance/founder-test.md` (the whole app in the
-  new layout, the fill model folder, "Measuring the fill…", the "not checked" count).
-- [ ] Founder, by hand, one script per loop: `docs/teams/loop-11-proofs/`, `loop-12-transcript/`,
-  `loop-13-timeline-zoom/`, `loop-14-cut/`, `loop-15-safe-zones/`, `loop-16-preview-sequence/`,
-  `loop-17-story/`, `loop-18-grading/`, `loop-19-enhance/` (each `founder-test.md`).
-- [ ] Founder, by hand: fix-02 step in `docs/teams/fix-02-enhance-grade-order/review.md` (crop to
-  half → Enhance offers Lanczos, output 1080 × 1920; 16:9 fit, contrast −50 → bars stay black).
+- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (merges loop 10, loops 11–19,
+  fix-02, fix-04 and the loop 21–22 checks; each step names its loop).
 
 ## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
 
 - [ ] REQ-20261115-01 · loop 21 R2 open limit: a short edit's estimate is not reliable on this Mac: the same 3-clip span measured 171–601 s cold. Rejected cost-sample memo removed in Revision 2; review retains measurements.
 - [ ] REQ-20261115-01 · loop 22 test `test_loop22_grade` passes vacuously when no strokes build at either grade; assert at least one grade builds
-- [ ] REQ-20261115-01 · E · one ordered founder script, `docs/teams/founder-test-all.md`, stale steps removed
 
 
 ## Native UI (planned 2026-11-12)
