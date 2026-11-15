@@ -6,6 +6,9 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [x] REQ-20261115-02 · P5 unchecked-line reasons locked by two tests (0 checked frames); VERSION stays 17
+- [ ] REQ-20261115-02 · P5 decode, prewarm, motion and key-frame benchmarks remain open; no measured wins shipped
+
 - [x] REQ-20261115-02 · P4 microphone hand steps and fill repair instruction added
 - [ ] REQ-20261115-02 · P4 hashes, source offer, speech measurements and import mapping remain open
 

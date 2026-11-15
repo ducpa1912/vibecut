@@ -90,4 +90,4 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 **Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
 **Read as:** one OpenCode prompt, five phases: review leftovers, layout odds, PLAN loop 7, PLAN loop 8, fill/check (loop 23).
 **Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`; one commit per phase, verified per phase.
-**Outcome:** open.
+**Outcome:** loop 23 partial: bounded custom fill versions, missing-file Render cards, strict grade fixture, dead modal removal, frame-time tooltip, local provider contract/URL guard, repair copy and hand steps. Five phase reviews record failures; no layout captures, model-slot integration or fill speed/quality wins. VERSION stays 17. Remaining acceptance stays open in TODO.

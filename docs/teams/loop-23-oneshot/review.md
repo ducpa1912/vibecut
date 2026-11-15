@@ -50,3 +50,24 @@ Validation: 263 tests passed in 31.12 s; node syntax passed.
 What got worse: longer fill-status text; layout not measured.
 Not tested: downloads, checksum rejection, real microphone, Settings About or public speech models.
 Validation: 263 tests pass; node syntax passes.
+
+## P5 — fill and check
+
+1. FAIL: 0 shared-decode benchmarks or equal-report proofs; no optimization shipped.
+2. FAIL: 0 cropped-decode frame comparisons; no optimization shipped.
+3. FAIL: 0 Check-time baseline/after measurements; no background prewarming shipped.
+4. PASS for stated-reason alternative: two-frame lines provide fewer than the 5
+   frames required to distinguish persistent strokes from scenery. A line with
+   no steady strokes provides no stable reference to compare. Neither can be
+   honestly called clean under the existing rule. Two tests require 0 judged
+   frames, 0 checked lines and the precise unchecked reason. Actual founder
+   lines were not re-rendered in this phase.
+5. FAIL: 0 ground-truth before/after runs for D8/D9; unchanged.
+6. FAIL: 0 three-level motion calibration samples; existing quality remains.
+7. FAIL: 0 quality/noise measurements for fewer key frames; unchanged.
+
+What got worse: no measured fill regression. No speed or quality claim made.
+Not tested: any real render, GPU benchmark, Check latency, motion or key-frame
+quality. Capture paths: none across all five phases. VERSION stays 17 because
+no fill-pixel change shipped. P1–P5 are partial, not completion of the one-shot.
+Validation: 265 tests passed in 28.99 s; node syntax passed; 6 existing warnings.
