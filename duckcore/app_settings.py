@@ -82,12 +82,14 @@ def fill_device(data_root: Path | str) -> str:
 
 
 def snapshot(data_root: Path | str) -> dict[str, Any]:
+    from duckcore import model_slots
     root = Path(data_root)
     settings = load(root)
     usage = shutil.disk_usage(root)
     return {
         "version": __version__,
         "language": "auto",
+        "model_slots": {task: model_slots.status(root, task) for task in ('transcription', 'rewrite', 'voice')},
         "translation": {
             "engine": str(settings.get("translation_engine") or "auto"),
             "custom_path": str(settings.get("translation_model_path") or ""),

@@ -26,7 +26,7 @@ struct ContentView: View {
                     },
                     onRecordStart: { try await model.startRecording() },
                     onRecordStop: { model.stopRecording() },
-                    onChooseModelFolder: { await model.chooseModelFolder() },
+                    onChooseModelFolder: { task in await model.chooseModelFolder(task) },
                     onChooseFillModelFolder: { await model.chooseFillModelFolder() }
                 )
             } else if let error = model.error {
@@ -71,7 +71,7 @@ private struct WebView: NSViewRepresentable {
     let onDropFiles: @MainActor (URL, String) async -> Bool
     let onRecordStart: @MainActor () async throws -> String
     let onRecordStop: @MainActor () -> String?
-    let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
+    let onChooseModelFolder: @MainActor (String) async -> (path: String?, error: String?)
     let onChooseFillModelFolder: @MainActor () async -> (path: String?, error: String?)
 
     func makeNSView(context: Context) -> WKWebView {
@@ -129,7 +129,7 @@ private struct WebView: NSViewRepresentable {
         private let onDropFiles: @MainActor (URL, String) async -> Bool
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
-        private let onChooseModelFolder: @MainActor () async -> (path: String?, error: String?)
+        private let onChooseModelFolder: @MainActor (String) async -> (path: String?, error: String?)
         private let onChooseFillModelFolder: @MainActor () async -> (path: String?, error: String?)
         nonisolated(unsafe) private var mouseDownEvent: NSEvent?
         nonisolated(unsafe) private var mouseMonitor: Any?
@@ -140,7 +140,7 @@ private struct WebView: NSViewRepresentable {
             onDropFiles: @escaping @MainActor (URL, String) async -> Bool,
             onRecordStart: @escaping @MainActor () async throws -> String,
             onRecordStop: @escaping @MainActor () -> String?,
-            onChooseModelFolder: @escaping @MainActor () async -> (path: String?, error: String?),
+            onChooseModelFolder: @escaping @MainActor (String) async -> (path: String?, error: String?),
             onChooseFillModelFolder: @escaping @MainActor () async -> (path: String?, error: String?)
         ) {
             self.onImport = onImport
@@ -221,7 +221,7 @@ private struct WebView: NSViewRepresentable {
                     guard let self else { return }
                     let result = target == "fill"
                         ? await self.onChooseFillModelFolder()
-                        : await self.onChooseModelFolder()
+                        : await self.onChooseModelFolder(target)
                     if let path = result.path {
                         self.callJS("window.duckModelFolder", [path, target])
                     } else if let error = result.error {

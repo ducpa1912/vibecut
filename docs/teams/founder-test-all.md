@@ -154,6 +154,13 @@ It changes the project you import into. **Choose Video** → a short clip → �
 - Any story beat that is not in the video.
 # Loop 23 hand checks
 
+## 10. Local model slots
+
+1. Open Settings → Models → Your transcription model → Choose. Select a folder with config.json and weights.npz or a safetensors file. Confirm In use, run Check, then Clear and confirm None.
+2. Choose Your writing model. Enter a loopback server URL, confirm In use, rewrite one line, stop the server and confirm a plain error names the URL. Clear and confirm None.
+3. Choose Your voice model. Select the model and voices folder, confirm In use, select a “Your voice” entry and preview it. Clear and confirm those entries disappear after refreshing voices.
+4. For each folder slot, choose a folder missing its required file. Confirm a red error and that the previous selection remains unchanged.
+
 1. Open a scratch project with a transcript. Open a line's menu and choose Copy text.
 2. Paste into TextEdit. Confirm the pasted text exactly matches that line.
 3. Open the voice recording control. Grant microphone permission when macOS asks.

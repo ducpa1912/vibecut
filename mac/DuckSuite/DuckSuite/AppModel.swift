@@ -148,10 +148,10 @@ final class AppModel: ObservableObject {
 
     /// Copy a user-chosen model folder into app data so the sandboxed core can read it.
     /// No model is named here: any CTranslate2 folder with the three files works.
-    func chooseModelFolder() async -> (path: String?, error: String?) {
+    func chooseModelFolder(_ task: String = "translation") async -> (path: String?, error: String?) {
         let panel = NSOpenPanel()
         panel.title = "Choose a model folder"
-        panel.message = "A CTranslate2 folder with model.bin, config.json and sentencepiece.bpe.model. It is copied into DuckSuite."
+        panel.message = "Choose your local model files. The folder is copied into DuckSuite."
         panel.prompt = "Use Folder"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -164,7 +164,8 @@ final class AppModel: ObservableObject {
         }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        let required = ["model.bin", "config.json", "sentencepiece.bpe.model"]
+        let required = task == "voice" ? ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+            : task == "transcription" ? ["config.json"] : ["model.bin", "config.json", "sentencepiece.bpe.model"]
         let missing = required.filter {
             !FileManager.default.fileExists(
                 atPath: source.appendingPathComponent($0).path
@@ -177,8 +178,8 @@ final class AppModel: ObservableObject {
         let folder = name.isEmpty ? "custom" : name
         let target = dataRoot
             .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent("translation", isDirectory: true)
-            .appendingPathComponent(folder, isDirectory: true)
+            .appendingPathComponent(task == "translation" ? "translation" : "slot-imports", isDirectory: true)
+            .appendingPathComponent(task == "translation" ? folder : UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(
                 at: target.deletingLastPathComponent(),

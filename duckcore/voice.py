@@ -59,7 +59,7 @@ def list_voices(data_root: Path | None = None) -> list[dict[str, str]]:
     try:
         result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
-        return []
+        result = subprocess.CompletedProcess([], 0, stdout='')
     voices = []
     for line in result.stdout.splitlines():
         match = VOICE_RE.match(line.strip())
@@ -79,6 +79,14 @@ def list_voices(data_root: Path | None = None) -> list[dict[str, str]]:
             {"name": f"kokoro:{voice_id}", "locale": locale, "sample": label, "label": label}
             for voice_id, locale, label in KOKORO_VOICES
         ] + voices
+    if data_root:
+        from duckcore import model_slots
+        folder = model_slots.selected(data_root, 'voice')
+        if folder:
+            import numpy as np
+            with np.load(Path(folder) / 'voices-v1.0.bin', allow_pickle=False) as archive:
+                voices += [{'name': 'user:' + name, 'locale': '', 'sample': 'Your voice · ' + name,
+                            'label': 'Your voice · ' + name} for name in archive.files]
     return voices
 
 
@@ -101,8 +109,18 @@ def _duration(path: Path) -> float:
         return 0.0
 
 
+from duckcore.providers import local_step
+
+
+@local_step('voice.pack', ('kokoro-v1.0.onnx', 'voices-v1.0.bin'))
 def _synthesize_kokoro(text: str, voice: str, output: Path, data_root: Path) -> None:
-    pack = _kokoro_pack(data_root)
+    from duckcore import model_slots
+    user = voice.startswith('user:')
+    pack = Path(model_slots.selected(data_root, 'voice')) if user and model_slots.selected(data_root, 'voice') else _kokoro_pack(data_root)
+    if user:
+        if not model_slots.selected(data_root, 'voice'):
+            raise RuntimeError('Choose your voice model again.')
+        voice = voice.split(':', 1)[1]
     if pack is None:
         raise RuntimeError("Kokoro voice pack is not installed.")
     try:
@@ -140,7 +158,11 @@ def _synthesize_kokoro(text: str, voice: str, output: Path, data_root: Path) -> 
     sf.write(str(output), samples, sample_rate)
 
 
+@local_step('voice')
 def _synthesize(text: str, voice: str, aiff: Path, data_root: Path | None = None) -> None:
+    if str(voice).startswith('user:'):
+        _synthesize_kokoro(text, voice, aiff, data_root)
+        return
     if str(voice).startswith("kokoro:"):
         if data_root is None:
             raise RuntimeError("Kokoro voice pack is not available.")
@@ -227,7 +249,9 @@ def build_track(
                 aiff = job_dir / f".cue_{index}.aiff"
                 wav = job_dir / f".cue_{index}.wav"
                 fitted = job_dir / f".cue_{index}.fit.wav"
-                if str(voice_name).startswith("kokoro:"):
+                if str(voice_name).startswith('user:'):
+                    _synthesize(str(cue.get('text') or ''), voice_name, aiff, data_root)
+                elif str(voice_name).startswith("kokoro:"):
                     _synthesize_kokoro(
                         str(cue.get("text") or ""), str(voice_name).split(":", 1)[1],
                         aiff, data_root,
@@ -292,11 +316,15 @@ def preview_line(text: str, voice_name: str, project_id: str, data_root: Path) -
         raise ValueError("Choose a local voice.")
     job_dir = Path(data_root) / "projects" / project_id / "voice" / "previews"
     job_dir.mkdir(parents=True, exist_ok=True)
-    token = hashlib.sha1(f"{voice_name}|{text}".encode()).hexdigest()[:16]
+    from duckcore import model_slots
+    identity = model_slots.selected(data_root, 'voice') if str(voice_name).startswith('user:') else ''
+    token = hashlib.sha1(f"{voice_name}|{identity}|{text}".encode()).hexdigest()[:16]
     output = job_dir / f"{token}.wav"
     if not output.is_file():
         aiff = job_dir / f".{token}.aiff"
-        if str(voice_name).startswith("kokoro:"):
+        if str(voice_name).startswith('user:'):
+            _synthesize(text, voice_name, aiff, data_root)
+        elif str(voice_name).startswith("kokoro:"):
             _synthesize_kokoro(
                 text, str(voice_name).split(":", 1)[1], aiff, data_root,
             )

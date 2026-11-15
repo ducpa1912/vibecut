@@ -143,6 +143,10 @@ def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -
     return edit["captions"]
 
 
+from duckcore.providers import local_step
+
+
+@local_step('rewrite')
 def rewrite(edit: dict, data_root: Path, *, mode: str = "clean") -> dict:
     mode = str(mode or "clean").strip().lower()
     if mode not in {"clean", "short", "punchy"}:
@@ -152,8 +156,15 @@ def rewrite(edit: dict, data_root: Path, *, mode: str = "clean") -> dict:
     engine = "apple-intelligence"
     fallback = False
     try:
-        values = _run("rewrite_apple", {"mode": mode, "lines": lines})
+        from duckcore import model_slots
+        if model_slots.selected(data_root, 'rewrite'):
+            values = model_slots.rewrite(data_root, lines, mode)
+            engine = 'user-local'
+        else:
+            values = _run("rewrite_apple", {"mode": mode, "lines": lines})
     except ValueError:
+        if model_slots.selected(data_root, 'rewrite'):
+            raise
         # Apple Intelligence when the Mac has it; otherwise a plain cleanup.
         # No local model endpoint is tried here; that returns as a slot later.
         values = [_basic_rewrite(line, mode) for line in lines]

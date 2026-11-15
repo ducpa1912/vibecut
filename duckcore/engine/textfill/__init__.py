@@ -135,6 +135,10 @@ def custom_fill_path(data_root: Path | str) -> Path | None:
     return custom_fill_model(data_root)[0]
 
 
+from duckcore.providers import local_step
+
+
+@local_step('fill')
 def engine_choice(data_root: Path | str) -> tuple[Path | None, str]:
     """The engine both the estimate and the render will use.
 

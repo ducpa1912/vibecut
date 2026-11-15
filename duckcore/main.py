@@ -499,6 +499,17 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     def get_settings(_: None = Depends(require_token)) -> dict:
         return app_settings.snapshot(data_root)
 
+    @app.put("/api/settings/model-slots/{task}")
+    def configure_model_slot(task: str, body: dict, _: None = Depends(require_token)) -> dict:
+        from duckcore import model_slots
+        if task not in {'transcription', 'rewrite', 'voice'}:
+            raise HTTPException(status_code=404, detail='Model slot not found.')
+        try:
+            model_slots.configure(data_root, task, str(body.get('path') or ''))
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return app_settings.snapshot(data_root)
+
     @app.patch("/api/settings")
     def patch_settings(body: SettingsPatch, _: None = Depends(require_token)) -> dict:
         try:

@@ -3985,6 +3985,10 @@ async function saveFillModel(path) {
 }
 
 window.duckModelFolder = async (path, target) => {
+  if (['transcription', 'voice'].includes(target)) {
+    await saveModelSlot(target, path || '');
+    return;
+  }
   if (target === 'fill') {
     await saveFillModel(path || '');
     return;
@@ -3998,6 +4002,26 @@ window.duckModelFolder = async (path, target) => {
 };
 
 window.duckModelFolderError = (message) => toast(String(message || 'Could not use that folder.'), 'bad');
+
+async function saveModelSlot(task, path) {
+  try {
+    state.settings = await api(`/api/settings/model-slots/${task}`, {method: 'PUT', body: JSON.stringify({path})});
+    if (task === 'voice') {
+      const voices = await api('/api/voices');
+      state.voices = voices.voices || [];
+    }
+    await openSettings();
+  } catch (error) { toast(error.message, 'bad'); }
+}
+
+function chooseModelSlot(task) {
+  if (task !== 'rewrite' && window.webkit?.messageHandlers?.duck) {
+    window.webkit.messageHandlers.duck.postMessage({type: 'chooseModelFolder', target: task});
+    return;
+  }
+  const value = window.prompt(task === 'rewrite' ? 'Local server URL' : 'Local model folder path');
+  if (value !== null) saveModelSlot(task, value);
+}
 
 function packListMarkup() {
   return (state.packs || []).map((pack) => {
@@ -4054,6 +4078,11 @@ async function openSettings() {
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
           <p class="small muted">DuckSuite ships no translation model and downloads none. Point it at a CTranslate2 folder you obtained yourself: it needs model.bin, config.json and sentencepiece.bpe.model. The folder is copied into DuckSuite.</p>
           <h3 style="margin-top:10px">Models</h3>
+          ${[['transcription','Your transcription model'],['rewrite','Your writing model'],['voice','Your voice model']].map(([task,label]) => {
+            const slot = state.settings?.model_slots?.[task] || {};
+            const text = !slot.path ? 'None' : slot.ready ? `In use · ${slot.file}` : `Not usable · ${slot.problem}`;
+            return `<div class="kv"><span>${label}</span><strong>${esc(text)} <button class="btn small" type="button" data-action="choose-model-slot" data-slot="${task}">Choose</button>${slot.path ? `<button class="btn small" type="button" data-action="clear-model-slot" data-slot="${task}">Clear</button>` : ''}</strong></div>`;
+          }).join('')}
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button>${model.file ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(model.file)}">Show</button>` : ''}</strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
           ${(() => {
             const fillModel = state.settings?.fill?.model || {};
@@ -4846,6 +4875,8 @@ document.addEventListener('click', async (event) => {
     else if (action === 'save-translation') await saveTranslationSettings();
     else if (action === 'choose-model-folder') chooseModelFolder();
     else if (action === 'choose-fill-model') chooseFillModelFolder();
+    else if (action === 'choose-model-slot') chooseModelSlot(target.dataset.slot);
+    else if (action === 'clear-model-slot') await saveModelSlot(target.dataset.slot, '');
     else if (action === 'clear-fill-model') saveFillModel('');
     else if (action === 'fill-device') await setFillDevice(target.dataset.device || 'cpu');
     else if (action === 'clean-filter') { state.cleanFilter = target.dataset.filter === 'mine' ? 'mine' : 'all'; render(); }

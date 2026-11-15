@@ -2059,6 +2059,10 @@ def no_speech_transcript(language: str = "") -> dict:
     }
 
 
+from duckcore.providers import local_step
+
+
+@local_step('transcription')
 def transcribe_source(
     wav_path: Path | None,
     job_dir: Path,
@@ -2089,6 +2093,22 @@ def transcribe_source(
     English locale and return nothing.
     """
     requested_language = str(language or "").strip().lower()
+    from duckcore import model_slots
+    root = Path(job_dir).parent.parent
+    user_path = model_slots.selected(root, 'transcription')
+    if user_path:
+        import mlx_whisper
+        model_slots.validate('transcription', user_path)
+        result = mlx_whisper.transcribe(str(wav_path), path_or_hf_repo=user_path,
+                                       language=None if requested_language in {'', 'auto'} else requested_language,
+                                       word_timestamps=True)
+        transcript = build_transcript(engine='whisper', model=user_path,
+                                      language=result.get('language') or requested_language,
+                                      segments=result.get('segments') or [],
+                                      words=[word for segment in result.get('segments') or [] for word in segment.get('words') or []],
+                                      audio_duration=float(duration), source_hash=source_hash)
+        path = save_transcript(Path(job_dir), transcript)
+        return {**transcript, 'provider': 'user-local', 'path': str(path)}
     if requested_language in {"auto", "none", "und"}:
         requested_language = ""
     if errors is None:

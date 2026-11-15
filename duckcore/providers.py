@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Callable
 from urllib.parse import urlsplit
+from functools import wraps
 
 
 @dataclass(frozen=True)
@@ -44,3 +45,19 @@ def local_base_url(value: str) -> str:
     except ValueError as exc:
         raise ValueError("The local server port is invalid.") from exc
     return value.rstrip("/")
+
+
+registry = Registry()
+
+
+def local_step(task: str, files: tuple[str, ...] = ()):
+    """Register an existing local step without changing its default policy."""
+    def decorate(function):
+        provider = Provider(task + '.local', task, files,
+                            lambda: {'ready': True}, lambda: None, function)
+        registry.register(provider)
+        @wraps(function)
+        def dispatch(*args, **kwargs):
+            return registry.get(provider.id).run(*args, **kwargs)
+        return dispatch
+    return decorate

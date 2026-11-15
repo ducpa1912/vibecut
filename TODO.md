@@ -102,9 +102,10 @@ Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most sever
 Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 
 - [ ] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
-- [ ] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy
-- [ ] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check
-- [ ] REQ-20261111-03 · voice local slot: custom ONNX voice folder
+- [x] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy (loop 25 stub-tested)
+- [x] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check (loop 25)
+- [x] REQ-20261111-03 · voice local slot: custom ONNX voice folder (loop 25 stub-tested)
+- [ ] REQ-20261111-03 · loop 25 complete provider-choice routing and nine Settings state captures at 1440×900
 
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 
