@@ -71,6 +71,34 @@ def _fill_layers(edit: dict) -> list[dict]:
     ]
 
 
+def _fill_layers_in_view(edit: dict, meta: dict) -> list[dict]:
+    """Fill layers whose line is still in the picture after the Cut.
+
+    The geometry is the check's own: ``inkcheck.search_rect`` with the render's
+    View, and the same "a big box becomes empty" test that reports "the Cut
+    leaves this line out of the frame". No second rule.
+    """
+    layers = _fill_layers(edit)
+    view = check_view(meta, edit)
+    if view is None or not layers:
+        return layers
+    from duckcore import inkcheck
+
+    width = max(2, int(meta.get("width") or 0))
+    height = max(2, int(meta.get("height") or 0))
+    kept: list[dict] = []
+    for layer in layers:
+        rect = inkcheck.search_rect(layer, width, height, view)
+        if rect[2] - rect[0] >= 4 and rect[3] - rect[1] >= 4:
+            kept.append(layer)
+            continue
+        whole = inkcheck.search_rect(layer, width, height)
+        if whole[2] - whole[0] < 4 or whole[3] - whole[1] < 4:
+            # No box to begin with: not a line this Cut removed.
+            kept.append(layer)
+    return kept
+
+
 def _blur_layers(edit: dict) -> list[dict]:
     return [
         layer for layer in edit.get("clean") or []
@@ -290,7 +318,10 @@ def _check_output(output: Path, edit: dict, meta: dict, *, source: str,
     from duckcore import inkcheck
 
     started = time.monotonic()
-    report = inkcheck.check(output, edit, meta, source=source, inks=inks, fps=fps, size=size)
+    report = inkcheck.check(
+        output, edit, meta, source=source, inks=inks, fps=fps, size=size,
+        data_root=data_root,
+    )
     report["seconds"] = round(time.monotonic() - started, 1)
     remember_check_time(data_root, int(report.get("layers") or 0), report["seconds"])
     return report
@@ -445,7 +476,7 @@ def render_frame(
     start = float(clip.get("start") or 0.0)
     duration = max(0.04, float(clip.get("end") or 0.0) - start)
     job_dir = Path(data_root) / "projects" / str(project["id"])
-    layers = _fill_layers(edit)
+    layers = _fill_layers_in_view(edit, meta)
     filled = None
     if layers:
         # A proof fills a short window around the requested frame, not the
@@ -822,7 +853,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path,
     cache = data_root / "projects" / str(edit.get("project_id") or "") / "fill"
     clean = [layer for layer in edit.get("clean") or [] if isinstance(layer, dict)]
     on = [layer for layer in clean if layer.get("enabled") is not False]
-    layers = _fill_layers(edit)
+    layers = _fill_layers_in_view(edit, meta)
     fps = float(meta.get("fps") or 0.0)
     device = _fill_device(data_root)
     source = str(meta.get("path") or "")
@@ -964,7 +995,7 @@ def render_edit(
     if not clips:
         raise RenderError("This edit has no clips.")
 
-    layers = _fill_layers(edit)
+    layers = _fill_layers_in_view(edit, meta)
     inks: dict = {}
     strokes: dict = {}
     if check:

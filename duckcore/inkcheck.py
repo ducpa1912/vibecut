@@ -460,7 +460,8 @@ def _judge(layer: dict, built: inkmod.Ink, output: str | Path, source: str | Pat
 
 def check(output: str | Path, edit: dict, meta: dict, *, source: str | Path,
           inks: dict | None = None, fps: float | None = None,
-          size: "tuple[int, int] | inkmod.View | None" = None) -> dict:
+          size: "tuple[int, int] | inkmod.View | None" = None,
+          data_root: str | Path | None = None) -> dict:
     """Judge every clean layer of ``edit`` on ``output``.
 
     ``fps`` and ``size`` are the output's frame rate and picture; the source's
@@ -478,7 +479,7 @@ def check(output: str | Path, edit: dict, meta: dict, *, source: str | Path,
     fps = float(fps or meta.get("fps") or 30.0)
     layers = _clean_layers(edit)
     if inks is None or size is not None:
-        inks = build_inks(edit, meta, source=source, size=size)
+        inks = build_inks(edit, meta, source=source, size=size, data_root=data_root)
     spans = timeline(edit, fps)
     frames = 0
     hits: list[dict] = []

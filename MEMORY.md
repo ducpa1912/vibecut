@@ -84,4 +84,4 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 **Request:** "git pull to review the current dev of the ducksuite program, there're a lot going on. then delegate the task to sub-leader"
 **Read as:** fix the review of `eeec649..4c07225`: A check inks unstored with a Cut, B cropped-out lines still filled (loop 21); C check under grade, D fps change unstated (loop 22); E one founder test script.
 **Response:** sub-leader briefs loops 21–22 to OpenCode, writes E itself.
-**Outcome:** open.
+**Outcome:** loop 21 A/B implemented, 238 tests pass; VERSION 17 retained (layer-keyed spans). Check 63.2/57.2 → 50.0/37.1 s; repeat reports equal. Acceptance 5 FAIL: estimate 109.5–140.8 s versus 349.232 s real; fill 280.386 → 285.663 s, 11 → 10 layers. Loop not signed off; evidence in `docs/teams/loop-21-cut-render-cost/review.md`. C/D/E remain open.
