@@ -27,6 +27,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] REQ-20261115-01 · D · Render states source and output fps when they differ; no selector (loop 22)
 - [ ] REQ-20261115-01 · E · one ordered founder script, `docs/teams/founder-test-all.md`, stale steps removed
 
+- [ ] REQ-20261115-01 · loop 21 Revision 1: key a fill span only by the layers it fills; short-span estimate in range
+
 ## Native UI (planned 2026-11-12)
 
 Decision open: SwiftUI + AppKit bridges (recommended) or AppKit only. Freeze the web UI, or run both.

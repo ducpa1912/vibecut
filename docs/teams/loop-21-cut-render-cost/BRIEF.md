@@ -75,3 +75,37 @@ Behaviour + tests + `MEMORY.md` (Outcome line on REQ-20261115-01 for A/B) + `TOD
 `docs/teams/loop-21-cut-render-cost/review.md` (verdict, pass/fail per item with numbers, what got
 worse, what was not tested, commits) in one commit on `ducksuite`. Do not push; the sub-leader
 verifies and pushes. Do not touch `old_*.md` or the HTML reports.
+
+## Revision 1 — 2026-11-15 (sub-leader review of `1b039c9`)
+
+Verified by the sub-leader: 238 tests pass, `node --check` clean; diff of `render.py` and
+`inkcheck.py` read. **A is accepted** (data_root reaches `build_inks`; second check builds 0 View
+inks; 57.2 → 37.1 s; equal reports). **B's selection is correct** (one rule, `search_rect` with the
+View) but item 5 failed: 11 → 10 layers saved nothing (+5.3 s, noise), all three spans went cold, and
+the estimate is 148 % under the real short render — already 148 %-class on the baseline.
+
+Root cause found in review: `textfill.prepare_span` passes the **whole** `layers` list to
+`span_key` (`textfill/__init__.py` ≈ line 1704), while the mask comes only from layers with a rect in
+the span (`masks.frame_rects`). So editing, toggling or dropping any one line changes the key of
+every span and makes the whole render cold. Dropping a cropped-out line can only save LaMa time on
+frames where no kept line is on screen.
+
+### Revision acceptance
+
+R1. **Key only what fills the span.** `span_key` receives only the layers that have at least one
+    rect in the span's frames (the same `rect_table` the mask uses). Pixels do not change (the mask
+    is the same), so `textfill.VERSION` stays 17; existing fill clips go cold once because every key
+    changes — say so in the review. Test: two lines in two different spans; toggling line 1 leaves
+    span 2's key unchanged and span 1's key changed. Measured on the scratch span: after toggling
+    one line, the number of spans re-filled (must equal the spans that line is in).
+R2. **Short-span estimate.** Find which fixed costs the estimate leaves out on a short render
+    (model load, decode start, check, per-span overhead) and add them, so the scratch short render's
+    real time is inside the stated range, before and after a cold cache. Report the range and the
+    real time for a cold and a warm run. Do not change the full-render figure claimed in
+    `MEMORY.md` (790.4 s against 847.2 s) without measuring it; a full render is not required.
+R3. **Say what B buys.** In the review, state the rule: a dropped line saves fill only on frames
+    where no kept line is on screen. Measure it with a crop that leaves a span with no kept line
+    (fill seconds before/after for that span), or say plainly that the review project has no such
+    span.
+R4. No regression: pytest (238 today) and `node --check` pass. Update `review.md` (Revision 1
+    section, pass/fail with numbers), `MEMORY.md` Outcome, `TODO.md`. One commit; do not push.
