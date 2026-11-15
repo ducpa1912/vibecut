@@ -4590,7 +4590,7 @@ async function translateScript() {
   if (!state.project || !state.edit) return;
   state.scriptBusy = true;
   state.scriptStatusKind = 'working';
-  state.scriptStatus = 'Working on the script';
+  state.scriptStatus = 'Working on the script. Your local server may take several minutes.';
   render();
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/translate`, {
@@ -4626,7 +4626,7 @@ async function rewriteScript() {
     state.edit.captions = data.captions;
     if (data.script) state.edit.script = data.script;
     const engine = data.script?.engine || 'apple-intelligence';
-    const engineLabel = engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup';
+    const engineLabel = engine === 'user-local' ? 'your writing model' : engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup';
     state.scriptStatusKind = engine === 'basic-cleanup' ? 'warn' : 'ready';
     state.scriptStatus = `Rewritten · ${data.script?.rewrite || state.scriptMode} · ${engineLabel}`;
     toast(state.scriptStatus);

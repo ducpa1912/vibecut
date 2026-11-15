@@ -38,3 +38,45 @@ rather than fully separating each engine into a provider.
 Not tested: real MLX/Kokoro weights, native picker in the app, nine visual states,
 full build, public network (forbidden), any render. No founder media committed.
 This loop is not ready for acceptance: items 1 and 5 remain incomplete.
+
+## Revision 1
+
+Starting HEAD `1ab3a07`. The sub-leader accepts original items 1–4; the preceding
+verdict is historical. No changes to fill output or VERSION 17.
+
+- R1 PASS: `/v1/models` keeps its 2-second timeout; completions use 300 seconds.
+  The real loopback stub delays completions 3 seconds and succeeds. Rewrite
+  displays a working line explaining that the local server may take minutes.
+  Completed user rewrites are labelled “your writing model”, not basic cleanup.
+- R2 PASS: Settings starts a daemon reachability check, returns immediately,
+  and caches its result for less than 30 seconds. A server that never answers
+  produced snapshot latencies 0.031267 / 0.000298 / 0.000240 seconds, all below
+  0.3 seconds. Expired results are not served as current; the UI says checking.
+- R3 PASS: choose-choose-clear leaves 0 folders in each managed slot directory
+  and 0 picker import folders, tested for transcription and voice. Replacement
+  retains one current folder. An external source directory survives Clear.
+  Only direct children of the two managed slot directories are deleted; picker
+  imports are removed only after successful copying and settings persistence.
+- R4 PASS: `build/loop25-evidence/states.py` provides all 3 tasks × 3 states.
+  `git check-ignore` confirms the script is ignored. In-use folder fixtures are
+  status-only, not usable inference weights; the writing in-use option runs a
+  local stub server until interrupted. Reopen Settings after selecting a state;
+  allow a background check and reopen for the writing state.
+- R5 PASS: 283 tests passed in 32.74 s, 5 existing TorchScript warnings;
+  `node --check static/duck/app.js` passed.
+
+Core command (launch token is provided on stdin):
+
+```bash
+python3 duck_app.py --data-root build/loop25-evidence/root --port 8799
+```
+
+State command: `python3 build/loop25-evidence/states.py TASK STATE`, where TASK is
+transcription/rewrite/voice and STATE is none/in-use/not-usable. Keep the writing
+in-use process running for its capture. The sub-leader owns the nine captures.
+
+What got worse: failed writing-server state may take up to 30 seconds to refresh;
+first Settings load can say checking until reopened. A rewrite may occupy its
+request worker for up to 300 seconds. No cancellation support added.
+Not tested: real weights, native folder-picker execution, new screen captures,
+or a full native build. No new footage, renders, model downloads, or keys.

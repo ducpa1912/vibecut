@@ -37,6 +37,7 @@ def test_writing_endpoint_and_unreachable(tmp_path,monkeypatch):
     assert '/v1/chat/completions' in calls
     assert 'private-id' not in json.dumps(model_slots.status(tmp_path,'rewrite'))
     monkeypatch.setattr(model_slots,'request',lambda *a: (_ for _ in ()).throw(ValueError('Not reachable')))
+    model_slots._status_cache.clear()
     assert not model_slots.status(tmp_path,'rewrite')['ready']
 
 
@@ -94,6 +95,8 @@ def test_rewrite_with_loopback_server(tmp_path):
         def do_GET(self):
             self.send_response(200);self.end_headers();self.wfile.write(b'{"data":[{"id":"test-private"}]}')
         def do_POST(self):
+            import time
+            time.sleep(3)
             body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             assert body['model']=='test-private'
             self.send_response(200);self.end_headers()

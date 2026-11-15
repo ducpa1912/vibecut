@@ -75,7 +75,7 @@ revision attaches to the request that created the thing. Closed entries move to 
 the loop's commit. Open requests, one line each (open work in `TODO.md`):
 
 - REQ-20261111-02 · $29 build readiness · PLAN loop 8.
-- REQ-20261111-03 · local slots implemented with stub coverage in loop 25; complete provider-choice routing and nine Settings captures remain open. 279 tests pass; VERSION 17.
+- REQ-20261111-03 · loop 25 items 1–4 accepted; Revision 1 fixes timeout, Settings latency and copied-folder cleanup. 283 tests pass; nine-state capture script ready for sub-leader; VERSION 17.
 - REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
 - REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).
@@ -90,4 +90,4 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 **Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
 **Read as:** one OpenCode prompt, five phases: review leftovers, layout odds, PLAN loop 7, PLAN loop 8, fill/check (loop 23).
 **Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`; one commit per phase, verified per phase.
-**Outcome:** loops 23–24 partial; loop 25 adds local transcription/writing/voice slots, copied files, loopback HTTP and Settings rows. 272 tests after registry wiring; 279 after slots. Provider-choice routing and nine 1440×900 state captures remain incomplete; no real weights/native-picker run. VERSION 17. Reviews retain measured limits; other loop 23 work remains open.
+**Outcome:** loops 23–24 partial; loop 25 items 1–4 accepted. Revision 1: 3-second rewrite stub succeeds under 300-second timeout; Settings down-server latency ≤0.032 s; choose-choose-clear leaves 0 managed/import folders. 283 tests pass; ignored nine-state script ready for sub-leader captures. No real weights/native-picker run. VERSION 17; other loop 23 work remains open.

@@ -6,6 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [x] REQ-20261115-02 · loop 25 Revision 1: 300 s rewrite timeout, async Settings reachability, managed-copy cleanup (0 folders after clear), nine-state capture script
+
 - [x] REQ-20261115-02 · loop 24 cue-bounded story jobs, lazy custom loading, sequence timer, built ONNX import check and missing-play guards implemented
 - [ ] REQ-20261115-02 · loop 24 verify product Story UI overshoot (real-video harness passes; all Welcome/compact queue markup paths now Node-tested)
 
