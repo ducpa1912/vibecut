@@ -88,3 +88,33 @@ R4. **No captures.** Leave a script `build/loop25-evidence/states.py` (gitignore
     Say which command serves the core on that root.
 R5. pytest and `node --check` pass (state the count); `review.md` Revision 1 section; one commit;
     do not push.
+
+## Revision 2 — 2026-11-15 (sub-leader review of `862390e`, with captures)
+
+Verified by the sub-leader: 283 tests pass, `node --check` clean; R1 (300 s completions), R3 (deletes
+only inside `models/stt-user`, `models/voice-user`, `models/slot-imports`, symlinks refused) read in
+the diff. The sub-leader served the scratch root (`.claude/launch.json` → `duck-scratch-loop25`,
+port 8811) and looked at all nine states at 1440×900 with `states.py`:
+
+- None × 3: correct, one line each.
+- In use: transcription "In use · Local files", voice "In use · Local files", writing
+  "In use · http://127.0.0.1:18826" — correct text.
+- Not usable: transcription "That folder needs weights.npz or *.safetensors.", voice "That folder
+  needs voices-v1.0.bin." — correct.
+
+Three defects:
+
+R6. **A down writing server never resolves.** With `states.py rewrite not-usable`, the row read
+    "Not usable · Checking the local server…" on the first open and still after 36 s and three
+    reopens. And while a check is running the row says "Not usable", which is false. While checking:
+    "Checking…" (neutral, no "Not usable"); once the check fails: "Not usable · <the reason naming
+    the URL>", shown on the next open ≥ 3 s later. Test with a server that refuses and one that
+    never answers.
+R7. **Rows are not the fill row's height.** Measured: transcription 65 px, writing 62, voice 62,
+    fill 45; the label wraps to two or three lines and Clear drops under Choose. At 1440×900 a None
+    or In use row is one line (≤ 45 px) with Choose and Clear side by side; a long Not usable reason
+    may wrap under the label, the buttons stay on one line. Measure all nine states in a browser
+    test or by `getBoundingClientRect` in node+jsdom, and list the numbers.
+R8. **"Rewrite · Off"** in the Local engine block stays "Off" while "Your writing model" is in use.
+    Show "Your writing model" there when the slot is in use and ready.
+R9. pytest and `node --check` pass (state the count); `review.md` Revision 2; one commit; do not push.
