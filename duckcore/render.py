@@ -1517,6 +1517,7 @@ class RenderQueue:
 
     def _row(self, row: sqlite3.Row) -> dict:
         data = dict(row)
+        data["output_missing"] = data.get("state") == "done" and not Path(data.get("output") or "").is_file()
         data["estimate_seconds"] = float(data.get("estimate_seconds") or 0.0)
         data["elapsed_seconds"] = float(data.get("elapsed_seconds") or 0.0)
         return data

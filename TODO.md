@@ -6,6 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [x] REQ-20261115-02 · P1 bounded custom-model versions, missing-output Render cards, strict grade fixtures, dead modal removal; remaining findings in loop 23 review
+
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (merges loop 10, loops 11–19,
   fix-02, fix-04 and the loop 21–22 checks; each step names its loop).
 
@@ -113,7 +115,7 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [ ] Short flashes after the first frame: a title under 250 ms at a later cut can fall between
   4 fps samples. Measure before fixing.
 - [ ] Timeline split and reorder; remove-silence. Trim works, the rest does not.
-- [ ] Aspect switching / auto-frame: source aspect only, deliberate v1 cut.
+- [ ] Auto-frame remains a deliberate v1 cut; Cut aspect switching shipped in loop 14.
 
 ## Paused by decision
 

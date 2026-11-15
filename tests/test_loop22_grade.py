@@ -19,8 +19,7 @@ def test_leftover_under_contrast_is_hit_or_unchecked(monkeypatch, contrast):
         return graded[max(0, first):max(0, first) + count]
     monkeypatch.setattr(ink, 'read_box', read)
     built = ink.build('memory-source', (0, 0, width, height), start=1, end=2, fps=30)
-    if built is None:
-        return  # Explicitly not checked: no stable strokes at this grade.
+    assert built is not None, "The contrast fixture must build strokes at both grades."
     report = inkcheck._judge({'id':'leftover'}, built, 'memory-output', 'memory-source',
                             [(0, 3, 0)], fps=30, size=None)
     assert report['hits'] or report['frames'] == 0

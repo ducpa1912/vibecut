@@ -699,6 +699,9 @@ def _custom_filler(path: Path):
                 filler = custom.open_filler(Path(path).parent)
             except Exception as exc:  # noqa: BLE001 - any bad file is one plain message
                 raise FillError(f"Your fill model did not load: {exc}.") from exc
+            for old in list(_FILLERS):
+                if old[0] == "custom":
+                    del _FILLERS[old]
             _FILLERS[key] = filler
         return filler
 

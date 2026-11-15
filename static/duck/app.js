@@ -1988,18 +1988,6 @@ function openSfxTextModal() {
   </dialog>`);
 }
 
-function openSfxFilterModal() {
-  const range = sfxRange();
-  openModal(`<dialog class="modal sfx-modal" aria-label="Add colour filter">
-    <div class="modal-head"><h2>Add colour filter</h2><button class="icon-btn" type="button" data-action="close-modal">${icon('close', 16)}</button></div>
-    <div class="modal-body">
-      <div class="filter-presets">
-        ${[['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'Black & white'], ['vivid', 'Vivid']].map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}" data-start="${range.start.toFixed(2)}" data-end="${range.end.toFixed(2)}">${label}</button>`).join('')}
-      </div>
-    </div>
-  </dialog>`);
-}
-
 async function addSfxText() {
   if (!state.project || !state.edit) return;
   const value = document.getElementById('sfx-text-value')?.value || '';
@@ -3772,6 +3760,7 @@ function screenRender() {
 }
 
 function doneCard(item) {
+  if (item.output_missing) return `<article class="done-card"><strong>${esc(item.title || 'Render')}</strong><span>File missing. Render again to play it.</span></article>`;
   const real = item.elapsed_seconds ? `real ${fmtDuration(item.elapsed_seconds)}` : '';
   const estimate = item.estimate_seconds ? `est ${fmtDuration(item.estimate_seconds)}` : '';
   return `<article class="done-card">
@@ -3786,6 +3775,7 @@ function doneCard(item) {
 }
 
 function renderQueueRow(item) {
+  if (item.output_missing) return `<div class="queue-item"><strong>${esc(item.title || 'Render')}</strong><span>File missing. Render again to play it.</span></div>`;
   const pct = Math.round((Number(item.progress) || 0) * 100);
   const active = item.state === 'running' || item.state === 'rendering' || item.state === 'queued' || item.state === 'paused';
   const duration = item.duration ? fmtDuration(item.duration) : (item.edit_id === state.edit?.id ? fmtDuration(state.edit?.end || 0) : '—');
