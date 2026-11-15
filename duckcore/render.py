@@ -268,6 +268,11 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
     }
 
 
+def output_fps(meta: dict) -> int:
+    """The single output-rate rule shared by render, proof and estimate."""
+    return 24 if abs(float(meta.get("fps") or 0.0) - 24.0) < 0.6 else 30
+
+
 def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tuple[int, int, str]:
     plan = _picture_plan(meta, edit)
     parts = [*plan["parts"], "setsar=1", f"fps={target_fps}"]
@@ -457,8 +462,7 @@ def render_frame(
     device = _fill_device(Path(data_root))
     source = str(project["source_path"])
     meta = pipeline.probe(source)
-    fps = float(meta.get("fps") or 30.0)
-    target_fps = 24 if abs(fps - 24.0) < 0.6 else 30
+    target_fps = output_fps(meta)
     clips = [
         clip for clip in edit.get("clips") or []
         if float(clip.get("end") or 0) > float(clip.get("start") or 0)
@@ -763,6 +767,7 @@ def estimate_status(edit: dict, meta: dict, data_root: Path, *, wait: float = 0.
         job = dict(job)
     return {
         "state": job["state"],
+        "output_fps": output_fps(meta),
         "progress": round(float(job.get("progress") or 0.0), 3),
         "message": job.get("message") or "",
         "estimate": job.get("estimate") or None,
@@ -940,6 +945,7 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path,
     return {
         **summary,
         "spans": rows,
+        "output_fps": output_fps(meta),
         "total_range": total_range,
         "total_seconds": total,
         "total_measured": bool(total),
@@ -985,7 +991,7 @@ def render_edit(
     device = _fill_device(Path(data_root))
     source = str(project["source_path"])
     meta = pipeline.probe(source)
-    target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
+    target_fps = output_fps(meta)
     out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
     # A refill pass counts from the first pass: the rate learns what the user waited.
     started = _started if _started is not None else time.monotonic()

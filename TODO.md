@@ -21,8 +21,9 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 ## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
 
 - [ ] REQ-20261115-01 · loop 21 R2 open limit: a short edit's estimate is not reliable on this Mac: the same 3-clip span measured 171–601 s cold. Rejected cost-sample memo removed in Revision 2; review retains measurements.
-- [ ] REQ-20261115-01 · C · leftover check under grade/enhance: a leftover line is a hit or "not checked", never clean (loop 22)
-- [ ] REQ-20261115-01 · D · Render states source and output fps when they differ; no selector (loop 22)
+- [x] REQ-20261115-01 · C · loop 22 matrix passes 7/7; Revision 1 tests −50/+100 contrast with in-memory numpy strokes; no founder-frame fixture in commit
+- [x] REQ-20261115-01 · D · one core fps rule; Render states repeated/dropped frames; Node fallback verified, no qualifying on-disk screen source found (loop 22)
+- [x] REQ-20261115-01 · loop 22 R2 · edit source carries output_fps; failed estimate still shows the rate (two Node cases)
 - [ ] REQ-20261115-01 · E · one ordered founder script, `docs/teams/founder-test-all.md`, stale steps removed
 
 

@@ -3602,6 +3602,26 @@ function renderEstimateHtml() {
 
 function paintRenderEstimate() {
   document.querySelectorAll('[data-render-estimate]').forEach((node) => { node.innerHTML = renderEstimateHtml(); });
+  document.querySelectorAll('[data-render-fps]').forEach((node) => { node.textContent = renderFpsText(); });
+}
+
+function frameRateText(source, output) {
+  if (!output) return 'Reading the output frame rate…';
+  const shown = (value) => Math.round(value * 100) / 100;
+  if (!source || Math.abs(source - output) <= 0.6) {
+    return `${output} fps · set from the source${source ? ` (${shown(source)} fps)` : ''}`;
+  }
+  const change = source > output
+    ? `about ${shown(source - output)} frames per second are dropped`
+    : `about ${shown(output - source)} frames per second are shown twice`;
+  return `Source ${shown(source)} fps → ${output} fps: ${change}`;
+}
+
+function renderFpsText() {
+  return frameRateText(
+    Number(state.edit?.source?.fps || state.check?.result?.meta?.fps || 0),
+    Number(state.edit?.source?.output_fps || state.renderEstimate?.output_fps || 0),
+  );
 }
 
 // Asks once per edit state. The screen is patched in place, never re-rendered.
@@ -3670,9 +3690,6 @@ function screenRender() {
   const outputLabel = outputPath
     ? outputPath.replace(state.settings?.storage?.data_root || '', '').replace(/^\//, '')
     : 'Project render folder';
-  // render.render_edit: 24 fps when the source is within 0.6 of 24, else 30.
-  const sourceFps = Number(state.edit?.source?.fps || state.check?.result?.meta?.fps || 0);
-  const fps = sourceFps && Math.abs(sourceFps - 24) < 0.6 ? 24 : 30;
   const sourceMeta = state.edit?.source || state.sourceMeta || {};
   const sourceW = Number(sourceMeta.width || 0);
   const sourceH = Number(sourceMeta.height || 0);
@@ -3713,7 +3730,7 @@ function screenRender() {
           <div class="panel-head"><h2>Render settings</h2><span class="meta">${resolutionLabel}</span></div>
           <div class="render-settings">
             <div class="render-setting"><div class="setting-head">${icon('sparkle', 14)} AI fill engine</div>${fillEngineControl()}</div>
-            <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><div class="readonly">${fps} fps · set from the source${sourceFps ? ` (${Math.round(sourceFps * 100) / 100} fps)` : ''}</div></div>
+            <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><div class="readonly" data-render-fps>${esc(renderFpsText())}</div></div>
             <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
             <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div>
                 <div class="toggle-row"><span>Burn into video</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div>

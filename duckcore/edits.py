@@ -581,6 +581,10 @@ def set_cut(
 
 
 def save_edit(edit: dict, data_root: Path) -> dict:
+    from duckcore.render import output_fps
+
+    source = edit.setdefault("source", {})
+    source["output_fps"] = output_fps(source)
     edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))
     temporary = path.with_suffix(".tmp")
@@ -599,6 +603,10 @@ def get_edit(data_root: Path, project_id: str, edit_id: str) -> dict:
         raise EditError("Edit file is unreadable.") from exc
     if not isinstance(value, dict):
         raise EditError("Edit file is not an object.")
+    from duckcore.render import output_fps
+
+    source = value.setdefault("source", {})
+    source["output_fps"] = output_fps(source)
     return value
 
 
