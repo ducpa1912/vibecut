@@ -69,3 +69,28 @@ Behaviour + tests + `MEMORY.md` Outcome line for C/D + `TODO.md` ticks +
 table, what got worse, what was not tested, commits) in one commit. pytest (241 today) and
 `node --check static/duck/app.js` pass. Do not push. Never read `old_*.md` or
 `docs/reports/*.html`.
+
+## Revision 1 — 2026-11-15 (sub-leader review of `2e87acd`)
+
+Verified by the sub-leader: 252 tests pass, `node --check` clean; diff of `render.py` and `app.js`
+read. **C1–C3 accepted** as OpenCode's measured claim (7/7 leftover hits, 0/7 filled false hits,
+thresholds unchanged). **D1 accepted** (`render.output_fps`, JS copy removed). D2's wording is
+accepted.
+
+Two things block the push:
+
+R1. **No founder footage in git.** `tests/fixtures/loop22_real_line.npz` is 3.3 MB of frames from
+    the founder's video; footage may belong to a client and this repo is pushed to GitHub. The
+    commit is not pushed: replace it (`git reset --soft HEAD~1`, recommit) so the file is in no
+    commit. C4's test must use strokes drawn in memory with numpy (text-like shapes on a
+    textured background, no file), the same contrast −50/+100 grades, the real `ink.build` and
+    `inkcheck._judge`, and assert hit-or-unchecked. Keep the real-frame matrix as the measured
+    evidence in `review.md` (numbers only, no frames). `build/loop22-evidence` stays gitignored;
+    confirm with `git check-ignore`.
+R2. **The fps line can stick on "Reading the output frame rate…".** It reads only
+    `state.renderEstimate.output_fps`; when the estimate fails (`{failed: true}`) the text never
+    resolves. The core must also put `output_fps` where the Render screen always has it (the
+    edit's `source` meta the UI already loads, or the failed-estimate payload), and the JS reads
+    that first. Node test: failed estimate still shows the rate.
+R3. pytest and `node --check` pass (state the count). Update `review.md`, `MEMORY.md` Outcome and
+    `TODO.md`. One commit replacing `2e87acd`; do not push.
