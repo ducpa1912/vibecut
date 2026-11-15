@@ -384,3 +384,9 @@ Entries above are kept as written; these notes correct them.
 - [x] REQ-20261115-01 · B · a fill line the Cut leaves out of the frame is not filled nor estimated (loop 21)
 - [x] REQ-20261115-01 · loop 21 R1/R3: span-local fill keys; toggling one line re-fills 1/3 spans; empty crop fills 0 frames
 - [x] REQ-20261115-01 · loop 21 Revision 2: remove the repeat-edit cost memo; retain accepted span keys, GPU cache detection and rates-file fix; document R2 as an open limit
+
+## Loop 22 — check under grade, fps stated (closed 2026-11-15)
+
+- [x] REQ-20261115-01 · C · loop 22 matrix passes 7/7; Revision 1 tests −50/+100 contrast with in-memory numpy strokes; no founder-frame fixture in commit
+- [x] REQ-20261115-01 · D · one core fps rule; Render states repeated/dropped frames; Node fallback verified, no qualifying on-disk screen source found (loop 22)
+- [x] REQ-20261115-01 · loop 22 R2 · edit source carries output_fps; failed estimate still shows the rate (two Node cases)
