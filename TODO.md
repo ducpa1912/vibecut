@@ -22,7 +22,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [x] REQ-20261115-01 · A · leftover check stores its View-keyed inks (`data_root` to `inkcheck.check`); second Cut render reads no ink frame (loop 21)
 - [x] REQ-20261115-01 · B · a fill line the Cut leaves out of the frame is not filled nor estimated (loop 21)
-- [ ] REQ-20261115-01 · loop 21 acceptance 5 / verifier sign-off: estimate 109.5–140.8 s misses 349.232 s real; cold fill rose 1.88% despite 11 → 10 layers (review has evidence)
+- [x] REQ-20261115-01 · loop 21 R1/R3: span-local fill keys; toggling one line re-fills 1/3 spans; empty crop fills 0 frames
+- [ ] REQ-20261115-01 · loop 21 R2 / verifier sign-off: learned warm range 27.5–54.9 s misses 20.048 s; cold range 400.8–801.6 s misses 171.251 s (review has evidence)
 - [ ] REQ-20261115-01 · C · leftover check under grade/enhance: a leftover line is a hit or "not checked", never clean (loop 22)
 - [ ] REQ-20261115-01 · D · Render states source and output fps when they differ; no selector (loop 22)
 - [ ] REQ-20261115-01 · E · one ordered founder script, `docs/teams/founder-test-all.md`, stale steps removed

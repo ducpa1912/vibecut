@@ -110,3 +110,85 @@ the three `loop21_*.py` measurement scripts. Timing wraps real `prepare_span`
 calls, including planning, model work, and saved-clip lookup; it is not GPU-kernel
 time. Check timing is the renderer's own sidecar measurement. No timing threshold
 or calibration was changed to make these runs pass.
+
+## Revision 1 — span-local keys and short-render costs
+
+Starting HEAD: `83fde5b`; prior implementation: `1b039c9`.
+
+R1 uses the actual `frame_rects` walk to collect layers contributing rectangles,
+including the existing one-extra-frame allowance. Estimate and prepare use the
+same selection. The mask table and fill inputs remain unchanged. A key schema
+marker (`layer_scope: span-rects-v1`) invalidates old clips once; VERSION stays
+17 because the pixels do not change. Subsequent line changes invalidate only
+spans where that line contributes rectangles.
+
+R2 diagnosis: `remember_render_time` overwrote the entire rate file, deleting
+the check samples just recorded. The estimate therefore repeatedly fell back
+to 2.2 seconds per line. Whole-video ratios also mixed cold and warm runs and
+scaled fixed initialization/encoding costs by video duration. Historical fill
+rates in the original benchmark were 0.5428–0.7575 s/unit; the actual after-run
+rates were 1.5006–2.3199 s/unit. The 148% miss cannot honestly be attributed
+solely to fixed overhead or model loading.
+
+The fix preserves check samples and records measured fill, check and residual
+overhead separately, with cold-span count. Short estimates reuse measurements
+only for the same source, selected layers, clips, Cut and device, and the same
+cold/warm state. The range retains the documented one-third machine variation.
+Unknown edits retain the existing fallback; no universal first-run accuracy is
+claimed. Historical full-render evidence (790.4 s against 847.2 s) is unchanged.
+
+Another concrete R2 defect: `estimate_span` tested CPU-model availability before
+looking for a GPU cached clip. On this GPU-only installation it reported 0/3
+cached spans while `prepare_span` reused 3/3. It now checks the selected device.
+
+Initial revision measurement (retained, not discarded): cold range 232.8–465.6 s,
+actual 601.171 s; warm incorrectly reported range 232.8–801.5 s, actual 41.176 s.
+The first run exposed the GPU cache-detection defect above. Its second span
+took 364.631 s, versus 75.206 and 100.082 s for the other two. These results
+remain evidence of load sensitivity, not a basis for claiming constant overhead.
+
+R1 **PASS**: toggling `cl_6a7de36175`, present only in clip 1, re-filled exactly
+1/3 spans; clips 2 and 3 reused their keys. Calls: 69.895 s, 0.008 s, 0.005 s.
+Unit tests cover separated spans, changed geometry, an empty span, extra-frame
+selection, identical rectangle tables, and estimate/render key agreement.
+
+R3 **PASS**: a dropped line saves fill only on frames where no kept line is on
+screen. A top crop (x=0, y=0, w=1, h=0.42; Fill) leaves all three scratch spans
+without a kept fill line. Clip 1 fill cost falls from 75.206 s to 0 s; all three
+fall from 539.919 s to 0 s. The empty-fill render finishes in 4.129 s. This is a
+deliberate diagnostic crop, not a recommended composition.
+
+R2 **FAIL**: pre-run warm range 27.5–54.9 s, real 20.048 s (7.452 s below
+the lower bound). Pre-run cold range 400.8–801.6 s, real 171.251 s (229.549 s
+below the lower bound). GPU cache detection is now correct: warm 3/3 cached,
+cold 0/3. Cold fill calls: 45.156, 38.622, 43.847 s. The learned component
+estimate overshoots after load subsides. No bounds were widened to pass.
+Separating cold/warm and preserving overhead measurements fixes concrete
+defects but does not meet the requested range accuracy on this Mac.
+
+R4 **PASS**: 242 pytest tests pass, 6 existing TorchScript deprecation warnings;
+`node --check static/duck/app.js` passes. Four new tests cover the revision.
+
+**Verdict: NOT GOOD TO GO.** R1/R3/R4 pass; R2 remains open. This commit records
+the implementation and failed independent validation, not loop closure.
+What got worse: every old fill clip becomes cold once; the learned estimate
+now overstates these validation runs rather than understating them. Cost
+samples add one small local JSON file (at most 12 records). The initial cold
+run rose to 601.171 s under load, then fell to 171.251 s; no stable speedup
+claim can be made from those timings.
+
+Commit references: starting brief `83fde5b`, previous implementation `1b039c9`;
+revision is the commit containing this section, with its hash in the handoff.
+
+Validation protocol: preserve the initial revision run and import its actual
+component timings into the scratch cost store before the next validation.
+Record each estimate before rendering. Validate warm first, then rename the
+scratch fill directory (including saved fills) and validate genuinely cold.
+Do not change bounds after seeing validation results. The broad one-third
+range is existing documented machine variability, not a fitted threshold.
+This validates learned estimates; it does not prove first-ever estimates.
+
+Not tested: full 160-second render, CPU, app rebuild/manual UI, model-load time
+in isolation, or a universal estimate for a previously unseen edit. No app
+container writes. All new renders are GPU, three clips / 15.375 s, in
+`build/loop21-evidence/revision`. Original baseline evidence stays intact.

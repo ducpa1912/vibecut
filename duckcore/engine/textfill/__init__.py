@@ -458,7 +458,9 @@ def estimate_span(
     if width < 2 or height < 2 or fps <= 0:
         return row
     expected = max(1, int(round(duration * fps)))
-    table = masks.frame_rects(layers, start=start, fps=fps, frames=expected, width=width, height=height)
+    active_layers: list[dict] = []
+    table = masks.frame_rects(layers, start=start, fps=fps, frames=expected + 1,
+                             width=width, height=height, active_layers=active_layers)
     row["frames"], row["units"] = _span_units(table, expected, width, height, method)
     if units_override is not None:
         row["units"] = float(units_override)
@@ -478,9 +480,9 @@ def estimate_span(
                 table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
                 method=method, device=device,
             )
-    if not missing_model(method, directory):
+    if not device_problem(method, directory, device):
         key = span_key(
-            meta=meta, start=start, duration=duration, layers=layers,
+            meta=meta, start=start, duration=duration, layers=active_layers,
             method=method,
             model_stamp=method_stamp(
                 method, directory, device, custom=engine_choice(data_root)[0],
@@ -613,6 +615,7 @@ def span_key(
     payload = {
         "version": VERSION,
         "lama_keys": lama_keys_per_second() if method in KEYED_METHODS else None,
+        "layer_scope": "span-rects-v1",
         "areas": "tight" if method in KEYED_METHODS or method in CLASSIC_METHODS else None,
         "plan": "scan" if method in KEYED_METHODS else None,
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
@@ -1666,9 +1669,11 @@ def prepare_span(
         raise FillError("AI fill needs the source width, height and frame rate.")
     expected = max(1, int(round(duration * fps)))
     # A few spare frames: the decoder may return one more than the estimate.
+    active_layers: list[dict] = []
     rect_table = masks.frame_rects(
         layers, start=start, fps=fps, frames=expected + int(fps) + 2,
         width=width, height=height,
+        active_layers=active_layers, active_frames=expected + 1,
     )
     span_rects = [rect for rects in rect_table[:expected + 1] for rect in rects]
     if not span_rects:
@@ -1702,7 +1707,7 @@ def prepare_span(
         path = model_path(method, directory, device)
         stamp = method_stamp(method, directory, device)
     key = span_key(
-        meta=meta, start=start, duration=duration, layers=layers,
+        meta=meta, start=start, duration=duration, layers=active_layers,
         method=method, model_stamp=stamp,
         follow_motion=follow_motion,
     )

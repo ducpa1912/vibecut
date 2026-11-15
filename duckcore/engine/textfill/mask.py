@@ -266,8 +266,14 @@ def frame_rects(
     frames: int,
     width: int,
     height: int,
+    active_layers: list[dict] | None = None,
+    active_frames: int | None = None,
 ) -> list[list[Rect]]:
-    """Rectangles to fill on each frame of a span that starts at ``start``."""
+    """Rectangles to fill on each frame of a span that starts at ``start``.
+
+    Optionally collect contributing layers for a cache key, restricted to
+    ``active_frames`` when the table includes decoder lookahead frames.
+    """
     prepared = [(layer, layer_windows(layer)) for layer in layers]
     out: list[list[Rect]] = []
     step = 1.0 / float(fps)
@@ -279,14 +285,22 @@ def frame_rects(
         # A frame holds the picture at its own start time. Using the centre here
         # dropped the last frame of a line whose range ended inside that frame,
         # and the subtitle stayed on screen for one frame.
-        rects = [
-            rect
-            for layer, windows in prepared
-            if windows is None or any(lo <= at < hi for lo, hi in windows)
-            for rect in layer_rects_at(layer, at, width, height)
-        ]
+        rects = []
+        for layer, windows in prepared:
+            if windows is not None and not any(lo <= at < hi for lo, hi in windows):
+                continue
+            found = layer_rects_at(layer, at, width, height)
+            rects.extend(found)
+            if (found and active_layers is not None
+                    and (active_frames is None or index < active_frames)
+                    and not any(item is layer for item in active_layers)):
+                active_layers.append(layer)
         out.append(rects)
         at += step
+    if active_layers is not None:
+        # Keep input order so a layer's first active frame cannot reorder the key.
+        identities = {id(layer) for layer in active_layers}
+        active_layers[:] = [layer for layer, _windows in prepared if id(layer) in identities]
     return out
 
 
