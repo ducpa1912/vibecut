@@ -8,7 +8,7 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–25, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
-- [ ] REQ-20261115-02 · P4 (PLAN loop 8): pack hashes, ffmpeg source offer, Whisper options, import
+- [ ] REQ-20261115-02 · P4 (PLAN loop 8, loop 26 brief `docs/teams/loop-26-ready-29/BRIEF.md`): pack hashes, ffmpeg source offer, Whisper options, import
   error copy remain open.
 - [ ] REQ-20261115-02 · P5: shared decode, cropped decode, early estimate, D8/D9, confidence, key
   frames remain open; no measured win shipped.
