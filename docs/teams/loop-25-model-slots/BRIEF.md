@@ -63,3 +63,28 @@ One commit: code + tests + `docs/teams/loop-25-model-slots/review.md` (pass/fail
 numbers, what got worse, what was not tested, capture paths) + `TODO.md` (tick the four
 REQ-20261111-03 items and the P3 line) + `MEMORY.md` Outcome. pytest and `node --check` pass; state
 the count. Do not push.
+
+## Revision 1 — 2026-11-15 (sub-leader review of `397c44b`)
+
+Verified by the sub-leader: 279 tests pass, `node --check` clean; read `model_slots.py`, the
+`stt.py`, `script.py`, `providers.py` and Swift diffs. Items 2–4 accepted in their tested contract;
+item 1 accepted as a minimal registry (each step registered and dispatched; engine choice stays in
+the step), not a refactor. Four defects:
+
+R1. **The writing slot can never finish a real rewrite.** `model_slots.request` uses `timeout=2`
+    for `/v1/chat/completions` too; a local LLM rewriting a script takes tens of seconds. Keep 2 s
+    for `/v1/models`; give completions a long timeout (≥ 300 s) and, if the server streams or is
+    slow, a plain progress line. Test: a stub server that answers completions after 3 s succeeds.
+R2. **Settings blocks up to 2 s per load** when the writing server is down, because `status()` calls
+    `/v1/models` every time. Cache the reachability result (≤ 30 s) or check it in the background;
+    Settings must answer in < 0.3 s with the server down. Test with a server that never answers.
+R3. **Old copies pile up.** Every Choose copies into a new `uuid` folder and Clear/replace leaves
+    the old one; the Swift picker also leaves `slot-imports/<uuid>` behind after the core copies it.
+    Replace and Clear delete the previous copy (only inside `models/stt-user` and
+    `models/voice-user`); the picker's import folder is removed after the core copy succeeds. Test:
+    choose twice, clear → 0 folders left.
+R4. **No captures.** Leave a script `build/loop25-evidence/states.py` (gitignored) that puts the
+    scratch root into each of the nine Settings states in turn; the sub-leader takes the captures.
+    Say which command serves the core on that root.
+R5. pytest and `node --check` pass (state the count); `review.md` Revision 1 section; one commit;
+    do not push.
