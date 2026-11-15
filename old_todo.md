@@ -377,3 +377,10 @@ Entries above are kept as written; these notes correct them.
 - [x] A check that judged no frame shows its unchecked lines (`check_ran`)
 - [x] Render playback modal wires its player bar, once per player
 - [x] Focus restore tells repeated buttons apart (all data-* values; no guess between twins)
+
+## Loop 21 — render cost with a Cut (closed 2026-11-15)
+
+- [x] REQ-20261115-01 · A · leftover check stores its View-keyed inks (`data_root` to `inkcheck.check`); second Cut render reads no ink frame (loop 21)
+- [x] REQ-20261115-01 · B · a fill line the Cut leaves out of the frame is not filled nor estimated (loop 21)
+- [x] REQ-20261115-01 · loop 21 R1/R3: span-local fill keys; toggling one line re-fills 1/3 spans; empty crop fills 0 frames
+- [x] REQ-20261115-01 · loop 21 Revision 2: remove the repeat-edit cost memo; retain accepted span keys, GPU cache detection and rates-file fix; document R2 as an open limit

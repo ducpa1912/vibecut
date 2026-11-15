@@ -33,7 +33,7 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
 ## State
 
 - Branch `ducksuite`; repo root is this directory. Never merge `main`; unrelated histories.
-- 228 tests pass (2026-11-13). Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
+- 241 tests pass (2026-11-15). Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
   an optional pack.
 - App Store work is paused. Do not start signing or TestFlight.
 - Planning is closed. Brief loops 7–19 are closed (ink check through Cut enhance); loop 20 (VLM
@@ -42,7 +42,8 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
   to fix-03); its open low findings are in `TODO.md`.
 - `textfill.VERSION` 17; the last render has 0 leftover text, 40 of 42 lines checked. The ink store
   (`<data root>/ink`, `ink.STORE_VERSION` 2) must hold every field of `ink.Ink`. Branch `loop8-wip`
-  is superseded by `7bda48d`.
+  is superseded by `7bda48d`. Loop 21 (2026-11-15) re-keyed fill spans (`layer_scope`): the next
+  render of any edit is cold once.
 
 ## Commands
 
