@@ -105,6 +105,7 @@ step names the loop it proves in `[brackets]`. The old scripts stay in their fol
    Intelligence is on), beat count, runtime, one source line per beat.
 2. Read the beats: **every line is something actually said in the video.** Note any that is not.
 3. **Preview → Play story order**: beats play in story order, not source order.  [16, 17]
+   Watch each beat's end: the next beat starts with no extra footage from the old one (≤ 1 frame).  [loop 24 #9]
 4. **Write again**: a new story; the old one stays in the edit menu. Switch back to the main edit.
 
 ## 8. Render — no new render needed  [loops 10, 21, 22, fix-04]

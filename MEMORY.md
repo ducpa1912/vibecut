@@ -23,7 +23,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   under 0.6 s read once defaults to blur.
 - Do not hide a limit: measure it and say it in the UI. Old information is never deleted (`old_*.md`).
 - Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence; LaMa and the
-  `moves` warning stay. A user fill model folder (ONNX needs onnxruntime, not bundled) replaces LaMa.
+  `moves` warning stay. A user fill model folder (ONNX or TorchScript; the built sidecar imports onnxruntime, loop 24) replaces LaMa.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
 - Cut (loops 14–19): crop, aspect, fit, look, grade and enhance (`edit.cut`) run in ffmpeg as crop →
   scale → sharpen → grade → pad, so letterbox bars stay black. Enhance (Lanczos + unsharp) only when the
@@ -40,7 +40,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 265 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 272 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
