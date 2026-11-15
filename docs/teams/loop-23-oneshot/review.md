@@ -38,3 +38,15 @@ Settings path/provider/flag persistence, valid/invalid/cleared slot cases remain
 What got worse: unused registry contract adds maintenance surface; no runtime behavior change claimed.
 Not tested: real weights, endpoints, Settings rows, slot clearing. No model names added to UI.
 Validation: 263 tests passed in 31.12 s; node syntax passed.
+
+## P4 — readiness
+
+1. FAIL: 0 publisher hashes verified; pack size rule unchanged. No guessed hashes introduced.
+2. FAIL: 0 new LGPL source-offer documents or About integrations.
+3. FAIL: 0 public Vietnamese samples benchmarked; no size/accuracy/speed recommendation or pack change.
+4. PARTIAL/FAIL: repair instruction added to fill-status problem text; placement beside Reveal not verified.
+5. FAIL: 0 new import error mappings or mapped-message tests.
+6. PASS: 5-step clipboard/microphone hand-check sequence added in P2; microphone steps include permission, recording, playback and denial.
+What got worse: longer fill-status text; layout not measured.
+Not tested: downloads, checksum rejection, real microphone, Settings About or public speech models.
+Validation: 263 tests pass; node syntax passes.

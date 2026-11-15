@@ -1883,7 +1883,7 @@ function layerNote(layer) {
 function fillStatusText() {
   if (state.engine?.fill?.ready) return 'Local fill';
   const problem = String(state.engine?.fill?.problem || '').trim();
-  return problem ? problem.slice(0, 90) : 'Model not found. Reinstall DuckSuite to restore it.';
+  return `${problem ? problem.slice(0, 90) : 'Local fill is unavailable.'} Reinstall DuckSuite to restore the bundled fill files.`;
 }
 
 
