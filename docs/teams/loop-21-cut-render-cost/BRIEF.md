@@ -109,3 +109,29 @@ R3. **Say what B buys.** In the review, state the rule: a dropped line saves fil
     span.
 R4. No regression: pytest (238 today) and `node --check` pass. Update `review.md` (Revision 1
     section, pass/fail with numbers), `MEMORY.md` Outcome, `TODO.md`. One commit; do not push.
+
+## Revision 2 — 2026-11-15 (sub-leader review of `551b677`)
+
+Verified by the sub-leader: 242 tests pass, `node --check` clean; diff read.
+**R1 accepted**: `frame_rects(active_layers=…)` keys a span only by layers with a rect in its
+frames, in input order, the same set in `estimate_span` and `prepare_span`; `layer_scope` marker
+makes old clips cold once. **R3 accepted** (as OpenCode's measured claim). The `device_problem` fix
+(warm spans recognised 3/3) and `remember_render_time` keeping other keys are accepted.
+
+**R2 rejected as built.** `_cost_samples` / `_remember_cost` / `_cost_key` and the sample-based
+range only fire when the *identical* edit (clips, layers, Cut, cold-span count) was rendered
+before: it memoises a repeat, it does not estimate a short edit. Its test feeds the estimate's own
+key back in, so it never proves a render writes the key the estimate reads. And with it, R2 still
+fails (cold 400.8–801.6 s against 171.3 s real; the same span measured 601.2 s an hour earlier).
+The same short span varies 3.5× on this Mac; no range built from one machine's history can hold it.
+
+### Revision 2 acceptance
+
+R2a. Remove `_cost_samples`, `_remember_cost`, `_cost_key`, `render_costs.json`, the sample branch
+     in `estimate_edit`, `cost_key` in its result and `test_short_estimate_separates_cold_and_warm_costs`.
+     Keep R1, the `device_problem` fix and the rates-file fix, each with its test.
+R2b. Record the limit instead of hiding it: in `review.md` and `TODO.md`, "a short edit's estimate
+     is not reliable on this Mac: the same 3-clip span measured 171–601 s cold". Do not change UI.
+R2c. pytest passes (241 expected after removing one test; state the number), `node --check` passes.
+     Update `MEMORY.md` Outcome to the final state of loop 21 (A, B, R1, R3 shipped; R2 an open
+     limit). One commit; do not push.
