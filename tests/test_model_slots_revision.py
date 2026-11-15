@@ -94,7 +94,7 @@ def test_settings_displays_pending_and_ready_writing_state():
 const assert=require('node:assert/strict');
 let html='';const openModal=value=>{html=value;};
 const esc=x=>String(x??'');const icon=()=>'';const engineLabel=()=>'';
-const fmtBytes=()=>'';const packListMarkup=()=>'';
+const fmtBytes=()=>'';const packListMarkup=()=>'';const fillRepairText=()=>'';
 const state={voices:[{}],engine:{rewrite:{available:false}},models:[],packs:[],settings:{model_slots:{rewrite:{path:'http://localhost',checking:true,ready:false,problem:''}}}};
 const api=async path=>path==='/api/settings'?state.settings:path==='/api/models'?{models:[]}:{packs:[]};
 (async()=>{await openSettings();assert(html.includes('Checking…'));assert(!html.includes('Not usable · Checking'));

@@ -1885,10 +1885,16 @@ function layerNote(layer) {
     : 'Blur hides the words without rebuilding the background.';
 }
 
+function fillRepairText(kind) {
+  if (kind === 'cpu') return 'Next step: press Remove on the CPU fill engine, then Download it again.';
+  if (kind === 'user') return 'Next step: press Clear on Your fill model, then Choose the folder again.';
+  return 'Next step: reinstall DuckSuite to restore the built-in fill files.';
+}
+
 function fillStatusText() {
   if (state.engine?.fill?.ready) return 'Local fill';
   const problem = String(state.engine?.fill?.problem || '').trim();
-  return `${problem ? problem.slice(0, 90) : 'Local fill is unavailable.'} Reinstall DuckSuite to restore the bundled fill files.`;
+  return `${problem ? problem.slice(0, 90) : 'Local fill is unavailable.'} ${fillRepairText('builtin')}`;
 }
 
 
@@ -3851,6 +3857,18 @@ function openAudioModal(url, title = 'Voice-over') {
   </dialog>`);
 }
 
+async function openFfmpegSource() {
+  try {
+    const offer = await api('/api/licenses/ffmpeg-source');
+    openModal(`<dialog class="modal" aria-label="FFmpeg source offer">
+    <div class="modal-head"><h2>FFmpeg ${esc(offer.version)} · source offer</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
+    <div class="modal-body"><pre class="license-text">${esc(offer.text)}</pre><button class="btn small" type="button" data-action="settings" style="margin-top:12px">Back to Settings</button></div>
+  </dialog>`);
+  } catch (error) {
+    toast(`The source offer could not be opened: ${error.message}`, 'bad');
+  }
+}
+
 function openSearch() {
   const project = state.project;
   openModal(`<dialog class="modal search-modal" aria-label="Search">
@@ -4026,7 +4044,7 @@ function chooseModelSlot(task) {
 function packListMarkup() {
   return (state.packs || []).map((pack) => {
     const pct = pack.size_bytes ? Math.min(100, Math.round((Number(pack.downloaded_bytes || 0) / pack.size_bytes) * 100)) : 0;
-    return `<div class="pack-row"><div><strong>${esc(pack.name)}</strong><span>${fmtBytes(pack.size_bytes)} · ${esc(pack.license)} · ${esc(pack.detail)}</span>${pack.downloading ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}${pack.error ? `<span class="pack-error">${esc(pack.error)}</span>` : ''}</div>${pack.installed ? `<button class="btn small" type="button" data-action="remove-pack" data-pack="${esc(pack.id)}">Remove</button>` : pack.downloading ? `<span class="small muted">${pct}%</span>` : `<button class="btn small" type="button" data-action="download-pack" data-pack="${esc(pack.id)}">Download</button>`}</div>`;
+    return `<div class="pack-row"><div><strong>${esc(pack.name)}</strong><span>${fmtBytes(pack.size_bytes)} · ${esc(pack.license)} · ${esc(pack.detail)}</span>${pack.downloading ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}${pack.error ? `<span class="pack-error">${esc(pack.error)}${pack.purpose === 'fill' ? ` ${esc(fillRepairText('cpu'))}` : ''}</span>` : ''}</div>${pack.installed ? `<button class="btn small" type="button" data-action="remove-pack" data-pack="${esc(pack.id)}">Remove</button>` : pack.downloading ? `<span class="small muted">${pct}%</span>` : `<button class="btn small" type="button" data-action="download-pack" data-pack="${esc(pack.id)}">Download</button>`}</div>`;
   }).join('') || '<p class="small muted">No optional packs.</p>';
 }
 
@@ -4091,10 +4109,10 @@ async function openSettings() {
             const stateText = fillModel.path
               ? (fillModel.ready ? `In use · ${fillModel.file}` : `Not usable · ${fillModel.problem || 'unknown reason'}`)
               : 'None';
-            return `<div class="kv"><span>Your fill model</span><strong>${esc(stateText)} <button class="btn small" type="button" data-action="choose-fill-model">${icon('folder', 11)} ${fillModel.path ? 'Replace' : 'Choose'}</button>${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Clear</button>` : ''}</strong></div>`;
+            return `<div class="kv"><span>Your fill model</span><strong>${esc(stateText)} <button class="btn small" type="button" data-action="choose-fill-model">${icon('folder', 11)} ${fillModel.path ? 'Replace' : 'Choose'}</button>${fillModel.path ? `<button class="btn small" type="button" data-action="clear-fill-model">Clear</button>` : ''}</strong></div>${fillModel.path && !fillModel.ready ? `<p class="small muted fill-repair">${esc(fillRepairText('user'))}</p>` : ''}`;
           })()}
           <p class="small muted">A fill model you obtained yourself runs in place of the default engine. DuckSuite ships none and downloads none; the folder is copied into DuckSuite.</p>
-          ${state.engine?.fill?.ready ? '' : `<p class="small muted">AI fill ships inside the app. If the file is missing, reinstall DuckSuite (or run the dev build) to restore it.</p>`}
+          ${state.engine?.fill?.ready ? '' : `<p class="small muted fill-repair">AI fill ships inside the app and its file is missing or damaged. ${esc(fillRepairText('builtin'))}</p>`}
         </section>
         <section>
           <h3>Storage</h3>
@@ -4107,6 +4125,7 @@ async function openSettings() {
           <p class="small muted">Always on. Clean is for your own footage or footage you are authorized to edit. Do not use DuckSuite to remove another creator’s watermark or logo. See Terms &amp; Conditions.</p>
           <div class="kv"><span>Language</span><strong>Auto-detect only</strong></div>
           <div class="kv"><span>Version</span><strong>${esc(state.settings?.version || '1.0.0')}</strong></div>
+          <div class="kv"><span>FFmpeg 7.1.1 · LGPL 2.1</span><button class="btn small" type="button" data-action="ffmpeg-source">Source offer</button></div>
           <h3 style="margin-top:12px">Optional downloads</h3>
           <div class="pack-list">${packListMarkup()}</div>
           <p class="small muted" style="margin-top:8px">System packs live in macOS: <a href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Translation languages</a> (English, Vietnamese, Chinese), Apple Intelligence for rewrite, and extra voices. DuckSuite never downloads executable code.</p>
@@ -5112,6 +5131,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'verify-model') await verifyModel(target.dataset.model || '');
     else if (action === 'download-pack') await downloadPack(target.dataset.pack || '');
     else if (action === 'remove-pack') await removePack(target.dataset.pack || '');
+    else if (action === 'ffmpeg-source') await openFfmpegSource();
     else if (action === 'seek') {
       seekToTime(Number(target.dataset.time || 0) + 0.01);
     }

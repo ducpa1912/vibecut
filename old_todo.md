@@ -429,3 +429,14 @@ Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
 - [x] REQ-20261111-03 · loop 25 complete provider-choice routing and nine Settings state captures at 1440×900
 
 Closed by loop 25 (2026-11-15): minimal registry accepted; nine Settings states checked live by the sub-leader.
+
+## Closed 2026-11-16 — loop 26, $29 readiness (REQ-20261111-02, REQ-20261115-02 P4)
+
+- [x] REQ-20261115-02 · P4 (PLAN loop 8, loop 26 brief `docs/teams/loop-26-ready-29/BRIEF.md`): pack hashes, ffmpeg source offer, Whisper options, import
+  error copy remain open.
+- [x] REQ-20261115-02 · P4 SHA-256 per pack file, LGPL offer, Whisper options, repair and import copy
+- [x] SHA-256 per pack file; `packs.py` accepts ≥98 % of the expected size today
+- [x] LGPL written source offer for the bundled ffmpeg, beside the licence text
+- [x] AI fill repair / reinstall instruction beside the existing problem text and Reveal button
+- [x] Import failure copy: technical errors ("ffmpeg frame read failed") rewritten for a creator
+  Result: `docs/teams/loop-26-ready-29/review.md`; 324 tests.

@@ -2022,3 +2022,4 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .enhance-row input[type="checkbox"] { accent-color: var(--amber); }
 .enhance-row input[type="range"] { flex: 1; min-width: 0; height: 3px; accent-color: var(--amber); }
 .enhance-row span { min-width: 22px; text-align: right; font: 9px var(--mono); color: var(--ink); }
+.license-text { margin: 0; white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }

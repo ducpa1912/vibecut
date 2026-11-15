@@ -25,10 +25,15 @@ PACKS = (
         "size_bytes": 325_532_387,
         "license": "Apache-2.0",
         "filename": "kokoro-v1.0.onnx",
+        # The publisher gives no hash for this release (GitHub asset digest is
+        # empty, the release notes list none; checked 2026-11-16). Exact size
+        # only; never a digest made from our own download.
+        "sha256": "",
         "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
         "extra_files": [{
             "filename": "voices-v1.0.bin",
             "size_bytes": 28_214_398,
+            "sha256": "",
             "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
         }],
     },
@@ -42,7 +47,7 @@ PACKS = (
         "filename": "lama_fp32.onnx",
         "dest": "fill",
         "sha256": "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
-        "url": "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
+        "url": "https://huggingface.co/Carve/LaMa-ONNX/resolve/c3c0c9e468934d62e79c329e35d82dd09ff8c444/lama_fp32.onnx",
     },
     {
         "id": "speech-whisper",
@@ -52,11 +57,14 @@ PACKS = (
         "size_bytes": 1_613_977_612,
         "license": "MIT",
         "filename": "weights.safetensors",
-        "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/main/weights.safetensors",
+        "sha256": "951ed3fc1203e6a62467abb2144a96ce7eafca8fa77e3704fdb8635ff3e7f8a6",
+        "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb/weights.safetensors",
         "extra_files": [{
             "filename": "config.json",
             "size_bytes": 268,
-            "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/main/config.json",
+            # Not an LFS file: Hugging Face publishes its git blob SHA-1 only.
+            "git_sha1": "6ac9a52a28f70a2e5681c250a470eca6e9c8cc3e",
+            "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb/config.json",
         }],
     },
 )
@@ -84,6 +92,7 @@ def _files(pack: dict) -> list[dict]:
         "size_bytes": pack["size_bytes"],
         "url": pack["url"],
         "sha256": pack.get("sha256", ""),
+        "git_sha1": pack.get("git_sha1", ""),
     }]
     files.extend(pack.get("extra_files") or [])
     return files
@@ -113,7 +122,7 @@ def installed_path(data_root: Path, pack_id: str) -> Path | None:
     folder = _folder(data_root, pack)
     for item in _files(pack):
         path = folder / item["filename"]
-        if not path.is_file() or path.stat().st_size < item["size_bytes"] * 0.98:
+        if not path.is_file() or not _size_matches(path.stat().st_size, item):
             return None
     return folder
 
@@ -154,6 +163,32 @@ def start_download(data_root: Path, pack_id: str) -> dict:
     return status(data_root)
 
 
+DAMAGED = "The download was damaged. Try again."
+STOPPED = "The download stopped. Check the connection and try again."
+
+
+def _size_matches(size: int, item: dict) -> bool:
+    return size == int(item["size_bytes"])
+
+
+def verify_file(path: Path, item: dict) -> bool:
+    """Exact size, then the publisher's digest when one exists."""
+    if not path.is_file() or not _size_matches(path.stat().st_size, item):
+        return False
+    sha256 = str(item.get("sha256") or "").strip().lower()
+    git_sha1 = str(item.get("git_sha1") or "").strip().lower()
+    if sha256:
+        digest = hashlib.sha256()
+    elif git_sha1:
+        digest = hashlib.sha1(f"blob {path.stat().st_size}\0".encode())
+    else:
+        return True
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == (sha256 or git_sha1)
+
+
 def _download(data_root: Path, pack: dict) -> None:
     folder = _folder(data_root, pack)
     folder.mkdir(parents=True, exist_ok=True)
@@ -174,25 +209,18 @@ def _download(data_root: Path, pack: dict) -> None:
                         "running": True, "bytes": done,
                         "total": total, "error": "",
                     }
-            expected = str(item.get("sha256") or "").strip().lower()
-            if expected:
-                digest = hashlib.sha256()
-                with temporary.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                if digest.hexdigest() != expected:
-                    temporary.unlink(missing_ok=True)
-                    raise ValueError(f"{item['filename']} failed its checksum.")
-            if temporary.stat().st_size < item["size_bytes"] * 0.98:
-                raise RuntimeError(f"{item['filename']} size does not match the manifest")
+            if not verify_file(temporary, item):
+                raise ValueError(DAMAGED)
             temporary.replace(target)
         _PROGRESS[pack["id"]] = {"running": False, "bytes": done, "error": ""}
     except Exception as exc:  # noqa: BLE001
         for item in _files(pack):
+            (folder / item["filename"]).unlink(missing_ok=True)
             (folder / item["filename"]).with_suffix(
                 (folder / item["filename"]).suffix + ".part"
             ).unlink(missing_ok=True)
-        _PROGRESS[pack["id"]] = {"running": False, "bytes": 0, "error": str(exc)[:300]}
+        error = DAMAGED if isinstance(exc, ValueError) else STOPPED
+        _PROGRESS[pack["id"]] = {"running": False, "bytes": 0, "error": error, "detail": str(exc)[:300]}
 
 
 def remove(data_root: Path, pack_id: str) -> list[dict]:

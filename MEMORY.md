@@ -40,7 +40,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 286 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | 324 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
@@ -74,7 +74,7 @@ Only requests whose loop is still open stay here. A new request appends one entr
 revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
 the loop's commit. Open requests, one line each (open work in `TODO.md`):
 
-- REQ-20261111-02 · $29 build readiness · PLAN loop 8 (REQ-20261115-02 P4).
+- REQ-20261111-02 · $29 build readiness · PLAN loop 8 (REQ-20261115-02 P4). Loop 26 (2026-11-16, built by the sub-leader after an OpenCode 503): exact size + publisher digest per pack file (Kokoro has none published), FFmpeg source offer in Settings, fill repair line, creator import copy in the core; Whisper table only. 324 tests; VERSION 17.
 - REQ-20261111-03 · loop 25 R6–R9: down server resolves on 3-second reopen; nine Settings rows measure 45 px except writing failure 48.594 px; ready writing engine label fixed. 286 tests pass; VERSION 17.
 - REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.

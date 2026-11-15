@@ -8,8 +8,10 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–25, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
-- [ ] REQ-20261115-02 · P4 (PLAN loop 8, loop 26 brief `docs/teams/loop-26-ready-29/BRIEF.md`): pack hashes, ffmpeg source offer, Whisper options, import
-  error copy remain open.
+- [ ] REQ-20261111-02 · loop 26 leftovers (`docs/teams/loop-26-ready-29/review.md`): the two Kokoro
+  files have no publisher hash (exact size only); founder fills `<contact address>` in
+  `duckcore/licenses.py` and `Licenses/FFmpeg-SOURCE.txt`; Whisper: founder supplies a short
+  Vietnamese clip to compare today's pack with turbo-4bit (0.46 GB) before any switch.
 - [ ] REQ-20261115-02 · P5: shared decode, cropped decode, early estimate, D8/D9, confidence, key
   frames remain open; no measured win shipped.
 - [ ] REQ-20261115-02 · P2: 1024×700 and 200 % zoom measures, story/render player captures, frame
@@ -25,7 +27,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] REQ-20261115-02 · P1 review leftovers #6 #7 #9 #10 #11, dead SFX modal, loop 22 test
 - [ ] REQ-20261115-02 · P2 frame timecode, story/render players opened, 1024×700 and 200 % zoom
 - [ ] REQ-20261115-02 · P3 providers registry + Whisper, local LLM URL, ONNX voice slots
-- [ ] REQ-20261115-02 · P4 SHA-256 per pack file, LGPL offer, Whisper options, repair and import copy
 - [ ] REQ-20261115-02 · P5 shared decode, cropped decode, early estimate, unchecked lines, D8/D9, confidence
 
 ## Native UI (planned 2026-11-12)
@@ -89,12 +90,9 @@ Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most sever
 
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 
-- [ ] SHA-256 per pack file; `packs.py` accepts ≥98 % of the expected size today
-- [ ] LGPL written source offer for the bundled ffmpeg, beside the licence text
-- [ ] Shrink the Whisper pack or make it per-language (1.61 GB; required for `vi`)
-- [ ] AI fill repair / reinstall instruction beside the existing problem text and Reveal button
+- [ ] Shrink the Whisper pack or make it per-language (1.61 GB; required for `vi`). Loop 26 table:
+  turbo-4bit 0.46 GB is the candidate; no published Vietnamese figure; needs the founder clip.
 - [ ] Manual microphone test on a clean Mac; recording compiles, never tested by hand
-- [ ] Import failure copy: technical errors ("ffmpeg frame read failed") rewritten for a creator
 
 ## Later
 

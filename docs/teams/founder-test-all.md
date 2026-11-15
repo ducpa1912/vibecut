@@ -140,11 +140,17 @@ Only if you have 15 min. Set Cut crop to the top half (H 0.5), Start render.
    line: **None**, **In use · model.onnx**, or **Not usable · reason**.
 2. Choose a folder with `model.onnx` or `model.pt` (if you have one): **In use · …** and **Clear**.
    A folder without one: a red toast says what is missing, state unchanged. **Clear** → **None**.
+3. **Settings → Storage column → FFmpeg 7.1.1 · LGPL 2.1 → Source offer**: the offer text opens
+   with the configure line; **Back to Settings** returns.  [loop 26]
+4. If any fill engine shows a problem, the line under it says the next step (reinstall, Remove then
+   Download, or Clear then Choose).  [loop 26]
 
 ## 11. Optional — Import, last  [loop 10]
 
 It changes the project you import into. **Choose Video** → a short clip → “Use full video” or
 “Add scenes”: the import finishes and the clip appears in the timeline.
+If an import fails, the red message is one plain sentence with a next step, never an ffmpeg line.
+Write down the exact words.  [loop 26]
 
 ## What to send back
 

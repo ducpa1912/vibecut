@@ -178,7 +178,7 @@ Projects live in `projects/<id>/`, renders in `projects/<id>/renders/`, fill cac
 ## Test
 
 ```bash
-python3 -m pytest -q tests      # 286 pass (2026-11-15)
+python3 -m pytest -q tests      # 324 pass (2026-11-16)
 node --check static/duck/app.js
 ./bin/vision_probe <dir>        # OCR on real frames, JSON lines
 python3 scripts/bench_fill.py --project prj_... --frames 10   # fill quality, ground truth

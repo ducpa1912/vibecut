@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from duckcore import append, app_settings, captions, clean, edits, effects, media, packs, preview, render, script, voice
+from duckcore import import_errors, append, app_settings, captions, clean, edits, effects, media, packs, preview, render, script, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -346,7 +346,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=f"The upload failed: {exc}") from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(f"The upload failed: {exc}")) from exc
         if size == 0:
             shutil.rmtree(target_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail="The video file is empty.")
@@ -396,6 +396,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             ".woff2": "font/woff2",
         }.get(target.suffix.lower(), "application/octet-stream")
         return FileResponse(target, media_type=media_type)
+
+    @app.get("/api/licenses/ffmpeg-source")
+    def ffmpeg_source_offer(_: None = Depends(require_token)) -> dict:
+        from . import licenses
+        return {"version": licenses.FFMPEG_VERSION, "text": licenses.FFMPEG_SOURCE_OFFER}
 
     @app.get("/api/health")
     def health(_: None = Depends(require_token)) -> dict:
@@ -547,7 +552,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail="Source file not found.") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         return {"project": project}
 
     @app.post("/api/projects/upload")
@@ -568,7 +573,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             project = store.create(Path(filename).stem, target)
         except (FileNotFoundError, ValueError) as exc:
             target.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         threading.Thread(
             target=media.ensure_preview,
             args=(target, media.preview_path(data_root, project["id"])),
@@ -605,11 +610,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
         except append.AppendError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         except (OSError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         return result
 
     @app.post("/api/projects/{project_id}/append/job", status_code=202)
@@ -639,9 +644,9 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 cleanup=body.cleanup,
             )
         except append.AppendError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=import_errors.explain(exc)) from exc
         except (OSError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         return {"job": job}
 
     @app.get("/api/projects/{project_id}/append/job")
@@ -695,13 +700,13 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             )
         except append.AppendError as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         except (OSError, ValueError) as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
 
     @app.post("/api/projects/{project_id}/append/upload/job", status_code=202)
     async def append_project_upload_job(
@@ -735,10 +740,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             )
         except append.AppendError as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=import_errors.explain(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(target_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+            raise HTTPException(status_code=400, detail=import_errors.explain(exc)) from exc
         return {"job": job}
 
     @app.get("/api/projects/{project_id}/frame")

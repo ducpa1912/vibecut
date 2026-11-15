@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from duckcore import import_errors
 from duckcore.store import ProjectStore
 
 
@@ -273,7 +274,7 @@ class CheckManager:
                 state="cancelled" if cancel.is_set() else "failed",
                 stage="Cancelled" if cancel.is_set() else "Failed",
                 progress=1.0,
-                message=str(exc)[:400] or "Check failed",
+                message=import_errors.explain(exc, "check") if str(exc) else "Check failed",
                 error=str(exc)[:800],
             )
         finally:

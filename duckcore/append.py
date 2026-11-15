@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from duckcore import edits, media
+from duckcore import edits, import_errors, media
 from duckcore.store import ProjectStore
 
 
@@ -165,7 +165,8 @@ def start_job(
             name=f"duck-append-job-{project_id}",
         ).start()
     except Exception as exc:  # noqa: BLE001
-        _job_update(job_id, state="failed", stage="Failed", error=str(exc)[:300])
+        _job_update(job_id, state="failed", stage="Failed",
+                    error=import_errors.explain(exc), detail=str(exc)[:500])
     return job_status(job_id)
 
 
@@ -190,7 +191,7 @@ def _run_job(
     except Exception as exc:  # noqa: BLE001
         _job_update(
             job_id, state="failed", stage="Failed",
-            error=str(exc)[:500], progress=1.0,
+            error=import_errors.explain(exc), detail=str(exc)[:500], progress=1.0,
         )
         if cleanup:
             _remove_source(Path(new_source), Path(data_root))
@@ -848,7 +849,7 @@ def append_video(
             ).start()
         except Exception as exc:  # noqa: BLE001
             result["append"]["analysis"] = "failed"
-            result["append"]["error"] = f"The read could not start: {str(exc)[:200]}"
+            result["append"]["error"] = import_errors.explain(f"The read could not start: {exc}")
             _save_check(data_root, project_id, result)
             if checks is not None:
                 checks.adopt(project_id, result)
@@ -980,7 +981,8 @@ def _analyze_append(
             append = dict(fresh.get("append") or {})
             append["analysis"] = "failed"
             append["analysis_finished"] = time.time()
-            append["error"] = str(exc)[:300]
+            append["error"] = import_errors.explain(exc)
+            append["detail"] = str(exc)[:300]
             fresh["append"] = append
             _save_check(data_root, project_id, fresh)
             if checks is not None:
