@@ -6,34 +6,18 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [x] REQ-20261115-02 · loop 25 R10: two Settings columns restored; Models alone spans both; served-app measurements at 1440×900 and 1280×800 pass
-
-- [x] REQ-20261115-02 · loop 25 R6–R9: neutral bounded writing check, nine row heights measured, ready writing engine label, 286 tests
-
-- [x] REQ-20261115-02 · loop 25 Revision 1: 300 s rewrite timeout, async Settings reachability, managed-copy cleanup (0 folders after clear), nine-state capture script
-
-- [x] REQ-20261115-02 · loop 24 cue-bounded story jobs, lazy custom loading, sequence timer, built ONNX import check and missing-play guards implemented
-- [ ] REQ-20261115-02 · loop 24 verify product Story UI overshoot (real-video harness passes; all Welcome/compact queue markup paths now Node-tested)
-
-- [x] REQ-20261115-02 · P5 unchecked-line reasons locked by two tests (0 checked frames); VERSION stays 17
-- [ ] REQ-20261115-02 · P5 decode, prewarm, motion and key-frame benchmarks remain open; no measured wins shipped
-
-- [x] REQ-20261115-02 · P4 microphone hand steps and fill repair instruction added
-- [ ] REQ-20261115-02 · P4 hashes, source offer, speech measurements and import mapping remain open
-
-- [ ] REQ-20261115-02 · P3 registry contract and loopback validator added; routing and three Settings slots remain open
-
-- [ ] REQ-20261115-02 · P2 layout captures/measurements and clipboard Node check remain open; frame-time tooltip and founder clipboard step added
-
-- [x] REQ-20261115-02 · P1 bounded custom-model versions, missing-output Render cards, strict grade fixtures, dead modal removal; remaining findings in loop 23 review
-
-- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (merges loop 10, loops 11–19,
-  fix-02, fix-04 and the loop 21–22 checks; each step names its loop).
+- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–25, fix-02, fix-04;
+  each step names its loop; includes story playback, the microphone and the three model slots).
+- [ ] REQ-20261115-02 · P4 (PLAN loop 8): pack hashes, ffmpeg source offer, Whisper options, import
+  error copy remain open.
+- [ ] REQ-20261115-02 · P5: shared decode, cropped decode, early estimate, D8/D9, confidence, key
+  frames remain open; no measured win shipped.
+- [ ] REQ-20261115-02 · P2: 1024×700 and 200 % zoom measures, story/render player captures, frame
+  timecode beside the time (now a tooltip only).
 
 ## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
 
 - [ ] REQ-20261115-01 · loop 21 R2 open limit: a short edit's estimate is not reliable on this Mac: the same 3-clip span measured 171–601 s cold. Rejected cost-sample memo removed in Revision 2; review retains measurements.
-- [ ] REQ-20261115-01 · (in loop 23 P1) loop 22 test `test_loop22_grade` passes vacuously when no strokes build at either grade; assert at least one grade builds
 
 
 ## REQ-20261115-02 — loop 23 one-shot (`docs/teams/loop-23-oneshot/BRIEF.md`)
@@ -102,16 +86,6 @@ Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most sever
   the check and a render compete for the same cores; measure with the app alone before tuning.
 - [ ] The stored transcript of `prj_e95348a97316` still holds three made-up cues: the founder runs
   Check again; it can move clean-layer ranges.
-
-## Loop 7 — local model slots (REQ-20261111-03)
-
-Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
-
-- [ ] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
-- [x] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy (loop 25 stub-tested)
-- [x] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check (loop 25)
-- [x] REQ-20261111-03 · voice local slot: custom ONNX voice folder (loop 25 stub-tested)
-- [ ] REQ-20261111-03 · loop 25 complete provider-choice routing and nine Settings state captures at 1440×900
 
 ## Loop 8 — $29 build readiness (REQ-20261111-02)
 

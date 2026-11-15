@@ -33,11 +33,11 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
 ## State
 
 - Branch `ducksuite`; repo root is this directory. Never merge `main`; unrelated histories.
-- 272 tests pass (2026-11-15). Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
+- 286 tests pass (2026-11-15). Bundle ≈ 981 MB. macOS 26.0, Apple silicon. GPU fill (MPS) is the default; CPU is
   an optional pack.
 - App Store work is paused. Do not start signing or TestFlight.
 - Planning is closed. Brief loops 7–19 are closed (ink check through Cut enhance); loop 20 (VLM
-  story captions) is roadmap. PLAN loops 7–8 are still open: local model slots, $29 readiness.
+  story captions) is roadmap. PLAN loop 7 (local model slots) closed in loop 25; PLAN loop 8 ($29 readiness) is open.
 - The 2026-11-13 code review (`docs/reviews/2026-11-13-loops-07-19.md`) fixed #1–#5 and #8 (fix-01
   to fix-03); its open low findings are in `TODO.md`.
 - `textfill.VERSION` 17; the last render has 0 leftover text, 40 of 42 lines checked. The ink store

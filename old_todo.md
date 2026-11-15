@@ -407,3 +407,25 @@ Entries above are kept as written; these notes correct them.
   half → Enhance offers Lanczos, output 1080 × 1920; 16:9 fit, contrast −50 → bars stay black).
 
 - [x] REQ-20261115-01 · E · one ordered founder script
+
+## Loops 23–25 done items (archived 2026-11-15)
+
+- [x] REQ-20261115-02 · loop 25 R10: two Settings columns restored; Models alone spans both; served-app measurements at 1440×900 and 1280×800 pass
+- [x] REQ-20261115-02 · loop 25 R6–R9: neutral bounded writing check, nine row heights measured, ready writing engine label, 286 tests
+- [x] REQ-20261115-02 · loop 25 Revision 1: 300 s rewrite timeout, async Settings reachability, managed-copy cleanup (0 folders after clear), nine-state capture script
+- [x] REQ-20261115-02 · loop 24 cue-bounded story jobs, lazy custom loading, sequence timer, built ONNX import check and missing-play guards implemented
+- [x] REQ-20261115-02 · P5 unchecked-line reasons locked by two tests (0 checked frames); VERSION stays 17
+- [x] REQ-20261115-02 · P4 microphone hand steps and fill repair instruction added
+- [x] REQ-20261115-02 · P1 bounded custom-model versions, missing-output Render cards, strict grade fixtures, dead modal removal; remaining findings in loop 23 review
+- [x] REQ-20261111-03 · transcription local slot: choose an MLX Whisper folder, validate, copy (loop 25 stub-tested)
+- [x] REQ-20261111-03 · rewrite local slot: base URL on this Mac (localhost only), `/v1/models` check (loop 25)
+- [x] REQ-20261111-03 · voice local slot: custom ONNX voice folder (loop 25 stub-tested)
+
+## Loop 7 — local model slots (REQ-20261111-03)
+
+Design: `docs/duck/BYOK-PLAN.md`. v1 is local only; no keys.
+
+- [x] REQ-20261111-03 · `providers.py` registry + `Provider` interface, no behaviour change
+- [x] REQ-20261111-03 · loop 25 complete provider-choice routing and nine Settings state captures at 1440×900
+
+Closed by loop 25 (2026-11-15): minimal registry accepted; nine Settings states checked live by the sub-leader.

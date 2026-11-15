@@ -8,7 +8,7 @@ not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open ch
 
 | Fact | Value |
 |---|---|
-| Branch / tests | `ducksuite`, 272 pass (2026-11-15), `node --check` clean |
+| Branch / tests | `ducksuite`, 286 pass (2026-11-15), `node --check` clean |
 | Bundle | ≈ 981 MB (torch 565, GPU LaMa 196, sidecar 136, ffmpeg 41; no ONNX model, onnxruntime importable) |
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2 |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
@@ -43,7 +43,7 @@ proofs, 12 transcript, 13 timeline zoom, 14 Cut). **Build loops** are this file'
 (PLAN loop 7 local model slots, PLAN loop 8 $29 readiness). A heading below names the brief loop.
 
 Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; the
-PLAN loops still open are 7 (local model slots) and 8 ($29 readiness). Next: the founder tests by hand with
+PLAN loop 7 closed in loop 25 (2026-11-15); PLAN loop 8 ($29 readiness) is open. Next: the founder tests by hand with
 `docs/teams/founder-test-all.md` (all waiting hand tests, one sitting).
 
 Loop 10 had been mislabelled "Loop 9" in this file and in `old_todo.md`; corrected 2026-11-12. The
@@ -89,7 +89,7 @@ always-on layers, and the documents. 219 tests. Two UI fixes are code-verified o
 - Loop 6 (rules): `docs/teams/loop-09-rules/review.md`. Rewrite order fixed, dead settings removed,
   no cloud call with every key set, no model name in the UI, the Whisper loop cue dropped.
 
-### Loop 7 — local model slots (`docs/duck/BYOK-PLAN.md`)
+### Loop 7 — local model slots — **closed 2026-11-15** (loop 25; `docs/teams/loop-25-model-slots/`)
 
 v1 is completely local: the user plugs in local models, no keys. Order: `providers.py` registry with
 no behaviour change → Whisper folder, LLM base URL on this Mac, ONNX voice, ONNX fill. User keys stay
