@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from duckcore import render
 from duckcore.engine import textfill
 
@@ -62,19 +60,3 @@ def test_active_layers_follow_rects_including_extra_frame():
     after = mask.frame_rects(layers, active_layers=active, active_frames=31, **args)
     assert before == after
     assert [layer['id'] for layer in active] == ['late']
-
-
-def test_short_estimate_separates_cold_and_warm_costs(tmp_path, monkeypatch):
-    sample = dict(timeline=6, clips=3, cold_spans=0, fill=.1, check=20,
-                  layers=2, overhead=8)
-    edit = {'clips': [{'start': 0, 'end': 2}] * 3, 'clean': [
-        {'kind': 'blur', 'enabled': True}, {'kind': 'blur', 'enabled': True}]}
-    initial = render.estimate_edit(edit, {'width':100,'height':100,'fps':30}, tmp_path)
-    sample['key'] = initial['cost_key']
-    render._remember_cost(tmp_path, sample)
-    render._remember_cost(tmp_path, {**sample, 'cold_spans': 3, 'fill': 100})
-    result = render.estimate_edit(edit, {'width':100,'height':100,'fps':30}, tmp_path)
-    assert result['total_seconds'] == 28.1
-    assert result['total_range'] == [18.7, 37.5]
-    edit['cut'] = {'aspect': '1:1'}
-    assert render.estimate_edit(edit, {'width':100,'height':100,'fps':30}, tmp_path)['total_seconds'] != 28.1

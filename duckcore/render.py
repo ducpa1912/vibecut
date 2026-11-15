@@ -602,29 +602,6 @@ def _render_ratio(data_root: Path) -> float | None:
     return ratios[len(ratios) // 2]
 
 
-def _cost_samples(data_root: Path) -> list[dict]:
-    try:
-        stored = json.loads((Path(data_root) / "render_costs.json").read_text())
-        required = {"timeline", "clips", "cold_spans", "fill", "check", "layers", "overhead"}
-        return [row for row in stored if isinstance(row, dict) and required <= row.keys()][-12:]
-    except (OSError, ValueError, TypeError):
-        return []
-
-
-def _remember_cost(data_root: Path, sample: dict) -> None:
-    path = Path(data_root) / "render_costs.json"
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps([*_cost_samples(data_root), sample][-12:]))
-    temporary.replace(path)
-
-
-def _cost_key(edit: dict, layers: list[dict], source: str, device: str) -> str:
-    return hashlib.sha1(json.dumps({
-        "clips": edit.get("clips"), "layers": layers, "cut": edit.get("cut"),
-        "source": source, "device": device,
-    }, sort_keys=True, default=str).encode()).hexdigest()
-
-
 _ESTIMATE_LOCK = threading.Lock()
 _ESTIMATE_JOBS: dict[str, dict] = {}
 _ESTIMATE_QUEUE: list[tuple] = []
@@ -960,31 +937,10 @@ def estimate_edit(edit: dict, meta: dict, data_root: Path,
         high = sum(units * high_rate for units, _low, high_rate in spread)
         overhead = total - fill_seconds
         total_range = [round(low + overhead, 1), round(high + overhead, 1)]
-    # A whole-video ratio hides fixed work on short edits. Use independently
-    # measured fill/check/encode components from comparable spans when present.
-    cold_spans = sum(bool(row.get("frames")) and not row.get("cached") for row in rows)
-    cost_key = _cost_key(edit, layers, source, device)
-    samples = [sample for sample in _cost_samples(data_root)
-               if timeline <= 30
-               and sample["clips"] == len(edit.get("clips") or [])
-               and 0.5 * timeline <= sample["timeline"] <= 2 * timeline
-               and sample["cold_spans"] == cold_spans
-               and sample["layers"] == check_layers
-               and sample.get("key") == cost_key]
-    if samples:
-        predictions = [
-            sample["fill"] + sample["check"]
-            + sample["overhead"] for sample in samples
-        ]
-        # The product already states about one-third run-to-run variation.
-        # Preserve that uncertainty, including when only one sample exists.
-        total_range = [round(min(predictions) * 2 / 3, 1), round(max(predictions) * 4 / 3, 1)]
-        total = round(sum(predictions) / len(predictions), 1)
     return {
         **summary,
         "spans": rows,
         "total_range": total_range,
-        "cost_key": cost_key,
         "total_seconds": total,
         "total_measured": bool(total),
         "timeline_seconds": round(timeline, 1),
@@ -1056,9 +1012,6 @@ def render_edit(
         inks = inkcheck.build_inks(edit, meta, source=source, data_root=data_root)
         layers, strokes = _inked_layers(layers, inks, meta)
     segments: list[Path] = []
-    fill_elapsed = 0.0
-    cold_spans = 0
-    check_elapsed = 0.0
     ffmpeg = media.ffmpeg()
     try:
         for index, clip in enumerate(clips):
@@ -1112,7 +1065,6 @@ def render_edit(
                 continue
             filled = None
             if layers:
-                fill_started = time.monotonic()
                 filled = textfill.prepare_span(
                     source=source,
                     meta=meta,
@@ -1134,8 +1086,6 @@ def render_edit(
                         if progress is not None else None
                     ),
                 )
-                fill_elapsed += time.monotonic() - fill_started
-                cold_spans += bool(filled and not filled.get("cached"))
             segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
             video_filter = _blur_filter(
                 edit, meta, clip_start=start, target_fps=target_fps,
@@ -1212,7 +1162,6 @@ def render_edit(
                 fps=float(target_fps), data_root=Path(data_root), size=check_view(meta, edit),
             )
             sidecar = output.with_suffix(".check.json")
-            check_elapsed = float(report.get("seconds") or 0)
             if report.get("hits") and _retry:
                 source_fps = float(meta.get("fps") or 30.0)
                 widened = _widen_edit(edit, report["hits"], source_fps)
@@ -1236,14 +1185,6 @@ def render_edit(
         for segment in segments:
             segment.unlink(missing_ok=True)
         remember_render_time(Path(data_root), rendered, time.monotonic() - started)
-        if _retry and _started is None:
-            _remember_cost(Path(data_root), {
-                "timeline": rendered, "clips": len(clips), "cold_spans": cold_spans,
-                "fill": fill_elapsed, "check": check_elapsed,
-                "layers": int(report.get("layers") or 0) if check else 0,
-                "key": _cost_key(edit, layers, source, device),
-                "overhead": max(0.0, time.monotonic() - started - fill_elapsed - check_elapsed),
-            })
         return output
     except Exception:
         for segment in segments:

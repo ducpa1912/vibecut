@@ -192,3 +192,28 @@ Not tested: full 160-second render, CPU, app rebuild/manual UI, model-load time
 in isolation, or a universal estimate for a previously unseen edit. No app
 container writes. All new renders are GPU, three clips / 15.375 s, in
 `build/loop21-evidence/revision`. Original baseline evidence stays intact.
+
+## Revision 2 — remove the rejected estimate memo
+
+Starting HEAD: `cd4581c`; reviewed implementation: `551b677`.
+
+- **R2a PASS:** removed `_cost_samples`, `_remember_cost`, `_cost_key`, the
+  sample-based estimate branch/result key, render timing collection for that
+  store, its writer, the scratch `render_costs.json`, and the rejected test.
+  R1 span-local keys, GPU `device_problem` cache detection, and preservation of
+  other rates-file fields remain covered by the three revision tests.
+- **R2b PASS:** a short edit's estimate is not reliable on this Mac: the same
+  3-clip span measured 171–601 s cold. This limit remains open in `TODO.md`.
+  No UI change. Historical measurements above remain the evidence.
+- **R2c PASS:** 241 pytest tests pass; `node --check static/duck/app.js` passes.
+  MEMORY Outcome records A, B, R1 and R3 shipped, with R2 an open limit.
+
+What got worse: identical-edit timing samples no longer influence the estimate;
+that rejected path failed its measured range checks. No new performance or
+pixel regression is claimed or measured. VERSION remains 17.
+
+Not tested: no new renders, GPU benchmarks, full render, app rebuild, or manual
+UI checks in this revision, as requested. Previous timing evidence is unchanged.
+Revision 2 is ready for verifier review; R2 accuracy is explicitly not solved.
+One commit contains code, tests and these documents; no push. The handoff gives
+the commit hash, which cannot be embedded in its own commit.
