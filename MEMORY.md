@@ -85,3 +85,9 @@ the loop's commit. Open requests, one line each (open work in `TODO.md`):
 **Read as:** fix the review of `eeec649..4c07225`: A check inks unstored with a Cut, B cropped-out lines still filled (loop 21); C check under grade, D fps change unstated (loop 22); E one founder test script.
 **Response:** sub-leader briefs loops 21–22 to OpenCode, writes E itself.
 **Outcome:** loops 21–22 shipped (253 tests): check inks stored per Cut, cropped-out lines unfilled, fill spans keyed by their own lines (cold once), check holds under grade 7/7, one fps rule stated on Render. E: `docs/teams/founder-test-all.md`. Open: short-edit estimate (171–601 s cold), vacuous grade test.
+
+### REQ-20261115-02 · 2026-11-15
+**Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
+**Read as:** one OpenCode prompt, five phases: review leftovers, layout odds, PLAN loop 7, PLAN loop 8, fill/check (loop 23).
+**Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`; one commit per phase, verified per phase.
+**Outcome:** open.

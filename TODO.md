@@ -12,8 +12,16 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 ## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
 
 - [ ] REQ-20261115-01 · loop 21 R2 open limit: a short edit's estimate is not reliable on this Mac: the same 3-clip span measured 171–601 s cold. Rejected cost-sample memo removed in Revision 2; review retains measurements.
-- [ ] REQ-20261115-01 · loop 22 test `test_loop22_grade` passes vacuously when no strokes build at either grade; assert at least one grade builds
+- [ ] REQ-20261115-01 · (in loop 23 P1) loop 22 test `test_loop22_grade` passes vacuously when no strokes build at either grade; assert at least one grade builds
 
+
+## REQ-20261115-02 — loop 23 one-shot (`docs/teams/loop-23-oneshot/BRIEF.md`)
+
+- [ ] REQ-20261115-02 · P1 review leftovers #6 #7 #9 #10 #11, dead SFX modal, loop 22 test
+- [ ] REQ-20261115-02 · P2 frame timecode, story/render players opened, 1024×700 and 200 % zoom
+- [ ] REQ-20261115-02 · P3 providers registry + Whisper, local LLM URL, ONNX voice slots
+- [ ] REQ-20261115-02 · P4 SHA-256 per pack file, LGPL offer, Whisper options, repair and import copy
+- [ ] REQ-20261115-02 · P5 shared decode, cropped decode, early estimate, unchecked lines, D8/D9, confidence
 
 ## Native UI (planned 2026-11-12)
 
