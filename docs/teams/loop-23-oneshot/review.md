@@ -27,3 +27,14 @@ Validation: 255 tests passed in 30.42 s; node syntax passed; 6 existing warnings
 What got worse: no measured regression; tooltip adds information inaccessible on touch-only input.
 Not tested: browser layout, clipboard, playback controls. Capture paths: none.
 Validation: 255 tests pass; node syntax passes.
+
+## P3 — local model slots
+
+1. PARTIAL/FAIL: local Provider contract and Registry added; existing task routing is not migrated.
+2. FAIL: 0 transcription slot flows implemented or measured.
+3. PARTIAL/FAIL: 3 loopback URL cases accepted; 4 remote/credential/query cases refused. GET /v1/models and Settings integration remain absent.
+4. FAIL: 0 voice slot flows implemented or measured.
+Settings path/provider/flag persistence, valid/invalid/cleared slot cases remain untested.
+What got worse: unused registry contract adds maintenance surface; no runtime behavior change claimed.
+Not tested: real weights, endpoints, Settings rows, slot clearing. No model names added to UI.
+Validation: 263 tests passed in 31.12 s; node syntax passed.
