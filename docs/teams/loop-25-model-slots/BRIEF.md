@@ -118,3 +118,20 @@ R7. **Rows are not the fill row's height.** Measured: transcription 65 px, writi
 R8. **"Rewrite · Off"** in the Local engine block stays "Off" while "Your writing model" is in use.
     Show "Your writing model" there when the slot is in use and ready.
 R9. pytest and `node --check` pass (state the count); `review.md` Revision 2; one commit; do not push.
+
+## Revision 3 — 2026-11-15 (sub-leader look at `298bef2` in the served app)
+
+Verified live on the scratch root at 1440×900 (after a cache-busting reload): R6 a down server shows
+"Not usable · Your writing server at http://127.0.0.1:18827 is not reachable…" on the reopen after
+4 s; R7 rows 45 / 49 (long writing reason) / 45 px, fill row 45 px, Choose and Clear side by side;
+R8 "Rewrite · Your writing model" with the slot in use. 286 tests pass. Accepted.
+
+One regression: `.settings-grid:has(.model-slot-row) { grid-template-columns: 1fr; }` turns the
+**whole** Settings dialog into one 856 px column, so Storage, Footage rights and Optional downloads
+fall far below the fold. That is a layout change nobody asked for.
+
+R10. Restore the two-column Settings grid (357 / 480 px as before at 1440×900). Only the Models
+     block spans both columns (`grid-column: 1 / -1` on its own section), so its rows keep the
+     R7 heights. Measure in the **served app** (not fixtures): grid columns, the three slot rows in
+     None / In use / Not usable, the fill row, and the bottom of the dialog content at 1440×900 and
+     1280×800. pytest and `node --check` pass; `review.md` Revision 3; one commit; do not push.
