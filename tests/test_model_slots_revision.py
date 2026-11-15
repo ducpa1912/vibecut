@@ -55,3 +55,49 @@ def test_settings_does_not_wait_for_unresponsive_server(tmp_path):
         assert max(timings)<.3
     finally:
         release.set();server.shutdown();server.server_close();thread.join()
+
+
+@pytest.mark.parametrize('refuses', [True, False])
+def test_down_server_resolves_on_next_open(tmp_path, refuses):
+    release=threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_GET(self): release.wait(5)
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    url=f'http://127.0.0.1:{server.server_port}'
+    thread=None
+    if refuses: server.server_close()
+    else:
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    app_settings.save(tmp_path, {'model_slots': {'rewrite': {'path':url,'enabled':True}}})
+    try:
+        start=time.monotonic()
+        initial=model_slots.status(tmp_path,'rewrite')
+        assert initial['checking'] and initial['problem']==''
+        time.sleep(3)
+        row=model_slots.status(tmp_path,'rewrite')
+        assert not row.get('checking') and not row['ready'] and url in row['problem']
+        print('Down server resolved on reopen:', refuses, time.monotonic()-start)
+    finally:
+        if thread:
+            release.set();server.shutdown();server.server_close();thread.join()
+
+
+def test_settings_displays_pending_and_ready_writing_state():
+    from pathlib import Path
+    import subprocess
+    source=Path('static/duck/app.js').read_text()
+    start=source.index('async function openSettings()')
+    end=source.index('\n}',start)+2
+    function=source[start:end]
+    subprocess.run(['node','-e',function+'''
+const assert=require('node:assert/strict');
+let html='';const openModal=value=>{html=value;};
+const esc=x=>String(x??'');const icon=()=>'';const engineLabel=()=>'';
+const fmtBytes=()=>'';const packListMarkup=()=>'';
+const state={voices:[{}],engine:{rewrite:{available:false}},models:[],packs:[],settings:{model_slots:{rewrite:{path:'http://localhost',checking:true,ready:false,problem:''}}}};
+const api=async path=>path==='/api/settings'?state.settings:path==='/api/models'?{models:[]}:{packs:[]};
+(async()=>{await openSettings();assert(html.includes('Checking…'));assert(!html.includes('Not usable · Checking'));
+state.settings.model_slots.rewrite={path:'http://localhost',ready:true,file:'http://localhost'};
+await openSettings();assert(html.includes('<span>Rewrite</span><strong>Your writing model</strong>'));})().catch(e=>{console.error(e);process.exit(1);});
+'''],check=True)

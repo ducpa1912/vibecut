@@ -4056,8 +4056,8 @@ async function openSettings() {
           <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
 
           <div class="kv"><span>Voices</span><strong>${state.voices.length ? `${state.voices.length} local` : '—'}</strong></div>
-          <div class="kv"><span>Rewrite</span><strong>${state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
-          ${state.engine?.rewrite?.available ? '' : `<p class="small muted">${esc(
+          <div class="kv"><span>Rewrite</span><strong>${state.settings?.model_slots?.rewrite?.ready ? 'Your writing model' : state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
+          ${state.settings?.model_slots?.rewrite?.ready || state.engine?.rewrite?.available ? '' : `<p class="small muted">${esc(
             state.engine?.rewrite?.reason === 'appleIntelligenceNotEnabled'
               ? 'Apple Intelligence is off. Turn it on in System Settings → Apple Intelligence & Siri to enable Rewrite.'
               : `Rewrite: ${state.engine?.rewrite?.reason || 'Apple Intelligence is unavailable.'}`
@@ -4080,8 +4080,8 @@ async function openSettings() {
           <h3 style="margin-top:10px">Models</h3>
           ${[['transcription','Your transcription model'],['rewrite','Your writing model'],['voice','Your voice model']].map(([task,label]) => {
             const slot = state.settings?.model_slots?.[task] || {};
-            const text = !slot.path ? 'None' : slot.ready ? `In use · ${slot.file}` : `Not usable · ${slot.problem}`;
-            return `<div class="kv"><span>${label}</span><strong>${esc(text)} <button class="btn small" type="button" data-action="choose-model-slot" data-slot="${task}">Choose</button>${slot.path ? `<button class="btn small" type="button" data-action="clear-model-slot" data-slot="${task}">Clear</button>` : ''}</strong></div>`;
+            const text = !slot.path ? 'None' : slot.checking ? 'Checking…' : slot.ready ? `In use · ${slot.file}` : `Not usable · ${slot.problem}`;
+            return `<div class="kv model-slot-row" data-model-slot="${task}"><span class="model-slot-label">${label}</span><strong class="model-slot-status">${esc(text)}</strong><div class="model-slot-actions"><button class="btn small" type="button" data-action="choose-model-slot" data-slot="${task}">Choose</button>${slot.path ? `<button class="btn small" type="button" data-action="clear-model-slot" data-slot="${task}">Clear</button>` : ''}</div></div>`;
           }).join('')}
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button>${model.file ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(model.file)}">Show</button>` : ''}</strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
           ${(() => {

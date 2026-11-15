@@ -75,7 +75,7 @@ revision attaches to the request that created the thing. Closed entries move to 
 the loop's commit. Open requests, one line each (open work in `TODO.md`):
 
 - REQ-20261111-02 · $29 build readiness · PLAN loop 8.
-- REQ-20261111-03 · loop 25 items 1–4 accepted; Revision 1 fixes timeout, Settings latency and copied-folder cleanup. 283 tests pass; nine-state capture script ready for sub-leader; VERSION 17.
+- REQ-20261111-03 · loop 25 R6–R9: down server resolves on 3-second reopen; nine Settings rows measure 45 px except writing failure 48.594 px; ready writing engine label fixed. 286 tests pass; VERSION 17.
 - REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
 - REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).

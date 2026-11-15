@@ -80,3 +80,40 @@ first Settings load can say checking until reopened. A rewrite may occupy its
 request worker for up to 300 seconds. No cancellation support added.
 Not tested: real weights, native folder-picker execution, new screen captures,
 or a full native build. No new footage, renders, model downloads, or keys.
+
+## Revision 2
+
+Starting HEAD `5e91bf6`. `.claude/launch.json` untouched.
+
+- R6 PASS: explicit `checking` state is neutral (“Checking…”). Pending checks
+  carry start times; a check still pending after 2.5 s returns a URL-specific
+  timeout rather than staying pending forever. Actual refusing and never-answering
+  HTTP servers both returned Not usable on the next open after 3 seconds:
+  3.036839 s and 3.030863 s respectively. Snapshot latency during a check was
+  0.027872 / 0.000287 / 0.000227 s. The prior 36-second symptom was not
+  reproduced locally; the pending-state deadline explicitly prevents it.
+- R7 PASS: rendered production Settings markup and stylesheet in a same-origin
+  1440×900 browser iframe. Changed only the nine status texts and button presence
+  to cover the state matrix, then measured getBoundingClientRect. None/In use
+  rows are 45 px; only the long writing failure is 48.59375 px. All Choose/Clear
+  pairs have identical top coordinates (0 px vertical separation).
+- R8 PASS: ready writing slot makes Local engine → Rewrite say “Your writing
+  model” and hides the contradictory default-engine unavailable note. Node
+  executes actual Settings markup for checking and ready states.
+- R9 PASS: 286 tests pass in 36.18 s, 5 existing TorchScript warnings; JavaScript
+  syntax passes. VERSION remains 17.
+
+| Slot | None height px | In use height px | Not usable height px |
+|---|---:|---:|---:|
+| Transcription | 45 | 45 | 45 |
+| Writing | 45 | 45 | 48.59375 |
+| Voice | 45 | 45 | 45 |
+
+Layout change: Settings uses one column when the new model rows are present,
+with a nonwrapping label and action group plus a wrapping status column.
+What got worse: Settings is taller and requires more vertical scrolling.
+Pending status can report a timeout before a very slow/trickling server finally
+finishes; that worker can subsequently update the cached result.
+Not tested: founder's app window, native build, inference, or smaller viewport
+layout. Browser measurement used real DOM/CSS with state fixtures, not nine
+independent live API configurations. No new captures required or saved.

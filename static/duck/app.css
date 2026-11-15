@@ -830,6 +830,11 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .kv span { color: var(--muted); }
 .kv strong { font-weight: 620; text-align: right; }
+.settings-grid .model-slot-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 6px 10px; grid-column: 1 / -1; }
+.model-slot-label { white-space: nowrap; }
+.model-slot-status { min-width: 0; overflow-wrap: anywhere; }
+.model-slot-actions { display: flex; flex-wrap: nowrap; gap: 4px; }
+.settings-grid:has(.model-slot-row) { grid-template-columns: 1fr; }
 
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);

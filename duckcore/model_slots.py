@@ -12,7 +12,7 @@ from duckcore.providers import local_base_url
 FILES = {'transcription': ('config.json',), 'voice': ('kokoro-v1.0.onnx', 'voices-v1.0.bin')}
 DIRS = {'transcription': 'stt-user', 'voice': 'voice-user'}
 _status_cache = {}
-_status_pending = set()
+_status_pending = {}
 _status_lock = threading.Lock()
 
 
@@ -22,7 +22,7 @@ def _writing_status(path):
         if cached and time.monotonic() - cached[0] < 30:
             return dict(cached[1])
         if path not in _status_pending:
-            _status_pending.add(path)
+            _status_pending[path] = time.monotonic()
             def check():
                 row = {'path': path, 'file': path, 'ready': False, 'problem': ''}
                 try:
@@ -33,9 +33,16 @@ def _writing_status(path):
                 finally:
                     with _status_lock:
                         _status_cache[path] = (time.monotonic(), row)
-                        _status_pending.discard(path)
+                        _status_pending.pop(path, None)
             threading.Thread(target=check, daemon=True, name='writing-status').start()
-    return {'path': path, 'file': path, 'ready': False, 'problem': 'Checking the local server…'}
+        elif time.monotonic() - _status_pending[path] >= 2.5:
+            # Bound the visible checking state even if a server trickles a body
+            # indefinitely and never triggers the socket's inactivity timeout.
+            row = {'path': path, 'file': path, 'ready': False, 'checking': False,
+                   'problem': f'Your writing server at {path} did not answer in time.'}
+            _status_cache[path] = (time.monotonic(), row)
+            return row
+    return {'path': path, 'file': path, 'ready': False, 'checking': True, 'problem': ''}
 
 
 def _remove_copy(root, task, path):
