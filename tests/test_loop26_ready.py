@@ -100,6 +100,17 @@ def test_installed_needs_the_exact_size(tmp_path, monkeypatch):
     assert packs.installed_path(tmp_path, "t") == folder
 
 
+def test_installed_hash_is_checked(tmp_path, monkeypatch):
+    body = b"correct"
+    pack = _fake_pack(monkeypatch, body, sha256=hashlib.sha256(body).hexdigest())
+    folder = tmp_path / "models" / "packs" / "t"
+    folder.mkdir(parents=True)
+    (folder / "model.bin").write_bytes(b"changed")
+    assert packs.installed_path(tmp_path, "t") is None
+    (folder / "model.bin").write_bytes(body)
+    assert packs.installed_path(tmp_path, "t") == folder
+
+
 def test_git_blob_sha1_is_checked(tmp_path):
     body = b'{"a": 1}\n'
     blob = hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest()
@@ -205,6 +216,13 @@ def test_each_technical_message_maps_to_a_creator_sentence(technical, expected):
     assert message.endswith(".")
 
 
+def test_file_access_errors_map_to_creator_copy():
+    for text in ("Permission denied", "read-only file system", "/Users/me/video.mov: No such file or directory"):
+        message = import_errors.creator_message(text)
+        assert message != text
+        assert message.endswith(".")
+
+
 @pytest.mark.parametrize("plain", [
     "Use MP4, MOV or M4V.",
     "Wait for Check to finish first.",
@@ -218,7 +236,7 @@ def test_plain_messages_pass_through(plain):
 @pytest.mark.parametrize("unknown", [
     "Traceback (most recent call last): KeyError 'x'",
     "subprocess returned non-zero exit status 1",
-    "/Users/someone/Library/x.mov: Permission denied\nmore",
+    "/Users/someone/Library/x.mov: weird failure\nmore",
     "",
 ])
 def test_unknown_technical_text_falls_back(unknown):

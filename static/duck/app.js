@@ -4172,6 +4172,15 @@ function openImportChoice() {
   </dialog>`);
 }
 
+function importCreatorError(message) {
+  const text = String(message || '').toLowerCase();
+  if (text.includes('disk') || text.includes('space')) return 'There is not enough free disk space. Free some space, then import again.';
+  if (text.includes('permission') || text.includes('read-only') || text.includes('not permitted')) return 'DuckSuite could not access this video. Choose a file you can read, then import again.';
+  if (text.includes('file not found') || text.includes('no such file')) return 'This video is no longer available. Choose the file again, then import it.';
+  if (text.includes('codec') || text.includes('unsupported') || text.includes('ffmpeg')) return 'This video could not be read. Export it again as H.264 or HEVC MP4 and try again.';
+  return 'This video could not be imported. Export it again as H.264 or HEVC MP4 and try again.';
+}
+
 function beginImport(mode) {
   closeModal();
   state.pendingImportMode = mode;
@@ -4266,7 +4275,8 @@ async function handleFile(file) {
     navigate(`project/${data.project.id}/check`);
     toast('Imported. Check starts with scenes first.');
   } catch (error) {
-    toast(`Import failed: ${error.message}`, 'bad');
+    console.error('Import failed:', error.message);
+    toast(importCreatorError(error.message), 'bad');
   } finally {
     state.importing = false;
     state.pendingImportMode = 'new';
@@ -5560,7 +5570,8 @@ window.duckProjectId = () => state.project?.id || '';
 window.duckImportError = (message) => {
   state.importing = false;
   render();
-  toast(message || 'Import failed.', 'bad');
+  console.error('Import failed:', message);
+  toast(importCreatorError(message), 'bad');
 };
 
 window.duckRecordingStarted = (path) => {

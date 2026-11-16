@@ -5,7 +5,7 @@ OpenCode run stopped on a provider 503 (session `ses_e22b449f…`, last message 
 Service temporarily unavailable`). OpenCode's partial tree was read and kept only where it held; the
 JS import heuristic and the unauthenticated licence link were replaced (reasons below).
 
-**Result:** 324 tests pass (286 before, +38), `node --check static/duck/app.js` clean.
+**Result:** 326 tests pass, `node --check static/duck/app.js` clean.
 `textfill.VERSION` stays 17; no fill pixels change; the next render is not cold.
 
 ## 1. Pack integrity — pass, with one stated gap
@@ -113,6 +113,15 @@ Plain messages already written for a creator ("Use MP4, MOV or M4V.", "Wait for 
 first.") pass through unchanged. OpenCode's JS keyword match was removed: it turned those plain
 messages into the vague fallback. Tests: 17 mapped messages, 4 pass-throughs, 4 fallbacks, the
 upload route, the append job.
+
+## Follow-up review fixes
+
+Installed files now run the same publisher-digest check as downloads. Technical
+permission and missing-file errors map to creator copy. Browser and native bridge
+import errors log technical text while showing creator copy. The sparse-file pack
+test now correctly expects rejection.
+
+Final suite: 326 passed, 5 existing TorchScript warnings.
 
 ## What got worse
 

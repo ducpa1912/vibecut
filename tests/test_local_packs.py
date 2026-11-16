@@ -45,8 +45,8 @@ def test_cpu_fill_pack_installs_into_the_model_folder(tmp_path: Path) -> None:
     folder.mkdir(parents=True)
     assert packs.installed_path(tmp_path, "fill-lama-cpu") is None
     with (folder / "lama_fp32.onnx").open("wb") as handle:
-        handle.truncate(pack["size_bytes"])  # sparse, size is what the check reads
-    assert packs.installed_path(tmp_path, "fill-lama-cpu") == folder
+        handle.truncate(pack["size_bytes"])  # sparse bytes do not match publisher hash
+    assert packs.installed_path(tmp_path, "fill-lama-cpu") is None
 
 
 def test_removing_the_cpu_pack_keeps_other_files(tmp_path: Path) -> None:

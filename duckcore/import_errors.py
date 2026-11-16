@@ -49,12 +49,16 @@ RULES: tuple[tuple[str, str], ...] = (
      "The video could not be copied into DuckSuite. Check the free disk space, then import again."),
     (r"the read could not start",
      "DuckSuite could not start reading the new video. Reopen the project, then import again."),
+    (r"permission denied|read-only file system|operation not permitted",
+     "DuckSuite could not access this video. Choose a file you can read, then import again."),
+    (r"file not found|no such file or directory",
+     "This video is no longer available. Choose the file again, then import it."),
 )
 
 # Text that marks a message as technical: it never reaches the creator as is.
 _TECHNICAL = re.compile(
     r"ffmpeg|ffprobe|errno|traceback|exception|\[[a-z0-9_ ]+ @ 0x|0x[0-9a-f]{6,}|"
-    r"returned non-zero|subprocess|\.py\b|/users/|/private/|/tmp/",
+    r"returned non-zero|subprocess|\.py\b|/users/|/private/|/tmp/|\bpath\b",
     re.I,
 )
 
