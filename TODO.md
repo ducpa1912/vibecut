@@ -26,6 +26,12 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] REQ-20261115-01 · a short edit's estimate is not reliable: the same 3-clip span measured
   171–601 s cold (loop 21 R2).
 
+## REQ-20261116-01 — LaMa on Core ML (experiment)
+
+- [ ] REQ-20261116-01 · 512 test done (1.35× PyTorch, ±3/255, `docs/teams/coreml-lama-test/review.md`).
+  Next: flexible sizes 64–512, real review-project spans, second-load time, how the core calls Core
+  ML without PyTorch, and what happens to the TorchScript user slot, MI-GAN and STTN.
+
 ## Loop 28 — layout odds (REQ-20261115-02 P2)
 
 - [ ] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll.

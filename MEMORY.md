@@ -71,6 +71,7 @@ closed entries move to `old_memory.md` with the loop's commit. Open work is in `
 - REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost (loop 27). Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
 - REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).
+- REQ-20261116-01 · 2026-11-16 · "Now try the Core ML with LaMa GPU" → read as: convert the same LaMa weights to a Core ML package and measure speed and pixels against PyTorch GPU, in `build/coreml-lama/` (no app change). Outcome 2026-11-16: converts (99 MB FP16); Core ML CPU+GPU 406 ms vs PyTorch MPS 550 ms per 512 run (1.35×), max diff 3/255; Neural Engine rejects it. Open: flexible sizes, real footage, PyTorch still used by other fill slots (`docs/teams/coreml-lama-test/review.md`).
 
 ### REQ-20261115-02 · 2026-11-15
 **Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
