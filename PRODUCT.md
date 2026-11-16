@@ -1,7 +1,7 @@
 # Product
 
-> Status 2026-11-13: local-only macOS app, about 75 % complete by the founder's estimate (11 Nov; not restated since). 324 tests.
-> Brief loops 7–19 (ink check through Cut enhance) are closed; PLAN loops 7–8 are open. App Store
+> Status 2026-11-16: local-only macOS app, about 75 % complete by the founder's estimate (11 Nov; not restated since). 324 tests.
+> Brief loops 7–19 and loops 21–25 are closed; PLAN loop 8 shipped its code in loop 26 and waits on the founder. App Store
 > work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
 
 <!-- impeccable:product-schema 1 -->
@@ -56,15 +56,16 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 
 | Area | In the build today | Planned (`PLAN.md`) | Deferred or cut |
 |---|---|---|---|
-| Import | One local file, picker or Finder drag; append to the same project | Creator-readable error copy (loop 8) | URL / path import |
+| Import | One local file, picker or Finder drag; append to the same project; a failed import says what to do in one plain sentence (loop 26) | — | URL / path import |
 | Check | Scenes, transcript, Vision OCR, stories, true first frame, cut/onset stills | — | Faces, saliency, music as product features |
-| Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, stroke-shaped hole, post-render letter check with one refill | Better fill on moving footage (loop 5) | Model picker for the default |
+| Clean | Ink hole, GPU LaMa default, CPU pack optional, `moves` flag, flash < 0.6 s → Blur, Clean all confirms and reports counts, stroke-shaped hole, post-render letter check with one refill; a line the Cut crops away is not filled (loop 21) | Better fill on moving footage (loop 5) | Model picker for the default |
 | Script | Transcript, translate (en / vi / zh), rewrite (clean / short / punchy) with Apple Intelligence or a basic cleanup shown in the UI, captions + SRT | — | Publish kit, titles, hashtags |
-| Voice | macOS voices, Kokoro pack, dub, music and SFX on one audio track | Manual microphone test (loop 8) | Voice cloning |
-| Edit | Trim, stories, **written story** (thesis + 3–6 beats from anywhere), media beats, filters; **Cut Focus** (aspect, Fit/Fill, crop); timeline zoom 1×–16×; layer count and a fade in the inspector; empty timeline lanes collapse to a `+` row | Grading sliders and Lanczos enhance shipped in Cut (loops 18–19); CoreML super-resolution is research only; split, reorder, remove silence | LUTs, keyframes |
-| Render | The Cut aspect (source, 9:16, 1:1, 4:5, 16:9), 1080-class, 24/30 fps, H.264/AAC, two-column screen with the estimate and the leftover-text check on the left, queue and finished cards on the right | — | Auto-frame, 4K, 60 fps, HDR, ProRes |
-| Models | LaMa bundled (GPU); Whisper + Kokoro optional packs; translation from a user CTranslate2 folder; **a user fill model** (ONNX or TorchScript) runs in place of LaMa | Local slots for transcription, LLM URL and voice (PLAN loop 7); SHA-256 per pack (PLAN loop 8) | Any translation weights shipped or hosted by DuckSuite |
+| Voice | macOS voices, Kokoro pack, a user ONNX voice folder (loop 25), dub, music and SFX on one audio track | Manual microphone test (founder) | Voice cloning |
+| Edit | Trim, stories, **written story** (thesis + 3–6 beats from anywhere), media beats, filters; **Cut Focus** (aspect, Fit/Fill, crop, four grade sliders, Lanczos enhance); timeline zoom 1×–16×; layer count and a fade in the inspector; empty timeline lanes collapse to a `+` row; frame timecode as a tooltip | Frame timecode beside the time (loop 28); CoreML super-resolution is research only; split, reorder, remove silence | LUTs, keyframes |
+| Render | The Cut aspect (source, 9:16, 1:1, 4:5, 16:9), 1080-class, 24/30 fps chosen by one stated rule, H.264/AAC, two-column screen with the estimate and the leftover-text check on the left, queue and finished cards on the right; a finished job whose file is gone says so | Lower cold cost with no pixel change (loop 27) | Auto-frame, 4K, 60 fps, HDR, ProRes |
+| Models | LaMa bundled (GPU); Whisper + Kokoro optional packs, each file checked for exact size and the publisher's hash where one is published (loop 26); translation from a user CTranslate2 folder; local slots for transcription, a writing model at a URL on this Mac and voice (loop 25); **a user fill model** (ONNX or TorchScript) runs in place of LaMa, and a fill problem names the next step | A smaller Whisper pack, only after a Vietnamese comparison | Any translation weights shipped or hosted by DuckSuite |
 | Cloud | None. Nothing uploads | — | User keys after v1; cloud render plans |
+| Licences | Settings shows "FFmpeg 7.1.1 · LGPL 2.1 · Source offer" (loop 26); the contact address is still a placeholder | Founder fills the contact | — |
 
 ### Known limits, stated plainly
 

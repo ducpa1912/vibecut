@@ -4,7 +4,7 @@ Current plan only. Closed loops 1–4 and the ink-check loop are archived in `ol
 not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open checkboxes,
 `MEMORY.md` the decisions in force, `AGENTS.md` the working contract.
 
-## Where the build stands (measured 2026-11-12)
+## Where the build stands (2026-11-16; fill and render figures measured 2026-11-12)
 
 | Fact | Value |
 |---|---|
@@ -22,9 +22,12 @@ not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open ch
 1. **Fill is weak on moving footage** and that is most of the footage: LaMa fills one frame at a
    time and cannot rebuild a background it never saw. This is the product's main feature.
 2. **The leftover check sees only lines that have a layer.** Text Check never found is not judged,
-   and a line under 5 frames is reported as not checked. Cold render cost rose to 620–847 s (418 s before); the
-   estimate now plans the fill's own runs and shows a range.
-3. **Layout balance** is unfinished on Render, the inspector and the timeline.
+   and a line under 5 frames is reported as not checked.
+3. **Fill and check cost.** Cold render 620–847 s (418 s before the crossing rule); the first
+   estimate of a project is 144.8 s of background work; the leftover check is 68–81 s quiet. Loop 27.
+4. **Layout at small sizes is unmeasured.** 1024×700 and 200 % zoom were never measured; the story
+   and render players were never opened; frame timecode is a tooltip only. Loop 28. (Layout balance
+   at 1440×900 and 1280×800 is closed, loop 10.)
 
 ## Rule for ordering
 
@@ -42,9 +45,23 @@ that arrived as `docs/teams/<loop>/BRIEF.md` (… 8 moving fill, 9 rules, 10 lay
 proofs, 12 transcript, 13 timeline zoom, 14 Cut). **Build loops** are this file's own order
 (PLAN loop 7 local model slots, PLAN loop 8 $29 readiness). A heading below names the brief loop.
 
-Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; the
-PLAN loop 7 closed in loop 25 (2026-11-15); PLAN loop 8 ($29 readiness) is open. Next: the founder tests by hand with
-`docs/teams/founder-test-all.md` (all waiting hand tests, one sitting).
+Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; PLAN
+loop 7 closed in loop 25 (2026-11-15); PLAN loop 8 ($29 readiness) shipped its code in loop 26 and
+waits on the founder. Next, in order: loop 27 (fill and check cost, no pixel change), loop 28 (layout
+odds), then stop for the founder (`docs/teams/founder-test-all.md`, Vietnamese clip, contact address,
+Native UI decisions).
+
+### Loops 21–28 — review fixes and the loop 23 one-shot (REQ-20261115-01, REQ-20261115-02)
+
+| Loop | Work | State |
+|---|---|---|
+| 21–22 | Check inks per Cut, cropped-out lines, fill span keys, check under grade, fps rule | **closed** (`72b1756`) |
+| 23 | One-shot P1–P5: partial (timecode tooltip, provider contract, missing renders, unchecked reasons) | **closed partial** (`0c4e7f8`) |
+| 24 | P1 review leftovers #6 #7 #9 #10 #11 | **closed** (`b109e45`) |
+| 25 | P3 = PLAN loop 7, local model slots | **closed** (`b9ad447`) |
+| 26 | P4 = PLAN loop 8 code: pack digests, FFmpeg offer, fill repair, import copy | **code shipped** (`a20954b`); founder items open |
+| 27 | P5: early ink store, shared check decode, cropped fill decode (with proof) | next |
+| 28 | P2: 1024×700, 200 % zoom, players captured, frame timecode, clipboard | after 27 |
 
 Loop 10 had been mislabelled "Loop 9" in this file and in `old_todo.md`; corrected 2026-11-12. The
 layout evidence is `docs/teams/loop-10-layout-balance/review.md` (revisions 1–3).
@@ -95,10 +112,12 @@ v1 is completely local: the user plugs in local models, no keys. Order: `provide
 no behaviour change → Whisper folder, LLM base URL on this Mac, ONNX voice, ONNX fill. User keys stay
 planned in `BYOK-PLAN.md` and are **not v1**.
 
-### Loop 8 — $29 build readiness
+### Loop 8 — $29 build readiness — code shipped in loop 26 (2026-11-16, `a20954b`)
 
-SHA-256 per pack file, LGPL written source offer for ffmpeg, a smaller or per-language Whisper pack,
-AI fill repair instruction, manual microphone test, creator-readable import errors.
+Shipped: exact size and publisher digest per pack file, LGPL written source offer for ffmpeg in
+Settings, fill repair instruction, creator-readable import errors, a Whisper options table. Waiting on
+the founder: the offer's contact address, a Vietnamese clip for the Whisper comparison, the manual
+microphone test. Kokoro files have no publisher hash (exact size only).
 
 ### Loop 10 — layout balance (brief loop 10) — **closed 2026-11-12**
 
@@ -148,7 +167,7 @@ Rules:
 - Cloud render plans ($5 / $20), render broker: deferred; nothing in the build uploads.
 - User keys: planned, not v1.
 - DuckClean, DuckClassic, DuckStudio: other lanes.
-- Timeline split/reorder/remove-silence, aspect switching, auto-frame: after loop 9.
+- Timeline split/reorder/remove-silence and auto-frame: later. (Aspect switching shipped in loop 14.)
 
 ## Document map
 

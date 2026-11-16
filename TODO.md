@@ -6,28 +6,42 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–25, fix-02, fix-04;
+- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
-- [ ] REQ-20261111-02 · loop 26 leftovers (`docs/teams/loop-26-ready-29/review.md`): the two Kokoro
-  files have no publisher hash (exact size only); founder fills `<contact address>` in
-  `duckcore/licenses.py` and `Licenses/FFmpeg-SOURCE.txt`; Whisper: founder supplies a short
-  Vietnamese clip to compare today's pack with turbo-4bit (0.46 GB) before any switch.
-- [ ] REQ-20261115-02 · P5: shared decode, cropped decode, early estimate, D8/D9, confidence, key
-  frames remain open; no measured win shipped.
-- [ ] REQ-20261115-02 · P2: 1024×700 and 200 % zoom measures, story/render player captures, frame
-  timecode beside the time (now a tooltip only).
 
-## REQ-20261115-01 — review of `eeec649..4c07225` (2026-11-15)
+## Loop 27 — fill and check cost, no pixel change (REQ-20261115-02 P5, REQ-20261111-11)
 
-- [ ] REQ-20261115-01 · loop 21 R2 open limit: a short edit's estimate is not reliable on this Mac: the same 3-clip span measured 171–601 s cold. Rejected cost-sample memo removed in Revision 2; review retains measurements.
+- [ ] Build the ink store and span units during Check: the first estimate of a project is 144.8 s of
+  background work today.
+- [ ] Share the leftover check's decode with the render (measured 52.8 s). The check is 68–81 s quiet,
+  170–190 s when the Mac is busy (load 18).
+- [ ] Crop the fill decode (measured 35–50 s): only with an every-frame proof of identical pixels.
+- [ ] Cold render 620–847 s (418 s before the crossing rule); model time 702 s of an instrumented
+  1,091 s. Fewer key frames (a third of model time) changes pixels: needs a `VERSION` bump, not loop 27.
+- [ ] REQ-20261111-11 · D8 per-frame fill where the picture changes fast: not shipped, no number.
+- [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
+- [ ] Fill confidence per line: `quality` is binary from mean motion; a third level only if it wins.
+- [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
+  (no steady strokes). The Render screen says so; no rule judges them yet.
+- [ ] REQ-20261115-01 · a short edit's estimate is not reliable: the same 3-clip span measured
+  171–601 s cold (loop 21 R2).
 
+## Loop 28 — layout odds (REQ-20261115-02 P2)
 
-## REQ-20261115-02 — loop 23 one-shot (`docs/teams/loop-23-oneshot/BRIEF.md`)
+- [ ] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll.
+- [ ] Open and capture the story media player and the render playback window (never opened yet).
+- [ ] Frame timecode beside the time on the Edit bar (today a tooltip only, `98e1edf`).
+- [ ] Copy text in the transcript menu checked against the real clipboard.
 
-- [ ] REQ-20261115-02 · P1 review leftovers #6 #7 #9 #10 #11, dead SFX modal, loop 22 test
-- [ ] REQ-20261115-02 · P2 frame timecode, story/render players opened, 1024×700 and 200 % zoom
-- [ ] REQ-20261115-02 · P3 providers registry + Whisper, local LLM URL, ONNX voice slots
-- [ ] REQ-20261115-02 · P5 shared decode, cropped decode, early estimate, unchecked lines, D8/D9, confidence
+## Waiting on the founder (REQ-20261111-02, `docs/teams/loop-26-ready-29/review.md`)
+
+- [ ] Fill `<contact address>` in `duckcore/licenses.py` and `Licenses/FFmpeg-SOURCE.txt`.
+- [ ] Whisper pack (1.61 GB, required for `vi`): a short Vietnamese clip the founder owns, to compare
+  today's pack with turbo-4bit (0.46 GB) before any switch.
+- [ ] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it.
+- [ ] Manual microphone test on a clean Mac (step in `founder-test-all.md`).
+- [ ] The stored transcript of `prj_e95348a97316` holds three made-up cues: the founder runs Check
+  again; it can move clean-layer ranges.
 
 ## Native UI (planned 2026-11-12)
 
@@ -53,53 +67,10 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
 - [ ] REQ-20261112-07 · loop 20: optional local VLM scene captions for story (roadmap; multi-GB,
   minutes per clip, an optional pack only, never a default).
 
-## Layout — open after brief loop 10
-
-- [ ] The player bar shows `mm:ss`; the old overlay showed the frame timecode. Put frames back on
-  the Edit bar if the founder misses them.
-- [ ] Not opened in the layout loop: the story media player (no media beat in the review project)
-  and the render playback window. Same bar code; not seen.
-- [ ] Copy text in the transcript menu was not checked against the real clipboard.
-- [ ] 1024×700 and browser zoom not measured.
-
-## Code review 2026-11-13 (`docs/reviews/2026-11-13-loops-07-19.md`)
-
-Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most severe first:
-
-- [ ] #6, #7, #9–#11 low: long-scene stories, resident user model, sequence overshoot, ONNX slot
-  without onnxruntime, Play on a missing render file and dead SFX filter modal
-
-## Fill and leftover check — open after brief loops 7–9
-
-- [ ] REQ-20261111-11 · D8 per-frame fill where the picture changes fast: not shipped, no number.
-  Dropped from this file when loop 7 closed; restored 2026-11-13.
-- [ ] Fill confidence per line: `quality` is binary from mean motion; consider a third level or score.
-- [ ] REQ-20261111-11 · D9 `follow_motion` for moving lines: wire, measure, ship only if it wins.
-- [ ] REQ-20261111-11 · two lines are not checked: `cl_7b144258ac` (2 frames) and `cl_a47d0aa1c1`
-  (no steady strokes). The Render screen says so; no rule judges them yet.
-- [ ] REQ-20261111-11 · cold render 620–847 s on this Mac (418 s before the crossing rule); model
-  time is 702 s of an instrumented 1,091 s. Measured, not built:
-  crop the fill decode (35–50 s, needs an every-frame proof); share the check's decode (52.8 s);
-  fewer key frames (about a third of the model time, changes pixels, needs a `VERSION` bump).
-- [ ] REQ-20261111-11 · first estimate of a project is 144.8 s of background work: build the ink
-  store and the span units during Check.
-- [ ] REQ-20261111-11 · leftover check 68–81 s quiet, 170–190 s when the Mac is busy (load 18):
-  the check and a render compete for the same cores; measure with the app alone before tuning.
-- [ ] The stored transcript of `prj_e95348a97316` still holds three made-up cues: the founder runs
-  Check again; it can move clean-layer ranges.
-
-## Loop 8 — $29 build readiness (REQ-20261111-02)
-
-- [ ] Shrink the Whisper pack or make it per-language (1.61 GB; required for `vi`). Loop 26 table:
-  turbo-4bit 0.46 GB is the candidate; no published Vietnamese figure; needs the founder clip.
-- [ ] Manual microphone test on a clean Mac; recording compiles, never tested by hand
-
 ## Later
 
 - [ ] Model pack manager polish: an in-app "verify all" and storage cleanup. Dropped from this file
   in loop 6/9; restored 2026-11-13.
-- [ ] Render queue lists "Done" jobs whose file is gone; Play must not be offered for a missing file
-  (review finding #11). Dropped in loop 6/9; restored 2026-11-13.
 - [ ] Cold render cost beyond the estimate: warm the cache after Clean all, or cap fill work by plan.
 - [ ] `pipeline._first_still` adds one ffmpeg seek per Check; measure on a 10-minute source.
 - [ ] Title blur runs 0.0–0.317 s for a 0.066 s title: about 7 frames carry a soft patch; consider an
@@ -107,7 +78,7 @@ Findings #1–#5, #8 and the docs gaps D1–D7 are fixed. Still open, most sever
 - [ ] Short flashes after the first frame: a title under 250 ms at a later cut can fall between
   4 fps samples. Measure before fixing.
 - [ ] Timeline split and reorder; remove-silence. Trim works, the rest does not.
-- [ ] Auto-frame remains a deliberate v1 cut; Cut aspect switching shipped in loop 14.
+- [ ] Auto-frame remains a deliberate v1 cut.
 
 ## Paused by decision
 

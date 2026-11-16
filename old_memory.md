@@ -416,3 +416,26 @@ stored in `edit.cut.enhance`, applied only when upscaling; "no new detail" state
 **Numbers:** 640x360 -> 1920x1080; proof frame 1920x1080, sharpness 8.1 -> 14.2 (1.75x); 360->720
 benchmark bicubic PSNR 36.03 / lap 18.3, lanczos 36.20 / 19.5, lanczos+unsharp 40.21 / 35.4 vs
 original 40.7. 198 tests.
+
+
+## Archived 2026-11-16 (docs clean-up after loop 26)
+
+- REQ-20261111-03 · loop 25 R6–R9 (closed, PLAN loop 7 closed at `b9ad447`): down server resolves on
+  3-second reopen; nine Settings rows measure 45 px except writing failure 48.594 px; ready writing
+  engine label fixed. 286 tests; VERSION 17.
+
+### REQ-20261115-01 · 2026-11-15 (closed; one limit kept open in MEMORY/TODO)
+**Request:** "git pull to review the current dev of the ducksuite program, there're a lot going on. then delegate the task to sub-leader"
+**Read as:** fix the review of `eeec649..4c07225`: A check inks unstored with a Cut, B cropped-out lines still filled (loop 21); C check under grade, D fps change unstated (loop 22); E one founder test script.
+**Response:** sub-leader briefs loops 21–22 to OpenCode, writes E itself.
+**Outcome:** loops 21–22 shipped (253 tests, closed at `72b1756`): check inks stored per Cut, cropped-out lines unfilled, fill spans keyed by their own lines (cold once), check holds under grade 7/7, one fps rule stated on Render. E: `docs/teams/founder-test-all.md` (`3e9bf8c`). The vacuous grade test was fixed in `44342cc` (loop 23 P1). Still open: short-edit estimate 171–601 s cold.
+
+### REQ-20261115-02 outcome before 2026-11-16 (superseded in MEMORY)
+loops 23–24 partial; loop 25 items 1–4 accepted. Revision 1: 3-second rewrite stub succeeds under 300-second timeout; Settings down-server latency ≤0.032 s; choose-choose-clear leaves 0 managed/import folders. 283 tests pass. VERSION 17.
+
+### Decision text shortened in MEMORY.md on 2026-11-16 (kept here verbatim)
+- Independent QA 2026-11-13 (`docs/reviews/independent-qa-2026-11-13.md`): all 14 findings fixed
+  (`qa-repair-2026-11-13`, `fix-04-qa-followup`). Each finished card plays its own job.
+- Cut: enhance invents no detail; a CoreML pack is research only; a line the Cut crops away is "not checked".
+- Native UI: SwiftUI + AppKit, the Python core and its HTTP API stay, WKWebView goes at cutover. No headless Chrome once N1 opens.
+- Limits: most lines sit on moving footage; macOS 26.0, Apple silicon only.

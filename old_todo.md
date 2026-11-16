@@ -440,3 +440,18 @@ Closed by loop 25 (2026-11-15): minimal registry accepted; nine Settings states 
 - [x] AI fill repair / reinstall instruction beside the existing problem text and Reveal button
 - [x] Import failure copy: technical errors ("ffmpeg frame read failed") rewritten for a creator
   Result: `docs/teams/loop-26-ready-29/review.md`; 324 tests.
+
+
+## Archived 2026-11-16 (docs clean-up after loop 26)
+
+Closed, verified against code and tests on 2026-11-16:
+- [x] REQ-20261115-02 · P1 / code review 2026-11-13 #6 long-scene stories (`bc1894c`, `test_long_scenes_have_sentence_beats`)
+- [x] #7 resident user model: estimate never opens it, versions evicted (`44342cc`, `bc1894c`)
+- [x] #9 sequence overshoot (`bc1894c`, `test_player_scheduling_and_missing_paths`)
+- [x] #10 ONNX slot without onnxruntime: sidecar imports onnxruntime (`bc1894c`, accepted `b109e45`)
+- [x] #11 Play on a missing render file: "File missing. Render again to play it." (`44342cc`)
+- [x] dead SFX filter modal removed (`44342cc`)
+- [x] loop 22 vacuous grade test now asserts strokes build (`44342cc`)
+- [x] REQ-20261115-02 · P3 providers registry + Whisper folder, local LLM URL, ONNX voice slots (loop 25, closed `b9ad447`)
+- [x] Loop 8: SHA-256/publisher digest per pack, FFmpeg source offer, fill repair line, import error copy (loop 26, `a20954b`)
+- [x] Layout: frame timecode exposed as a tooltip (`98e1edf`); beside-the-time display stays open (loop 28)

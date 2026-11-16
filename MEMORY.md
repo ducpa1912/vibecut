@@ -1,8 +1,7 @@
 # MEMORY — DuckSuite current direction
 
-**Read `AGENTS.md` first, then this file and `TODO.md`.** History is in `old_memory.md`; agents do
-not read that file. Keep this file under ~80 lines: current direction, decisions in force, open
-questions. Detailed request history belongs in the archive and in the product report.
+**Read `AGENTS.md` first, then this file and `TODO.md`.** History is in `old_memory.md` (agents do
+not read it). Keep this file under ~80 lines: direction, decisions in force, open requests.
 
 ## Direction
 
@@ -25,18 +24,13 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence; LaMa and the
   `moves` warning stay. A user fill model folder (ONNX or TorchScript; the built sidecar imports onnxruntime, loop 24) replaces LaMa.
 - Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
-- Cut (loops 14–19): crop, aspect, fit, look, grade and enhance (`edit.cut`) run in ffmpeg as crop →
-  scale → sharpen → grade → pad, so letterbox bars stay black. Enhance (Lanczos + unsharp) only when the
-  kept picture is drawn larger; it invents no detail; a CoreML pack is research only. The player grade
-  is CSS, labelled approximate. The leftover check reads the source through the same filters
-  (`render.check_view`); a line the Cut crops away is "not checked".
-- Independent QA 2026-11-13 (`docs/reviews/independent-qa-2026-11-13.md`): all 14 findings fixed
-  (`qa-repair-2026-11-13`, `fix-04-qa-followup`). Output fps is automatic: 24 when the source is
-  within 0.6 of 24, else 30; Render shows it, no selector. Each finished card plays its own job.
-- Native UI track planned (`PLAN.md`, N1–N8): SwiftUI + AppKit, the Python core and its HTTP API stay,
-  WKWebView goes at cutover; decisions open in `TODO.md`. No headless Chrome once N1 opens.
+- Cut (loops 14–19): `edit.cut` runs in ffmpeg as crop → scale → sharpen → grade → pad (bars stay
+  black); enhance is Lanczos + unsharp only when drawn larger; the player grade is CSS, labelled
+  approximate. The leftover check reads the source through the same filters (`render.check_view`).
+- Output fps is automatic: 24 when the source is within 0.6 of 24, else 30; Render shows it.
+- Native UI track planned (`PLAN.md`, N1–N8), three decisions open in `TODO.md`; not started.
 
-## Where the build stands (2026-11-13)
+## Where the build stands (2026-11-16)
 
 | Fact | Value |
 |---|---|
@@ -58,36 +52,28 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
   Check never found has no layer and is not judged.
 - A steady shot cut at both ends of a line: scenery in the box cannot be told from text by time, so
   the hole there is a little larger than the letters.
-- Render time on this 8 GB Mac varies by about a third for the same edit, so the estimate is a range.
+- Render time on this 8 GB Mac varies by a third for one edit (estimate is a range); a 3-clip span measured 171–601 s cold.
 - Three wins are measured and not built: crop the fill decode (35–50 s), share the check's decode
-  (52.8 s), fewer key frames (about a third of the model time, but it changes pixels).
-- LaMa cannot rebuild a background it never saw; most lines sit on moving footage.
-- Vietnamese transcription needs the 1.61 GB Whisper pack. macOS 26.0, Apple silicon only.
+  (52.8 s), fewer key frames (about a third of the model time, but it changes pixels). Loop 27 takes
+  the first two and the early ink store; fewer key frames stays out.
+- LaMa cannot rebuild a background it never saw. Vietnamese needs the 1.61 GB Whisper pack.
 
 ## Open questions for the founder
 
-- None blocking. A loop starts when its `docs/teams/<loop>/BRIEF.md` exists.
+- Native UI decisions; FFmpeg offer contact address; a Vietnamese clip for the Whisper comparison.
 
 ## Request log
 
-Only requests whose loop is still open stay here. A new request appends one entry before code; a
-revision attaches to the request that created the thing. Closed entries move to `old_memory.md` with
-the loop's commit. Open requests, one line each (open work in `TODO.md`):
+Open requests only; a new request appends one entry before code, a revision attaches to its request,
+closed entries move to `old_memory.md` with the loop's commit. Open work is in `TODO.md`.
 
-- REQ-20261111-02 · $29 build readiness · PLAN loop 8 (REQ-20261115-02 P4). Loop 26 (2026-11-16, built by the sub-leader after an OpenCode 503): exact size + publisher digest per pack file (Kokoro has none published), FFmpeg source offer in Settings, fill repair line, creator import copy in the core; Whisper table only. 324 tests; VERSION 17.
-- REQ-20261111-03 · loop 25 R6–R9: down server resolves on 3-second reopen; nine Settings rows measure 45 px except writing failure 48.594 px; ready writing engine label fixed. 286 tests pass; VERSION 17.
-- REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost. Revised 2026-11-13: fix-01, fix-03.
+- REQ-20261111-02 · $29 build readiness · PLAN loop 8 (REQ-20261115-02 P4). Loop 26 (2026-11-16, built by the sub-leader after an OpenCode 503): exact size + publisher digest per pack file (Kokoro has none published), FFmpeg source offer in Settings, fill repair line, creator import copy in the core; Whisper table only. Open on the founder: contact address, Vietnamese clip, microphone test.
+- REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost (loop 27). Revised 2026-11-13: fix-01, fix-03.
 - REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
 - REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).
 
-### REQ-20261115-01 · 2026-11-15
-**Request:** "git pull to review the current dev of the ducksuite program, there're a lot going on. then delegate the task to sub-leader"
-**Read as:** fix the review of `eeec649..4c07225`: A check inks unstored with a Cut, B cropped-out lines still filled (loop 21); C check under grade, D fps change unstated (loop 22); E one founder test script.
-**Response:** sub-leader briefs loops 21–22 to OpenCode, writes E itself.
-**Outcome:** loops 21–22 shipped (253 tests): check inks stored per Cut, cropped-out lines unfilled, fill spans keyed by their own lines (cold once), check holds under grade 7/7, one fps rule stated on Render. E: `docs/teams/founder-test-all.md`. Open: short-edit estimate (171–601 s cold), vacuous grade test.
-
 ### REQ-20261115-02 · 2026-11-15
 **Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
-**Read as:** one OpenCode prompt, five phases: review leftovers, layout odds, PLAN loop 7, PLAN loop 8, fill/check (loop 23).
-**Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`; one commit per phase, verified per phase.
-**Outcome:** loops 23–24 partial; loop 25 items 1–4 accepted. Revision 1: 3-second rewrite stub succeeds under 300-second timeout; Settings down-server latency ≤0.032 s; choose-choose-clear leaves 0 managed/import folders. 283 tests pass; ignored nine-state script ready for sub-leader captures. No real weights/native-picker run. VERSION 17; other loop 23 work remains open.
+**Read as:** five phases: P1 review leftovers, P2 layout odds, P3 PLAN loop 7, P4 PLAN loop 8, P5 fill/check cost.
+**Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`, then one loop per phase, each verified.
+**Outcome:** P1 closed in loop 24 (`bc1894c`, accepted `b109e45`); P3 closed in loop 25 (`b9ad447`); P4 code shipped in loop 26 (`a20954b`), founder items open. P5 → loop 27, P2 → loop 28 (ordered 2026-11-16 by the Senior PO on the founder's word). 324 tests; VERSION 17.
