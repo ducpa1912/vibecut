@@ -1,5 +1,8 @@
 # Loop 11 — founder test
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 1. Open **Preview**. Nothing should start on its own; the card says **No proof yet**.
 2. Press **Prove this scene · blur**. The picture returns in about a second and the text is blurred,
    not rebuilt.

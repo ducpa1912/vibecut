@@ -1,5 +1,8 @@
 # Loop 4 (full render) — Senior PO brief to the build team
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 From: Senior PO (Claude Code session). To: the OpenCode team (PO, engineer, tester, creator).
 Date: 2026-11-11. Branch `ducksuite`, HEAD `f101803`. Review folder: this one.
 

@@ -1,5 +1,8 @@
 # Founder test — a fill model of your own
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Click-by-click on the built app (`build/DuckSuite-Xcode.app`). The founder runs this; the agent does
 not. Project: `prj_e95348a97316`, edit `ed_38a4c36a3aae`. Time: about three minutes.
 

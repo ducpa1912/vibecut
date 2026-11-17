@@ -34,7 +34,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 
 | Fact | Value |
 |---|---|
-| Tests / JS | 324 pass · `node --check static/duck/app.js` clean |
+| Tests / JS | Last code verification: 346 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
 | Fill | `textfill.VERSION` 18 development branch; PyTorch GPU remains default. Core ML opt-in is blocked from default promotion by measured padding drift and native MPSGraph abort; next render cold once. |
@@ -46,6 +46,8 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 | Layout | Render is two columns (320 px settings/start/estimate, queue right with finished cards); inspector shows `N of M layers` with a fade; empty timeline lanes are 32 px with a `+`; the player hugs the picture (9:16: 410x728 / 353x628, 15 px black; Edit 303x537 / 269x477, 0 black); the transcript sits above the player controls; every scroll area fades while more is below |
 
 ## Known limits that shape the next loops
+
+- Media cleanup 2026-11-17: old screenshots, scratch footage/projects and caches removed; analysis retained. `build/` 9.8 → 2.4 GiB; rebuilt app and model packages kept. App-container data untouched. See `docs/MEDIA-CLEANUP.md`.
 
 - The leftover check judges only lines that have a clean layer and steady strokes. A line under
   5 frames long, or with no steady strokes, is counted as "not checked", never as clean. Text that

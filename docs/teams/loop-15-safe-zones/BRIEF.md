@@ -1,5 +1,8 @@
 # Loop 15 brief — safe zones on the Preview panel
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Request: **REQ-20261112-05**.
 
 > "No safezone for each social media, this is a button on the preview panel, and it should refresh

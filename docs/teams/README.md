@@ -1,5 +1,10 @@
 # DuckSuite UI revamp — one team, three block sessions
 
+Historical screenshot and render outputs were removed on 2026-11-17 at the
+founder's request. All written reviews and measured conclusions remain. Image
+references in these historical records are not current files; see
+[Media cleanup](../MEDIA-CLEANUP.md).
+
 One team. Three sequential sessions. Each session owns one block. A finished block is reviewed by the product owner before the next block starts. Any block can be reopened later without restarting the whole programme.
 
 ## Current agent roles

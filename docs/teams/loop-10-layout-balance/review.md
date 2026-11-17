@@ -1,5 +1,8 @@
 # Loop 10 review — Revision 3 (Senior PO, 2026-11-12)
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 The layout was accepted; this pass gives back every function the old players and the old transcript
 row had. Nothing reachable before is unreachable now, except one action that no longer has a job.
 

@@ -1,5 +1,8 @@
 # Loop 7 — catch every leftover text, and fill better
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Senior PO brief, 2026-11-11. Founder request: no text left un-cleaned, the app finds leaks by
 itself, and the bad fills get better. Do **not** OCR every frame; the app must not need that.
 

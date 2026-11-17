@@ -1,5 +1,8 @@
 # Loop 7 review — revision 2, Senior PO, 2026-11-12
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 The founder asked for a review of loop 7 and a fix. The verdict below this section ("10 of 10") does
 not stand: the leftover-text check could report a clean render that was not clean. It is rebuilt.
 

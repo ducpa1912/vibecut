@@ -1,5 +1,8 @@
 # Loop 12 brief — transcript opacity, nothing blocked
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Request: **REQ-20261112-02**.
 
 > "In edit: the transcript overlay did not have the tranparency slider. Player runtime being block

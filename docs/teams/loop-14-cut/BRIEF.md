@@ -1,5 +1,8 @@
 # Loop 14 brief — Cut Focus, phase 1
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Request: **REQ-20261112-04**.
 
 > "Plan for a Cut Edit option and a Cut Focus block, move color grading, preset filter into this

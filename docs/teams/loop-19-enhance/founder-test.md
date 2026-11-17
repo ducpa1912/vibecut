@@ -1,5 +1,8 @@
 # Loop 19 — founder test
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 1. Open a **360p** project, **Edit → Cut**. Find **Enhance**.
    **Must see:** `640×360 → 1920×1080`, a **Lanczos upscale** switch and a **Sharpen** slider.
 2. Turn the switch on, set Sharpen to 60.

@@ -1,5 +1,8 @@
 # Loop 8 — a better fill for moving footage (PLAN.md loop 5)
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Senior PO brief, 2026-11-11. Start only after loop 7 is committed and its review is written.
 Run with your own PO, researcher, engineer and tester. Do not report between loops.
 

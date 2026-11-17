@@ -39,7 +39,7 @@ Six-screen Daylight Story Desk UI is implemented. The app is not App Store ready
 - Captions: generate from transcript, edit cue text, download SRT, choose Clean/Bold/Minimal style and bottom/middle/top position, or burn into the render.
 - Voice-over: local macOS voices, script from captions, voice-over or voice-only, preview and render mix.
 - Language is auto-detect only; no picker.
-- UI reviews and screenshots: [docs/teams/README.md](docs/teams/README.md).
+- UI reviews: [docs/teams/README.md](docs/teams/README.md). Historical screenshot outputs were removed in the [media cleanup](docs/MEDIA-CLEANUP.md); written analysis remains.
 - Tests for core auth, projects, upload, engine status, edits, clean layers, media auth, and reveal guards.
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).

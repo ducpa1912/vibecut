@@ -1,5 +1,8 @@
 # Loop 13 brief — timeline zoom
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Request: **REQ-20261112-03**.
 
 > "Timeline should be zoom in & out to go into mini detailed of each beat/scene."

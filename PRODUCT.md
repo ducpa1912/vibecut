@@ -1,6 +1,6 @@
 # Product
 
-> Status 2026-11-16: local-only macOS app, about 75 % complete by the founder's estimate (11 Nov; not restated since). 324 tests.
+> Status 2026-11-17: local-only macOS app, about 75 % complete by the founder's estimate (11 Nov; not restated since). Last code verification: 346 tests. Historical media outputs were removed; written analysis remains (`docs/MEDIA-CLEANUP.md`).
 > Brief loops 7–19 and loops 21–25 are closed; PLAN loop 8 shipped its code in loop 26 and waits on the founder. App Store
 > work is paused. Build order: `PLAN.md`. Open work: `TODO.md`. Contract: `AGENTS.md`.
 

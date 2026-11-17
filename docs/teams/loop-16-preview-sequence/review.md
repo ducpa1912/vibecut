@@ -1,5 +1,8 @@
 # Loop 16 review — Preview sequence
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 **Verdict: pass.** Request REQ-20261112-06.
 
 ## Modes

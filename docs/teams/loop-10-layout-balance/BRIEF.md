@@ -1,5 +1,8 @@
 # Loop 10 — layout balance (PLAN.md loop 9)
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Senior PO brief, 2026-11-12. Source: `docs/teams/uiux-balance-01.md` (read it; proposals P1–P4).
 The founder tests the whole app by hand right after this loop, so this is the layout they judge.
 Run with your own PO, engineer, tester and creator. Do not report between steps.

@@ -1,5 +1,8 @@
 # Loop 14 — founder test
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 1. Open **Edit** and choose the **Cut** tab.
 2. Press **9:16**. **Must see:** the picture becomes a tall 1080×1920 frame and Fill is selected.
 3. Press **1:1** and **4:5**. **Must see:** the output label and the picture change to match.

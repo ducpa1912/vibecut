@@ -1,5 +1,8 @@
 # Loop 11 brief — proofs are quick, optional and step by step
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Request: **REQ-20261112-01**. Founder, 2026-11-12, by hand on the Review project.
 
 > "Proofs become so slow, i said proofs just need to be a quick blur no need to run LaMa AI Fill

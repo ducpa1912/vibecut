@@ -1,5 +1,8 @@
 # Loop 16 — founder test
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 1. Open **Preview** on the full video and press **Play all scenes**.
    **Must see:** it keeps playing through scene cuts; the bar says `All scenes · n of 35`.
 2. Drag the sequence scrubber to the middle. **Must see:** it lands on a later scene and keeps

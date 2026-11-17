@@ -1,5 +1,8 @@
 # Founder test — the whole app in the new layout
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Click-by-click on the built app (`build/DuckSuite-Xcode.app`). Do not run this as an agent. One
 project is open: `人吃啥咪吃啥` (`prj_e95348a97316`). Have a second short video ready if you want to
 try Import.

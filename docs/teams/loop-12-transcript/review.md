@@ -1,5 +1,8 @@
 # Loop 12 review — transcript opacity, no blocked controls
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 **Verdict: pass.** Request REQ-20261112-02.
 
 ## Opacity

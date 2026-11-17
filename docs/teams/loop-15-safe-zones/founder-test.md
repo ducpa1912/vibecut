@@ -1,5 +1,8 @@
 # Loop 15 — founder test
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 1. Open **Preview** and press **Safe zones**. Pick **TikTok**.
    **Must see:** the 9:16 output frame, the top and bottom bands, the side margins and the red
    button block on the right; outside the frame is dimmed.

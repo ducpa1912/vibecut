@@ -1,5 +1,8 @@
 # Loop 6 — Full render, closed
 
+> Media retention update — 2026-11-17: historical media outputs in this directory were removed at the founder’s request. Written results remain; image paths below are historical references. See the [cleanup record](../../MEDIA-CLEANUP.md).
+
+
 Date: 2026-11-11 · Senior PO brief · Build team (PO, engineer, tester, creator)
 Branch `ducksuite`, final HEAD after this loop · Project `prj_e95348a97316`.
 
