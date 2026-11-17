@@ -37,7 +37,7 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 | Tests / JS | 324 pass · `node --check static/duck/app.js` clean |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
-| Fill | `textfill.VERSION` 17, GPU; hole = each letter's strokes grown 6 px, on the frames that letter is on screen; no fill is reused across something crossing the text |
+| Fill | `textfill.VERSION` 18 development branch; PyTorch GPU remains default. Core ML opt-in is blocked from default promotion by measured padding drift and native MPSGraph abort; next render cold once. |
 | Leftover-text check | per letter, per frame, output against source; 40 of 42 lines checked, 68–81 s on a quiet Mac (170–190 s with the Mac under load); `inkcheck.SAME` 20 (untouched text measures 9–13.4, a fill 30+) |
 | Last render | `ed_38a4c36a3aae_20261112-104149.mp4` (warm ink store, 24 of 24 spans reused): 0 leftover in 2,964 frame checks; 2 lines not checked, shown with the reason |
 | Cold render | 620–847 s on this Mac (was 418 s): every frame is filled alone where something crosses the text. Model time is ≈ 64 % of it |
@@ -63,6 +63,8 @@ purchase. Planning is closed — the next commits are code, one loop at a time.
 - Native UI decisions; FFmpeg offer contact address; a Vietnamese clip for the Whisper comparison.
 
 ## Request log
+
+- REQ-20261116-02 · Core ML default authorized; 11-size package merged, compiler/update/fallback-cache defects fixed. Measurements reject default promotion: max padding drift 169/255, native abort after 8 buckets; PyTorch stays default. See `docs/teams/coreml-default/review.md`.
 
 Open requests only; a new request appends one entry before code, a revision attaches to its request,
 closed entries move to `old_memory.md` with the loop's commit. Open work is in `TODO.md`.

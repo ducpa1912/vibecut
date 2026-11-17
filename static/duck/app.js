@@ -3679,7 +3679,9 @@ function fillEngineControl() {
   let note = '';
   if (device === 'gpu') {
     note = gpuReady
-      ? 'Apple GPU. Measured 4.6× faster on this Mac; same output.'
+      ? (state.engine?.fill?.gpu_engine === 'coreml'
+        ? 'Apple GPU through Core ML. Speed and fill quality depend on the work area.'
+        : 'Apple GPU. Measured 4.6× faster on this Mac; same output.')
       : esc(gpuNote || 'GPU is unavailable.');
   } else if (cpuReady) {
     note = 'CPU engine. Slower, but it runs when the GPU is busy.';

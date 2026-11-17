@@ -9,3 +9,4 @@ soundfile>=0.12
 ctranslate2>=4.5
 sentencepiece>=0.2
 torch>=2.4
+coremltools>=9.0

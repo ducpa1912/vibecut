@@ -6,6 +6,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [ ] REQ-20261116-02 · resolve native Core ML MPSGraph abort and exact-bucket drift (max 19/255); coarse padding max 169/255 is refused; do not promote default until reviewed
+
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 

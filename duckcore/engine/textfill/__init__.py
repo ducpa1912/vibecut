@@ -14,6 +14,7 @@ never downloaded here: a missing model is a clear error.
 from __future__ import annotations
 
 import hashlib
+import uuid
 import importlib.util
 import json
 import logging
@@ -39,10 +40,15 @@ DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
-VERSION = 17
+# 18: the GPU fill runs LaMa through Core ML (REQ-20261116-01), within 3/255 of PyTorch.
+VERSION = 18
 MODEL_FILES = {"lama": "lama_fp32.onnx"}
-# The file an engine reads on the GPU.
+# The file an engine reads on the GPU through PyTorch, and through Core ML.
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}
+COREML_MODEL_FILES = {"lama": "lama_fill.mlpackage"}
+# Core ML remains opt-in until its multi-function native abort is resolved.
+GPU_ENGINES = ("coreml", "pytorch")
+DEFAULT_GPU_ENGINE = "pytorch"
 MODEL_PACKAGES = {"lama": "onnxruntime"}
 METHOD_COPY = {
     "lama": "AI fill (per frame)",
@@ -109,6 +115,8 @@ def models_dir(data_root: Path | str) -> Path:
     data = Path(data_root) / "models" / "fill"
     names = {*MODEL_FILES.values(), *GPU_MODEL_FILES.values()}
     if any((data / name).is_file() for name in names):
+        return data
+    if any((data / name / "Manifest.json").is_file() for name in COREML_MODEL_FILES.values()):
         return data
     override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
     if override:
@@ -178,12 +186,74 @@ def seed_models(data_root: Path | str) -> None:
             os.link(origin, destination)  # same volume: no copy, no extra bytes
         except OSError:
             shutil.copy2(origin, destination)
+    for name in COREML_MODEL_FILES.values():
+        _seed_package(source / name, target / name)
+
+
+def _seed_package(origin: Path, destination: Path) -> None:
+    """Copy a Core ML package folder once, linking its files where the volume allows."""
+    from .coreml_fill import package_digest
+
+    if not (origin / "Manifest.json").is_file():
+        return
+    if (destination / "Manifest.json").is_file():
+        if package_digest(destination) == package_digest(origin):
+            return
+    part = destination.with_name(f".{destination.name}.part")
+    shutil.rmtree(part, ignore_errors=True)
+
+    def link(src, dst):
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+
+    shutil.copytree(origin, part, copy_function=link)
+    shutil.rmtree(destination, ignore_errors=True)
+    os.replace(part, destination)
+
+
+def gpu_engine(method: str, directory: Path | str) -> str:
+    """Select Core ML only when explicitly requested and installed."""
+    wanted = (os.environ.get("DUCK_FILL_GPU_ENGINE") or DEFAULT_GPU_ENGINE).strip().lower()
+    if wanted != "pytorch" and coreml_problem(method, directory) is None:
+        return "coreml"
+    return "pytorch"
+
+
+def coreml_problem(method: str, directory: Path | str) -> str | None:
+    """Why the Core ML GPU engine cannot run here, or None."""
+    if method not in COREML_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no Core ML option."
+    from .coreml_fill import possible
+
+    if not possible():
+        return "The GPU option needs Core ML on an Apple Silicon Mac."
+    if not (Path(directory) / COREML_MODEL_FILES[method] / "Manifest.json").is_file():
+        return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
+    return None
+
+
+def torch_problem(method: str, directory: Path | str) -> str | None:
+    """Why the PyTorch GPU engine cannot run here, or None."""
+    if method not in GPU_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no GPU option."
+    from .torch_fill import gpu_possible
+
+    if not gpu_possible():
+        return "The GPU option needs PyTorch on an Apple Silicon Mac."
+    path = Path(directory) / GPU_MODEL_FILES[method]
+    if path.is_file() and path.stat().st_size > 0:
+        return None
+    return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
 
 
 def model_path(method: str, directory: Path, device: str = DEFAULT_DEVICE) -> Path:
     if method not in METHODS:
         raise FillError(f"Unknown fill method: {method}.")
     if device == "gpu" and method in GPU_MODEL_FILES:
+        if gpu_engine(method, directory) == "coreml":
+            return Path(directory) / COREML_MODEL_FILES[method]
         return Path(directory) / GPU_MODEL_FILES[method]
     return Path(directory) / MODEL_FILES.get(method, "opencv")
 
@@ -192,14 +262,9 @@ def gpu_problem(method: str, directory: Path) -> str | None:
     """Why an engine cannot run on the GPU here, or None."""
     if method not in GPU_MODEL_FILES:
         return f"{METHOD_COPY.get(method, method)} has no GPU option."
-    from .torch_fill import gpu_possible
-
-    if not gpu_possible():
-        return "The GPU option needs PyTorch on an Apple Silicon Mac."
-    path = model_path(method, directory, "gpu")
-    if path.is_file() and path.stat().st_size > 0:
+    if gpu_engine(method, directory) == "coreml":
         return None
-    return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
+    return torch_problem(method, directory)
 
 
 def device_problem(method: str, directory: Path, device: str) -> str | None:
@@ -574,7 +639,12 @@ def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVIC
         # The user's file decides the pixels; the chip is its own business.
         return f"{Path(custom).resolve()}:{_model_stamp(Path(custom))}:custom"
     if device == "gpu" and method in GPU_MODEL_FILES:
-        return f"{_model_stamp(model_path(method, Path(directory), 'gpu'))}:gpu"
+        path = model_path(method, Path(directory), "gpu")
+        if path.suffix == ".mlpackage":
+            from .coreml_fill import package_stamp
+
+            return f"{package_stamp(path)}:coreml-gpu"
+        return f"{_model_stamp(path)}:gpu"
     if method in CLASSIC_METHODS:
         try:
             import cv2
@@ -673,6 +743,9 @@ def _filler(method: str, path: Path, device: str = DEFAULT_DEVICE):
                 elif method == "migan":
                     from .torch_fill import MiganFiller
                     filler = MiganFiller(path, device)
+                elif device == "gpu" and Path(path).suffix == ".mlpackage":
+                    from .coreml_fill import LamaCoreMLFiller
+                    filler = LamaCoreMLFiller(path)
                 elif device == "gpu":
                     from .torch_fill import LamaGpuFiller
                     filler = LamaGpuFiller(path)
@@ -686,6 +759,17 @@ def _filler(method: str, path: Path, device: str = DEFAULT_DEVICE):
                 ) from exc
             _FILLERS[key] = filler
         return filler
+
+
+def _fallback_filler(method: str, directory: Path, gpu_path: Path):
+    """What runs when the GPU engine fails: PyTorch after Core ML, else the CPU."""
+    if Path(gpu_path).suffix == ".mlpackage" and torch_problem(method, directory) is None:
+        LOGGER.warning("AI fill moved from Core ML to PyTorch on the GPU.")
+        return _GpuOrCpu(
+            lambda: _filler(method, Path(directory) / GPU_MODEL_FILES[method], "gpu"),
+            lambda: _filler(method, model_path(method, directory, "cpu"), "cpu"),
+        )
+    return _filler(method, model_path(method, directory, "cpu"), "cpu")
 
 
 def _custom_filler(path: Path):
@@ -947,6 +1031,8 @@ class _SavedFills:
             _remove_quietly(temporary)
 
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not getattr(self.filler, 'cache_valid', True):
+            return self.filler.fill(area, mask)
         path = self._path(area, mask)
         found = self._read(path, area.shape)
         if found is not None:
@@ -961,7 +1047,8 @@ class _SavedFills:
             return found
         self.used.add(path)
         result = self.filler.fill(area, mask)
-        self._write(path, result)
+        if getattr(self.filler, 'cache_valid', True):
+            self._write(path, result)
         return result
 
 
@@ -1040,6 +1127,10 @@ class _CountedFiller:
         self.runs = 0
         self.units = 0.0
 
+    @property
+    def cache_valid(self):
+        return getattr(self.filler, 'cache_valid', True)
+
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
         self.runs += 1
         self.units += _run_units(self.method, *mask.shape)
@@ -1047,20 +1138,22 @@ class _CountedFiller:
 
 
 class _GpuOrCpu:
-    """The GPU until it fails, then the CPU, so a render is never lost to it."""
+    """The primary engine until it fails, then its next fallback engine."""
 
     def __init__(self, load_gpu: Callable[[], object], load_cpu: Callable[[], object]):
         self.load_cpu = load_cpu
         self.filler = None
         self.on_gpu = True
+        self.cache_valid = True
         try:
             self.filler = load_gpu()
         except (FillError, OSError, RuntimeError) as exc:
-            LOGGER.warning("AI fill stays on the CPU: the GPU could not load it: %s", exc)
+            LOGGER.warning("AI fill is trying its fallback: the primary engine could not load: %s", exc)
             self._to_cpu()
 
     def _to_cpu(self) -> None:
         self.on_gpu = False
+        self.cache_valid = False
         self.filler = self.load_cpu()
 
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -1069,7 +1162,7 @@ class _GpuOrCpu:
         try:
             return self.filler.fill(area, mask)
         except RuntimeError as exc:
-            LOGGER.warning("AI fill moved to the CPU: the GPU failed: %s", exc)
+            LOGGER.warning("AI fill is trying its fallback: the primary engine failed: %s", exc)
             self._to_cpu()
             return self.filler.fill(area, mask)
 
@@ -1773,7 +1866,7 @@ def prepare_span(
         elif device == "gpu":
             filler = _GpuOrCpu(
                 lambda: _filler(method, path, "gpu"),
-                lambda: _filler(method, model_path(method, directory), DEFAULT_DEVICE),
+                lambda: _fallback_filler(method, directory, path),
             )
         else:
             filler = _filler(method, path)
@@ -1828,6 +1921,9 @@ def prepare_span(
         if code != 0 or written == 0:
             detail = writer.stderr_tail.strip()[-400:]
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
+        if counted is not None and not counted.cache_valid:
+            # A mixed/fallback span must never become a reusable primary-engine clip.
+            output = cache_dir / f"{key}.fallback-{uuid.uuid4().hex}.mp4"
         os.replace(part, output)
         took = time.monotonic() - started
         if counted is not None:
@@ -1846,7 +1942,8 @@ def prepare_span(
                 _frames, units = _span_units(rect_table, expected, width, height, method)
             _learn_rate(
                 data_root, method, units, took, device,
-                custom=custom_path, reused=bool(saved is not None and saved.hits),
+                custom=custom_path, reused=bool(saved is not None and saved.hits)
+                or bool(counted is not None and not counted.cache_valid),
             )
     except BaseException:
         _stop(reader.proc if reader is not None else None)

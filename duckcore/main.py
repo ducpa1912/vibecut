@@ -471,6 +471,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 "cpu_problem": fill_cpu_problem or "",
                 "gpu_ready": fill_gpu_problem is None,
                 "gpu_problem": fill_gpu_problem or "",
+                "gpu_engine": textfill.gpu_engine("lama", model_dir) if fill_gpu_problem is None else "",
             },
             "rewrite": rewrite,
             "stories": {"engine": "local", "ready": True},

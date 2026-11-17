@@ -79,6 +79,15 @@ if [ -f "$GPU_MODEL" ]; then
 else
   printf 'warning: LaMa GPU model not found at %s; AI fill will be unavailable\n' "$GPU_MODEL" >&2
 fi
+# The default GPU engine: the same LaMa through Core ML (REQ-20261116-01), made by
+# scripts/coreml/convert_lama.py. Without it the GPU fill runs on PyTorch.
+COREML_MODEL="${DUCK_LAMA_COREML_MODEL:-$ROOT/build/coreml-lama/out/lama_fill.mlpackage}"
+rm -rf "$APP/Contents/Resources/base-models/lama_fill.mlpackage"
+if [ -f "$COREML_MODEL/Manifest.json" ]; then
+  cp -R "$COREML_MODEL" "$APP/Contents/Resources/base-models/lama_fill.mlpackage"
+else
+  printf 'warning: Core ML LaMa not found at %s; the GPU fill will use PyTorch\n' "$COREML_MODEL" >&2
+fi
 
 FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpeg}}"
 FFPROBE_SRC="${DUCK_FFPROBE:-$(dirname "$FFMPEG_SRC")/ffprobe}"
