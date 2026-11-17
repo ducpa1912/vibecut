@@ -605,7 +605,7 @@ svg { display: block; flex: 0 0 auto; }
   background: transparent; color: var(--muted); font-size: 12px; font-weight: 620;
 }
 .tab.is-active { background: var(--amber-soft); color: var(--amber-ink); }
-.inspector-body { padding: 0 14px 14px; display: grid; gap: 12px; }
+.inspector-body { padding: 0 14px 14px; display: grid; grid-auto-rows: max-content; gap: 12px; }
 .proof-pair { display: grid; grid-template-columns: 1fr 18px 1fr; gap: 6px; align-items: center; }
 .proof-pair figure { margin: 0; }
 .proof-pair .frame { overflow: hidden; border-radius: 7px; background: var(--video); aspect-ratio: 16/10; }
@@ -2023,3 +2023,8 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .enhance-row input[type="range"] { flex: 1; min-width: 0; height: 3px; accent-color: var(--amber); }
 .enhance-row span { min-width: 22px; text-align: right; font: 9px var(--mono); color: var(--ink); }
 .license-text { margin: 0; white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+
+/* The layer list is the first control in the Clean inspector: at 800x600 the
+   proof and buttons pushed a valid list below the fold. */
+.inspector-body .layer-head { order: -2; }
+.inspector-body .layer-list { order: -1; }

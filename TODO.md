@@ -13,6 +13,13 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
+## REQ-20261118-01 — Clean layers and the missing transcript (2026-11-18)
+
+- [x] 3A · Clean layer list visible at 800×600, 1024×700, 1280×800, 1440×900 and 200 % zoom; rows select and Fill/Blur/Off changes the layer
+- [x] 3B · Edit shows a Transcript box when there is no transcript, with the reason and the next step; Hide/Show still works
+- [ ] proposal · add a real **Remove layer** action (today only Off, kept and greyed) — founder decision
+- [ ] proposal · click a fill box on the video to select its layer — founder decision
+
 ## Loop 27 — fill and check cost, no pixel change (REQ-20261115-02 P5, REQ-20261111-11)
 
 - [ ] Build the ink store and span units during Check: the first estimate of a project is 144.8 s of
