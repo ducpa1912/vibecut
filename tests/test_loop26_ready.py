@@ -100,15 +100,32 @@ def test_installed_needs_the_exact_size(tmp_path, monkeypatch):
     assert packs.installed_path(tmp_path, "t") == folder
 
 
-def test_installed_hash_is_checked(tmp_path, monkeypatch):
+def test_installed_status_never_reads_model_bytes(tmp_path, monkeypatch):
     body = b"correct"
     pack = _fake_pack(monkeypatch, body, sha256=hashlib.sha256(body).hexdigest())
     folder = tmp_path / "models" / "packs" / "t"
     folder.mkdir(parents=True)
-    (folder / "model.bin").write_bytes(b"changed")
-    assert packs.installed_path(tmp_path, "t") is None
     (folder / "model.bin").write_bytes(body)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Settings must not hash installed packs")
+    monkeypatch.setattr(packs, "verify_file", forbidden)
     assert packs.installed_path(tmp_path, "t") == folder
+    assert packs.status(tmp_path)[0]['installed']
+
+
+def test_import_ui_keeps_creator_messages():
+    source = (ROOT / 'static/duck/app.js').read_text()
+    function = re.search(r'function importCreatorError\(message\) \{.*?\n\}', source, re.S).group()
+    subprocess.run(['node', '-e', function + '''
+const assert = require('node:assert/strict');
+for (const text of ['Wait for Check to finish first.', 'Use MP4, MOV or M4V.',
+ 'This clip could not be joined to the project. Export it with the project settings, then import again.',
+ 'The video could not be copied into DuckSuite. Check the free disk space, then import again.']) {
+ assert.equal(importCreatorError(text), text);
+}
+assert.notEqual(importCreatorError('TypeError: Failed to fetch'), 'TypeError: Failed to fetch');
+assert.match(importCreatorError('[Errno 28] No space left on device'), /Free some space/);
+'''], check=True)
 
 
 def test_git_blob_sha1_is_checked(tmp_path):

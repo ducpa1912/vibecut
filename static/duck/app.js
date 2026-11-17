@@ -4173,7 +4173,10 @@ function openImportChoice() {
 }
 
 function importCreatorError(message) {
-  const text = String(message || '').toLowerCase();
+  const raw = String(message || '').trim();
+  const text = raw.toLowerCase();
+  const technical = /ffmpeg|ffprobe|errno|traceback|exception|typeerror|failed to fetch|load failed|networkerror|permission denied|read-only file system|operation not permitted|no such file|no space left|disk full|^http \d{3}|\n|\/users\/|\/private\/|\/tmp\//i;
+  if (raw && !technical.test(raw)) return raw;
   if (text.includes('disk') || text.includes('space')) return 'There is not enough free disk space. Free some space, then import again.';
   if (text.includes('permission') || text.includes('read-only') || text.includes('not permitted')) return 'DuckSuite could not access this video. Choose a file you can read, then import again.';
   if (text.includes('file not found') || text.includes('no such file')) return 'This video is no longer available. Choose the file again, then import it.';

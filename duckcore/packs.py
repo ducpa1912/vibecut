@@ -122,7 +122,7 @@ def installed_path(data_root: Path, pack_id: str) -> Path | None:
     folder = _folder(data_root, pack)
     for item in _files(pack):
         path = folder / item["filename"]
-        if not verify_file(path, item):
+        if not path.is_file() or not _size_matches(path.stat().st_size, item):
             return None
     return folder
 
