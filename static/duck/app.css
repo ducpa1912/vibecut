@@ -2028,3 +2028,16 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
    proof and buttons pushed a valid list below the fold. */
 .inspector-body .layer-head { order: -2; }
 .inspector-body .layer-list { order: -1; }
+.transcript-empty { margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.transcript-side { min-width: 0; }
+.transcript-side-head { flex-wrap: wrap; min-width: 0; }
+.transcript-side-head span { min-width: 0; }
+.transcript-alpha-row { flex-wrap: wrap; min-width: 0; }
+.transcript-alpha-row input { min-width: 0; }
+@media (max-width: 1200px) {
+  .preview-row { flex-wrap: wrap; }
+  .preview-row .transcript-side { flex: 1 0 100%; width: 100%; max-width: none; }
+  .edit-clean .preview-block { overflow: visible; }
+  .edit-clean .media-card.preview-large { height: calc(100% - 205px); min-height: 140px; }
+  .edit-clean .transcript-side { max-height: 200px; overflow-y: auto; }
+}

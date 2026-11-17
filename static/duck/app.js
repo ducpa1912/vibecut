@@ -1421,6 +1421,26 @@ function mediaInspector(story) {
   });
 }
 
+function transcriptEmptyReason() {
+  const engine = state.check?.result?.engine || {};
+  if (['queued', 'running', 'cancelling'].includes(state.check?.state)) {
+    return 'Check is still reading the speech in this video.';
+  }
+  if (engine.stt_enabled === false) {
+    return 'Speech reading is off for this Check. Run Check again to read the speech.';
+  }
+  if (engine.stt_attempted === false) {
+    return 'Speech has not been read yet. Run Check to read it.';
+  }
+  if (Array.isArray(engine.stt_errors) && engine.stt_errors.length) {
+    return 'No speech was read. Run Check again, or add a speech engine in Settings.';
+  }
+  if (engine.stt_error) {
+    return 'The speech read failed. Run Check again, or add a speech engine in Settings.';
+  }
+  return 'Check found no speech it could read. Run Check again, or add a speech engine in Settings.';
+}
+
 function screenEditor() {
   const scenes = getScenes();
   const scene = currentScene();
@@ -1473,10 +1493,10 @@ function screenEditor() {
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
               ${playerBar()}
             </div>
-            ${overlayCues.length ? `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
-              <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
+            ${mediaClip ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
+              <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
               <div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>
-              ${state.transcriptSideHidden ? '' : overlayCues.map((cue) => `<div class="transcript-side-row">
+              ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
                 <button class="transcript-row-main" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
                   <span class="transcript-side-time">${fmtTC(cue.start, 24)}</span>
                   <span class="speaker-chip">Speaker</span>
@@ -1487,8 +1507,8 @@ function screenEditor() {
                   <button type="button" data-action="cue-seek" data-time="${Number(cue.start || 0).toFixed(3)}">Seek to this line</button>
                   <button type="button" data-action="cue-copy" data-cue="${esc(cue.id || '')}">Copy text</button>
                 </div>` : ''}
-              </div>`).join('')}
-            </aside>` : ''}
+              </div>`).join('') : `<p class="transcript-empty">${esc(transcriptEmptyReason())}</p>`)}
+            </aside>`}
           </div>
         </section>
       </section>
