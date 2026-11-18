@@ -1,8 +1,9 @@
-"""Workflow model-route configuration for VibeCut.
+"""Workflow model-route configuration for DuckSuite.
 
-Each AI worker has an ordered fallback list. The admin UI edits this shape; the
-runtime resolves it before each provider call. Defaults preserve the existing
-OpenCode Go -> OpenRouter -> local/rules behavior.
+Each AI worker has an ordered fallback list.  The admin UI edits this shape; the
+runtime resolves it before each provider call.  DuckSuite is local only: a kind
+with no local provider keeps an empty route list, and normalization drops any
+saved cloud route so none can come back.
 """
 
 from __future__ import annotations
@@ -12,22 +13,22 @@ from typing import Any, Mapping
 
 MAX_ROUTES = 6
 REASONING_VALUES = ("none", "low", "medium", "high", "max")
-# Text: OpenRouter and OpenCode Go. local-mlx and ollama were removed.
-TEXT_PROVIDERS = ("opencode-go", "openrouter")
-# Voice: MiniMax, ElevenLabs, OpenRouter and the two on-device engines.
-TTS_PROVIDERS = ("minimax", "openrouter", "local", "elevenlabs")
-MUSIC_PROVIDERS = ("minimax", "openrouter")
-# STT: Apple SpeechAnalyzer, Whisper turbo, Deepgram and Groq. The silent
-# "auto" cloud ladder and OpenAI whisper-1 were removed.
-STT_PROVIDERS = ("apple", "whisper", "groq", "deepgram", "openrouter")
+# Text: no local text provider ships, so the rewrite ladder is empty.
+TEXT_PROVIDERS: tuple[str, ...] = ()
+# Voice: the two on-device engines, the Kokoro pack and macOS ``say``.
+TTS_PROVIDERS = ("local",)
+# Music: no local music generator ships, so the ladder is empty.
+MUSIC_PROVIDERS: tuple[str, ...] = ()
+# STT: Apple SpeechAnalyzer and the bundled Whisper pack.
+STT_PROVIDERS = ("apple", "whisper")
 
-#: Engines removed from the product, mapped to the nearest kept engine.
+#: Engines removed from the product, mapped to the nearest kept local engine.
 TTS_ENGINE_MIGRATIONS = {
     "piper": "kokoro",
-    "openai": "minimax",
-    "groq": "minimax",
-    "deepgram": "minimax",
-    "cartesia": "minimax",
+    "openai": "kokoro",
+    "groq": "kokoro",
+    "deepgram": "kokoro",
+    "cartesia": "kokoro",
 }
 #: Providers that no longer exist in a workflow.
 REMOVED_TEXT_PROVIDERS = ("local-mlx", "ollama")
@@ -68,17 +69,14 @@ WORKFLOW_PROVIDERS = {
     "rewrite": TEXT_PROVIDERS,
     "translate": TEXT_PROVIDERS,
     "hook_rank": TEXT_PROVIDERS,
-    # Reads frames, so it needs an OpenRouter vision model.
-    "script": ("openrouter",),
+    # Reads frames, so it would need a vision model; none runs locally.
+    "script": (),
     "tts": TTS_PROVIDERS,
     "music": MUSIC_PROVIDERS,
     "stt": STT_PROVIDERS,
 }
 
-_TEXT_ROUTES = [
-    {"provider": "opencode-go", "model": "deepseek-v4.1-flash"},
-    {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash"},
-]
+_TEXT_ROUTES: list[dict[str, str]] = []
 
 DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
     "story_brief": {
@@ -106,17 +104,13 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "timeout_s": 180,
     },
     "script": {
-        "routes": [{"provider": "openrouter", "model": "google/gemini-3.5-flash-lite"}],
+        "routes": [],
         "reasoning": "low",
         "max_output_tokens": 3200,
         "timeout_s": 240,
     },
     "tts": {
         "routes": [
-            {"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"},
-            {"provider": "minimax", "model": "speech-2.8-turbo"},
-            {"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"},
-            {"provider": "openrouter", "model": "google/gemini-3.8-flash-lite-tts"},
             {"provider": "local", "model": "kokoro"},
             {"provider": "local", "model": "say"},
         ],
@@ -125,7 +119,7 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "timeout_s": 120,
     },
     "music": {
-        "routes": [{"provider": "minimax", "model": "music-3.0"}],
+        "routes": [],
         "reasoning": "",
         "max_output_tokens": 0,
         "timeout_s": 600,
@@ -134,8 +128,6 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "routes": [
             {"provider": "apple", "model": "on-device-3b"},
             {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
-            # Cloud fallback for machines without a local engine.
-            {"provider": "openrouter", "model": "openai/whisper-large-v3-turbo"},
         ],
         "reasoning": "",
         "max_output_tokens": 0,
@@ -188,8 +180,9 @@ def normalize_workflow(workflow: str, raw: Any) -> dict[str, Any]:
         route = _normalize_route(workflow, item)
         if route:
             routes.append(route)
-    # A workflow always keeps a working ladder. Removed providers and stale
-    # model ids must never leave a workflow with zero routes.
+    # A kind with a local default keeps that ladder. Removed providers and
+    # stale model ids must never leave a local workflow with zero routes; a kind
+    # with no local provider legitimately stays empty.
     if not routes and default.get("routes"):
         routes = copy.deepcopy(default["routes"])
     return {

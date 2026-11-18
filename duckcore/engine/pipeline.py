@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import time
-import urllib.request
 import wave
 from pathlib import Path
 from typing import Callable
@@ -1401,16 +1400,16 @@ def hook_text_score(text: str) -> float:
 # ---------------------------------------------------------------- speech-to-text
 #
 # Transcription now lives in stt.py (Wave 2 track T2).  The names below stay
-# available on pipeline for existing callers and compatibility tests.
+# available on pipeline for existing callers and compatibility tests.  Speech
+# is local only: Apple Speech, then the bundled Whisper pack, with no cloud
+# route in between or after.
 
-CLOUD_STT_PROVIDERS = stt.CLOUD_STT_PROVIDERS
 WHISPER_MODELS = stt.WHISPER_MODELS
 DEFAULT_WHISPER_MODEL = stt.DEFAULT_WHISPER_MODEL
 
 _apple_transcribe_helper = stt._apple_transcribe_helper
 whisper_models = stt.whisper_models
 transcribe = stt.transcribe
-transcribe_cloud = stt.transcribe_cloud
 read_transcript = stt.read_transcript
 attach_speech = stt.attach_speech
 
@@ -1425,22 +1424,6 @@ def transcribe_apple(
     return stt.transcribe_apple(
         wav_path, job_dir, language, timeout=timeout,
         helper=_apple_transcribe_helper(),
-    )
-
-
-def _cloud_speech(
-    wav_path: Path,
-    job_dir: Path,
-    provider: str,
-    language: str,
-    model: str = "",
-    timeout: float = 1800,
-) -> dict | None:
-    """Compatibility wrapper that keeps legacy monkeypatch seams working."""
-    return stt._cloud_speech(
-        wav_path, job_dir, provider, language,
-        model=model, timeout=timeout,
-        run=_run, urlopen=urllib.request.urlopen,
     )
 
 
@@ -1459,13 +1442,13 @@ def _transcribe_workflow(
     """Deprecated route dispatcher.
 
     Production analysis calls :func:`stt.transcribe_source`.  This shim keeps
-    the pre-v2 route semantics for old callers and its compatibility tests.
+    the pre-v2 call signature for old callers and its compatibility tests; it
+    runs Apple and Whisper only.
     """
     return stt.transcribe_routes(
         wav, job_dir, duration, language, routes, timeout, progress,
         job_id=job_id, request_id=request_id,
         engines={
-            "cloud": _cloud_speech,
             "whisper": transcribe,
             "apple": transcribe_apple,
         },
@@ -1996,56 +1979,24 @@ def auto_hook(scenes: list[dict]) -> dict:
 
 
 def llm_available() -> bool:
-    """True when at least one configured hook_rank provider can be called."""
-    try:
-        import audio  # noqa: PLC0415
-        for route in workflow_config.routes(
-            settings_store.load_settings().get("workflows"), "hook_rank",
-        ):
-            provider = str(route.get("provider") or "")
-            if provider == "opencode-go" and audio.opencode_available():
-                return True
-            if provider == "openrouter" and audio.openrouter_available():
-                return True
-            if provider == "ollama" and os.environ.get("VIBECUT_LLM_URL"):
-                return True
-    except Exception:  # noqa: BLE001
-        return False
+    """Kept for callers that ask before ranking.
+
+    DuckSuite ships no local text model and no cloud text route, so this is
+    always False and hook order stays deterministic.
+    """
     return False
 
 
 def llm_rank_hooks(candidates: list[dict], target: int = 30) -> list[int] | None:
-    """Optional rerank through the ordered hook_rank admin routes.
+    """No text route exists, so the deterministic score order always stands.
 
-    Any failure falls back to the deterministic score order.
+    The old body called a cloud text service through a module that does not
+    ship. It is gone with the cloud speech paths: DuckSuite never asks a remote
+    model to rank a hook.
     """
-    if len(candidates) < 2 or not llm_available():
+    if not llm_available():
         return None
-    import audio  # noqa: PLC0415
-
-    lines = []
-    for hook in candidates:
-        text = (hook.get("speech") or hook.get("ocr") or "no words").strip()
-        lines.append(
-            f"- scene {hook['scene']}: {hook['dur']:.1f}s, "
-            f"hook score {hook['hook']:.0f}, text: {text[:120]}"
-        )
-    prompt = (
-        f"You pick the strongest opening hook for a {target}s vertical reel. "
-        "Prefer a concrete claim, a surprise, or an emotional line over slow setup.\n"
-        + "\n".join(lines)
-        + "\nReturn only a JSON array of scene ids, best first."
-    )
-    answer = audio._workflow_text("hook_rank", prompt, json_mode=True)
-    if not answer:
-        return None
-    known = {hook["scene"] for hook in candidates}
-    order: list[int] = []
-    for value in re.findall(r"\d+", str(answer)):
-        scene_id = int(value)
-        if scene_id in known and scene_id not in order:
-            order.append(scene_id)
-    return order or None
+    return None
 
 
 def _window(scene: dict, wanted: float, prefer_start: bool, end_aligned: bool = False) -> tuple[float, float]:
@@ -2878,14 +2829,18 @@ def _speech_engine_summary(
     errors: list[dict] | None,
 ) -> dict:
     failures = [dict(item) for item in (errors or []) if isinstance(item, dict)]
+    read = bool(transcript and transcript.get("segments"))
+    # Both local engines failing is one fact for the user: speech was not read.
+    # The message names no provider and no model.
+    error = "Speech was not read." if attempted and not read and failures else None
     return {
-        "whisper": bool(transcript and transcript.get("segments")),
+        "whisper": read,
         "transcript_provider": (transcript or {}).get("provider") or "local",
         "transcript_language": (transcript or {}).get("language"),
         "stt_enabled": bool(enabled),
         "stt_attempted": bool(attempted),
         "stt_language": language or "auto",
-        "stt_error": failures[-1].get("error") if failures else None,
+        "stt_error": error,
         "stt_errors": failures[-4:],
     }
 
@@ -3047,7 +3002,7 @@ def analyze_source(
         "speech", 1.0,
         (
             f"Speech read · {transcript.get('language') or 'auto'}"
-            if transcript else ("Speech is off" if not speech_enabled else "No transcript returned")
+            if transcript else ("Speech is off" if not speech_enabled else "Speech was not read")
         ),
     )
     attach_speech(scenes, transcript)

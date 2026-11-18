@@ -1,4 +1,9 @@
-"""Process-wide usage ledger for cloud LLM, STT and TTS calls."""
+"""Process-wide usage ledger for the engines DuckSuite runs.
+
+Every engine is local, so no provider is priced: the ledger still counts calls,
+tokens, characters and audio seconds for the Settings readout, and every cost
+stays zero.
+"""
 
 from __future__ import annotations
 
@@ -16,21 +21,12 @@ TOTALS = {
 }
 EVENTS: list[dict] = []
 
-LLM_INPUT_PER_M = 0.15
-LLM_OUTPUT_PER_M = 0.60
-STT_PER_HOUR = {"groq": 0.04, "openai": 0.36, "deepgram": 0.258}
-MUSIC_PER_CALL = {"minimax": 0.15, "lyria-clip": 0.04, "lyria-pro": 0.08}
-TTS_PER_CHAR = {
-    "openai": 15e-6,
-    "groq": 22e-6,
-    "deepgram": 30e-6,
-    "elevenlabs": 40e-6,
-    "cartesia": 49e-6,
-    "minimax": 60e-6,
-    "heygen": 0.0,
-    "fish": 0.0,
-    "gemini": 10e-6,
-}
+LLM_INPUT_PER_M = 0.0
+LLM_OUTPUT_PER_M = 0.0
+#: No provider is priced, so these tables are empty.
+STT_PER_HOUR: dict[str, float] = {}
+MUSIC_PER_CALL: dict[str, float] = {}
+TTS_PER_CHAR: dict[str, float] = {}
 
 
 def record(

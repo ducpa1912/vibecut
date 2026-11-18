@@ -1,4 +1,4 @@
-"""Speech-to-text for VibeCut: local Apple Speech, local Whisper, explicit cloud.
+"""Speech-to-text for DuckSuite: local Apple Speech and local Whisper only.
 
 Wave 2 track T2 owns this module.  It replaces the transcription block that
 used to live in ``pipeline.py`` and adds the Transcript v2 contract from
@@ -11,16 +11,15 @@ used to live in ``pipeline.py`` and adds the Transcript v2 contract from
 * Long sources are cut into 10 minute chunks with 5 s overlap.  Each finished
   chunk is cached by ``audio_hash + engine + model + chunk index`` so a crash
   resumes at the last finished chunk.
-* Cloud providers (Groq whisper-large-v3-turbo, Deepgram nova-3) run only when
-  a route names them explicitly.  There is no ``auto`` cloud ladder and OpenAI
-  STT is not part of the engine set.
+* Speech never leaves the Mac.  Apple Speech and the bundled Whisper pack are
+  the only engines, and no route, saved list or environment variable can add a
+  cloud one.
 
 Nothing here runs at import time.  Tests fake every engine.
 """
 
 from __future__ import annotations
 
-import base64
 import difflib
 import hashlib
 import importlib.util
@@ -36,9 +35,6 @@ import sys
 import threading
 import time
 import unicodedata
-import urllib.parse
-import urllib.error
-import urllib.request
 import uuid
 import wave
 from pathlib import Path
@@ -46,9 +42,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from . import packs
 from . import settings_store
-from . import usage_store
 from . import vision
-from . import workflow_config
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = Path(os.environ.get("DUCK_SWIFT_DIR", ROOT / "tools")).expanduser()
@@ -59,12 +53,10 @@ CHUNK_SECONDS = 600.0
 OVERLAP_SECONDS = 5.0
 LOW_CONFIDENCE = 0.5
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-# OpenRouter reuses the key HeyGen voices and AI text already use; on an Intel
-# Mac (no MLX, no macOS 26 Apple Speech) it is the only transcription route.
-CLOUD_STT_PROVIDERS = ("groq", "deepgram", "openrouter")
-OPENROUTER_STT_MODEL = "openai/whisper-large-v3-turbo"
+# Speech stays on this Mac: Apple SpeechAnalyzer and the bundled Whisper pack.
+# There is no cloud ladder, and no engine list can add one.
 LOCAL_STT_ENGINES = ("apple", "whisper")
-STT_ENGINES = LOCAL_STT_ENGINES + CLOUD_STT_PROVIDERS
+STT_ENGINES = LOCAL_STT_ENGINES
 WHISPER_MODELS = (
     {
         "id": DEFAULT_WHISPER_MODEL,
@@ -98,35 +90,6 @@ _UNSET = object()
 
 class SttError(RuntimeError):
     """A local transcription helper failed."""
-
-
-# ---------------------------------------------------------------- credentials
-
-
-def cloud_stt_key(provider: str) -> str:
-    """Return the stored key for one explicit cloud STT provider."""
-    name = str(provider or "").strip().lower()
-    # ``openai`` is kept for the legacy key API only; it is not an STT engine.
-    if name not in (*CLOUD_STT_PROVIDERS, "openai"):
-        return ""
-    return settings_store.get_secret(name)
-
-
-def openai_key() -> str:
-    """Deprecated shared key getter.
-
-    OpenAI STT was removed in Wave 2.  ``audio.py`` still imports this name for
-    the settings/key surface, so it stays until Claude Code removes leftovers.
-    """
-    return cloud_stt_key("openai")
-
-
-def groq_key() -> str:
-    return cloud_stt_key("groq")
-
-
-def deepgram_key() -> str:
-    return cloud_stt_key("deepgram")
 
 
 # ---------------------------------------------------------------- helpers
@@ -251,17 +214,6 @@ def whisper_models() -> list[dict]:
             cached = True
         rows.append({**item, "cached": cached, "current": item["id"] == current})
     return rows
-
-
-def _stt_workflow_model(provider: str, default: str) -> str:
-    try:
-        workflows = settings_store.load_settings().get("workflows") or {}
-        for route in workflow_config.routes(workflows, "stt"):
-            if str(route.get("provider") or "") == provider and route.get("model"):
-                return str(route["model"])
-    except Exception:  # noqa: BLE001
-        pass
-    return default
 
 
 class SttCancelled(RuntimeError):
@@ -398,10 +350,12 @@ def _whisper_env(model: str) -> dict[str, str]:
     stalls the read. Downloads belong to the Setup / packs flow.
     """
     env = dict(os.environ)
-    if Path(model).expanduser().is_dir() or whisper_model_cached(model):
-        env["HF_HUB_OFFLINE"] = "1"
-        env["TRANSFORMERS_OFFLINE"] = "1"
-        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    # DuckSuite never reaches the hub from a speech pass, cached or not: an
+    # uncached model fails the read instead of downloading weights behind the
+    # user's back. Downloads belong to the Setup / packs flow.
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     return env
 
 
@@ -1007,66 +961,6 @@ def _whisper_payload(data: Mapping[str, Any]) -> dict:
     }
 
 
-def _deepgram_payload(data: Mapping[str, Any], duration: float) -> dict:
-    segments: list[dict] = []
-    words: list[dict] = []
-    results = data.get("results") or {}
-    utterances = results.get("utterances") or []
-    for item in utterances:
-        if not isinstance(item, Mapping):
-            continue
-        text = " ".join(_clean_text(item.get("transcript")).split())
-        if not text:
-            continue
-        speaker = item.get("speaker")
-        label = f"S{int(speaker) + 1}" if isinstance(speaker, (int, float)) else None
-        index = len(segments)
-        segment = {
-            "start": round(_float(item.get("start")), 3),
-            "end": round(_float(item.get("end")), 3),
-            "text": text,
-            "confidence": _confidence(item.get("confidence"), 0.5),
-        }
-        if label:
-            segment["speaker"] = label
-        segments.append(segment)
-        for raw_word in item.get("words") or []:
-            word = _normalize_word(raw_word, speaker=label)
-            if word is None:
-                continue
-            word["segment"] = index
-            words.append(word)
-    alternatives = (((results.get("channels") or [{}])[0]).get("alternatives") or [])
-    alternative = alternatives[0] if alternatives else {}
-    if not words:
-        for raw_word in alternative.get("words") or []:
-            word = _normalize_word(raw_word)
-            if word is None:
-                continue
-            words.append(word)
-    if not segments:
-        full_text = " ".join(_clean_text(alternative.get("transcript")).split())
-        if full_text:
-            segments = [{
-                "start": 0.0,
-                "end": round(duration, 3) or 1.0,
-                "text": full_text,
-                "confidence": 0.5,
-            }]
-    if not segments and words:
-        segments = _segments_from_words(words)
-    for word in words:
-        word["segment"] = _segment_index_for_time(segments, word["start"])
-    return {
-        "language": _base_language(
-            (data.get("metadata") or {}).get("language"), "en",
-        ),
-        "text": _join_words(segment["text"] for segment in segments),
-        "segments": segments,
-        "words": words,
-    }
-
-
 def _segments_from_words(words: list[dict]) -> list[dict]:
     if not words:
         return []
@@ -1435,243 +1329,18 @@ def transcribe(
     }
 
 
-def _multipart(
-    fields: dict, file_field: str, filename: str,
-    content: bytes, content_type: str,
-) -> tuple[bytes, str]:
-    boundary = "----vibecut" + uuid.uuid4().hex
-    chunks: list[bytes] = []
-    for name, value in fields.items():
-        chunks.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n".encode("utf-8")
-        )
-    chunks.append(
-        f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; '
-        f'filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'.encode("utf-8")
-    )
-    chunks.append(content)
-    chunks.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
-
-
-def _cloud_speech(
-    wav_path: Path,
-    job_dir: Path,
-    provider: str,
-    language: str,
-    model: str = "",
-    timeout: float = 1800,
-    *,
-    run: Callable[..., Any] | None = None,
-    urlopen: Callable[..., Any] | None = None,
-) -> dict | None:
-    """One explicit cloud STT request.  No auto provider selection."""
-    name = str(provider or "").strip().lower()
-    if name not in CLOUD_STT_PROVIDERS:
-        return None
-    runner = run or _run
-    opener = urlopen or urllib.request.urlopen
-    out_dir = Path(job_dir) / "transcript"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    upload = out_dir / "transcript_upload.mp3"
-    runner([
-        _ffmpeg(), "-y", "-v", "error", "-i", str(wav_path),
-        "-ac", "1", "-ar", "16000", "-b:a", "48k", str(upload),
-    ], timeout=600)
-    if not upload.is_file() or upload.stat().st_size == 0:
-        return None
-    audio_bytes = upload.read_bytes()
-    key = settings_store.get_secret(name)
-    if not key:
-        return None
-    duration = 0.0
-    try:
-        with wave.open(str(wav_path), "rb") as handle:
-            duration = handle.getnframes() / max(1, handle.getframerate())
-    except (OSError, EOFError, wave.Error):
-        pass
-
-    if name == "openrouter":
-        chosen_model = model or _stt_workflow_model("openrouter", OPENROUTER_STT_MODEL)
-        body = {
-            "model": chosen_model,
-            "input_audio": {
-                "data": base64.b64encode(audio_bytes).decode("ascii"),
-                "format": "mp3",
-            },
-            "response_format": "verbose_json",
-            "timestamp_granularities": ["segment", "word"],
-        }
-        if language and str(language).lower() != "auto":
-            body["language"] = _base_language(language)
-        request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/audio/transcriptions",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with opener(request, timeout=max(10, timeout)) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            # Said plainly: "No transcript" hid a dead key behind silence.
-            if exc.code in (401, 402, 403):
-                raise RuntimeError(
-                    f"OpenRouter refused the key ({exc.code}). Check it in Setup."
-                ) from exc
-            raise RuntimeError(f"OpenRouter speech failed ({exc.code}).") from exc
-        except Exception:  # noqa: BLE001 - a cloud failure returns no transcript
-            return None
-        payload = _whisper_payload(data)
-        if not payload["segments"]:
-            return None
-        return {
-            "language": payload["language"],
-            "text": payload["text"][:4000],
-            "segments": [
-                {"start": item["start"], "end": item["end"], "text": item["text"]}
-                for item in payload["segments"]
-            ],
-            "words": payload["words"],
-            "provider": "openrouter",
-            "model": chosen_model,
-            "seconds": round(duration, 3),
-        }
-
-    if name == "groq":
-        endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-        chosen_model = model or os.environ.get(
-            "VIBECUT_GROQ_STT_MODEL",
-        ) or _stt_workflow_model("groq", "whisper-large-v3-turbo")
-        fields = {
-            "model": chosen_model,
-            "response_format": "verbose_json",
-            "temperature": "0",
-            "timestamp_granularities[]": "word",
-        }
-        if language and str(language).lower() != "auto":
-            fields["language"] = _base_language(language)
-        body, content_type = _multipart(
-            fields, "file", "audio.mp3", audio_bytes, "audio/mpeg",
-        )
-        request = urllib.request.Request(
-            endpoint, data=body,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": content_type},
-            method="POST",
-        )
-        try:
-            with opener(request, timeout=max(10, timeout)) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except Exception:  # noqa: BLE001 - a cloud failure returns no transcript
-            return None
-        payload = _whisper_payload(data)
-        if not payload["segments"]:
-            return None
-        return {
-            "language": payload["language"],
-            "text": payload["text"][:4000],
-            "segments": [
-                {"start": item["start"], "end": item["end"], "text": item["text"]}
-                for item in payload["segments"]
-            ],
-            "words": payload["words"],
-            "provider": "groq",
-            "model": chosen_model,
-            "seconds": round(duration, 3),
-        }
-
-    # Deepgram nova-3
-    chosen_model = model or _stt_workflow_model("deepgram", "nova-3")
-    params = {
-        "model": chosen_model,
-        "smart_format": "true",
-        "utterances": "true",
-        "punctuate": "true",
-    }
-    if language and str(language).lower() != "auto":
-        params["language"] = _base_language(language)
-    endpoint = "https://api.deepgram.com/v1/listen?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(
-        endpoint, data=audio_bytes,
-        headers={"Authorization": f"Token {key}", "Content-Type": "audio/mpeg"},
-        method="POST",
-    )
-    try:
-        with opener(request, timeout=max(10, timeout)) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001 - a cloud failure returns no transcript
-        return None
-    payload = _deepgram_payload(data, duration)
-    if not payload["segments"]:
-        return None
-    return {
-        "language": payload["language"],
-        "text": payload["text"][:4000],
-        "segments": [
-            {"start": item["start"], "end": item["end"], "text": item["text"]}
-            for item in payload["segments"]
-        ],
-        "words": payload["words"],
-        "provider": "deepgram",
-        "model": chosen_model,
-        "seconds": round(duration, 3),
-    }
-
-
-def transcribe_cloud(
-    wav_path: Path | None,
-    job_dir: Path,
-    language: str = "en",
-    provider: str = "",
-    model: str = "",
-    timeout: float = 1800,
-) -> dict | None:
-    """Explicit cloud transcription.  ``auto``/empty never selects a provider."""
-    name = str(provider or "").strip().lower()
-    if name not in CLOUD_STT_PROVIDERS:
-        return None
-    source = Path(wav_path) if wav_path else None
-    if not source or not source.exists():
-        return None
-    result = _cloud_speech(
-        source, job_dir, name, language, model=model, timeout=timeout,
-    )
-    if result:
-        usage_store.record(
-            "stt", name, audio_seconds=float(result.get("seconds") or 0.0),
-        )
-    return result
-
-
 # ---------------------------------------------------------------- routes
 
 
 def normalize_engine(provider: str, model: str = "") -> dict | None:
     name = str(provider or "").strip().lower()
     raw_model = str(model or "").strip()
-    if name in {"auto", "local", "whisper"}:
+    if name in {"", "auto", "local", "whisper"}:
         return {"provider": "whisper", "model": normalize_whisper_model(raw_model)}
     if name == "apple":
         return {"provider": "apple", "model": raw_model or "on-device-3b"}
-    if name in CLOUD_STT_PROVIDERS:
-        if name == "openrouter":
-            return {
-                "provider": "openrouter",
-                "model": raw_model or _stt_workflow_model("openrouter", OPENROUTER_STT_MODEL),
-            }
-        if name == "groq":
-            return {
-                "provider": "groq",
-                "model": normalize_whisper_model(
-                    raw_model or _stt_workflow_model("groq", "whisper-large-v3-turbo"),
-                ),
-            }
-        return {
-            "provider": "deepgram",
-            "model": raw_model or _stt_workflow_model("deepgram", "nova-3"),
-        }
-    # OpenAI STT was removed.  It is not mapped to another cloud provider.
+    # Every other name, including a saved cloud route, is not an engine:
+    # speech never leaves the Mac.
     return None
 
 
@@ -1683,8 +1352,9 @@ def resolve_routes(
 ) -> list[dict]:
     """Turn configured routes into the final explicit engine list.
 
-    ``auto``/``local`` are local Whisper aliases; OpenAI routes are dropped.
-    Cloud engines appear only when the caller configured them by name.
+    ``auto``/``local``/``whisper`` are local Whisper aliases.  Every other name,
+    including a saved cloud route, is dropped; the result is always Apple or
+    Whisper from :data:`DEFAULT_ROUTES`.
     """
     requested = str(engine or "").strip().lower()
     if requested and requested != "auto":
@@ -1718,8 +1388,6 @@ def _engine_ready(provider: str, model: str) -> bool:
         return _apple_transcribe_helper() is not None
     if provider == "whisper":
         return _whisper_command() is not None
-    if provider in CLOUD_STT_PROVIDERS:
-        return bool(settings_store.get_secret(provider))
     return False
 
 
@@ -1756,10 +1424,9 @@ def _run_engine_chunk_keyed(
             vocabulary=vocabulary,
         )
     else:
-        raw = _cloud_speech(
-            chunk_wav, work, engine, language, model=model,
-            timeout=float(timeout or 1800),
-        )
+        # Only Apple and Whisper exist; an unknown engine name returns nothing
+        # rather than reaching a service.
+        return None
     if not raw:
         return None
     segments, words = _shift_rows(
@@ -1976,9 +1643,6 @@ def _log_route(
 ENGINE_LABELS = {
     "apple": "Apple speech",
     "whisper": "local Whisper",
-    "groq": "Groq",
-    "deepgram": "Deepgram",
-    "openrouter": "OpenRouter",
 }
 
 
@@ -2086,11 +1750,11 @@ def transcribe_source(
 ) -> dict | None:
     """Chunk, transcribe, merge and persist one Transcript v2 for a job.
 
-    An empty ``language`` means auto: Whisper and the cloud engines omit their
-    language field and report what they detected.  Apple Speech cannot detect a
-    language, so it is skipped unless the caller selected it explicitly or
-    supplied a language; otherwise a Chinese source would be forced through an
-    English locale and return nothing.
+    An empty ``language`` means auto: Whisper omits its language field and
+    reports what it detected.  Apple Speech cannot detect a language, so it is
+    skipped unless the caller selected it explicitly or supplied a language;
+    otherwise a Chinese source would be forced through an English locale and
+    return nothing.
     """
     requested_language = str(language or "").strip().lower()
     from duckcore import model_slots
@@ -2148,7 +1812,7 @@ def transcribe_source(
         for index, route in enumerate(plan)
     }
     ready_auto = any(
-        str(route.get("provider") or "").lower() in {"whisper", "groq", "deepgram"}
+        str(route.get("provider") or "").lower() in {"whisper"}
         and ready_routes[index]
         for index, route in enumerate(plan)
         if isinstance(route, Mapping)
@@ -2222,11 +1886,6 @@ def transcribe_source(
             fail(provider, route_model, "The engine returned an empty transcript.")
             continue
         path = save_transcript(Path(job_dir), transcript)
-        if provider in CLOUD_STT_PROVIDERS:
-            usage_store.record(
-                "stt", provider, model=route_model,
-                audio_seconds=float(duration),
-            )
         _log_route(
             logger, route_index, provider, route_model, started, True, "",
             job_id=job_id, request_id=request_id,
@@ -2256,10 +1915,10 @@ def transcribe_routes(
 ) -> dict | None:
     """Route dispatcher kept for the pre-v2 caller and its compatibility tests.
 
-    ``legacy=True`` preserves the old ``pipeline._transcribe_workflow``
-    semantics, including redirecting an explicit ``auto`` route to a cloud
-    provider.  Production analysis uses :func:`transcribe_source`; the new path
-    resolves routes with :func:`resolve_routes` and never has an auto ladder.
+    Only Apple and Whisper run.  A route that names anything else, including a
+    saved cloud engine, returns no transcript; ``legacy`` is accepted so the old
+    caller keeps its signature, but there is no longer a cloud or ``auto``
+    ladder behind it.
     """
     chosen = dict(engines or {})
 
@@ -2276,39 +1935,21 @@ def transcribe_routes(
         provider = str(route.get("provider") or "").lower()
         model = str(route.get("model") or "")
         started = time.time()
-        emit(0.70 + min(0.16, route_index * 0.02), f"Transcribing speech · {provider}")
+        label = ENGINE_LABELS.get(provider, "local speech")
+        emit(0.70 + min(0.16, route_index * 0.02), f"Transcribing speech · {label}")
         result = None
         try:
-            if legacy and provider in {"auto", "whisper", "local"}:
-                cloud_provider = ""
-                if provider == "auto":
-                    if model == "whisper-1":
-                        cloud_provider = "openai"
-                    elif model == "nova-3":
-                        cloud_provider = "deepgram"
-                    elif model == "whisper-large-v3-turbo":
-                        cloud_provider = "groq"
-                if cloud_provider:
-                    result = callable_for("cloud", _cloud_speech)(
-                        wav_path, job_dir, cloud_provider, language,
-                        model=model, timeout=timeout,
-                    )
-                else:
-                    result = callable_for("whisper", transcribe)(
-                        wav_path, job_dir, duration,
-                        lambda fraction, message: emit(
-                            0.70 + 0.16 * fraction, message,
-                        ),
-                        model=model or None, timeout=timeout,
-                    )
+            if provider in {"auto", "whisper", "local"}:
+                result = callable_for("whisper", transcribe)(
+                    wav_path, job_dir, duration,
+                    lambda fraction, message: emit(
+                        0.70 + 0.16 * fraction, message,
+                    ),
+                    model=model or None, timeout=timeout,
+                )
             elif provider == "apple":
                 result = callable_for("apple", transcribe_apple)(
                     wav_path, job_dir, language, timeout=timeout,
-                )
-            elif provider in {"groq", "openai", "deepgram"}:
-                result = callable_for("cloud", _cloud_speech)(
-                    wav_path, job_dir, provider, language,
-                    model=model, timeout=timeout,
                 )
         except Exception as exc:  # noqa: BLE001
             _log_route(

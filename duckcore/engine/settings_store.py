@@ -19,13 +19,8 @@ DATA = Path(
     )
 ).expanduser()
 
-_SECRET_ENV = {
-    "openrouter": "OPENROUTER_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "deepgram": "DEEPGRAM_API_KEY",
-    "minimax": "MINIMAX_API_KEY",
-    "elevenlabs": "ELEVENLABS_API_KEY",
-}
+#: No provider has a key: every engine DuckSuite runs is on this Mac.
+_SECRET_ENV: dict[str, str] = {}
 
 
 def settings_path() -> Path:

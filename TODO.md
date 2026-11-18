@@ -6,6 +6,9 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
+- [ ] REQ-20261118-02 · Settings → Workflows lists empty text/music/script ladders and does not explain why; decide whether to hide them or caption them as local-only.
+- [ ] REQ-20261118-02 · `duckcore/engine/detect.py:1868` prefixes the plain failure with `Engine:`; trim it so the report reads `Speech was not read.` once.
+
 - Historical media outputs and scratch footage/projects were removed at the founder's request; retain analysis and recreate authorized scratch data for future measurements (`docs/MEDIA-CLEANUP.md`).
 
 - [ ] REQ-20261116-02 · resolve native Core ML MPSGraph abort and exact-bucket drift (max 19/255); coarse padding max 169/255 is refused; do not promote default until reviewed. 3C review: VERSION back to 17, fallback clips deleted, unknown engine falls to PyTorch; promotion still fails.
