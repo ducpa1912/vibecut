@@ -2059,3 +2059,9 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 @media (min-height: 761px) and (max-height: 840px) {
   .timeline { max-height: 200px; overflow-y: scroll; }
 }
+
+/* Cut: a landscape frame follows its width, not a forced 100% height. */
+.edit-clean .media-card.preview-large.landscape-frame { width: 100%; height: auto; max-height: 100%; }
+.segmented button.is-active { background: #9a5310; border-color: #9a5310; color: #fff; }
+.preview-row.landscape .media-card.preview-large { width: 100%; height: auto; max-height: none; }
+.workspace.edit.edit-clean:has(+ .focus-dock) { height: calc(100vh - 470px); min-height: 300px; }

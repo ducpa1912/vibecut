@@ -1483,17 +1483,17 @@ function screenEditor() {
       <section class="editor-center">
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
-          <div class="preview-row${Number(sourceMeta.height || 0) > Number(sourceMeta.width || 0) ? ' portrait' : ' landscape'}">
+          <div class="preview-row${cutView.ratio >= 1 ? ' landscape' : ' portrait'}">
             <div class="media-card preview-large${cutView.cls}" style="${cutView.style}">
               ${mediaClip
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
                 : `<video class="cut-video" style="filter:${gradeFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
-              <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
+              <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
               ${playerBar()}
             </div>
-            ${mediaClip ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
+            ${mediaClip || tab === 'cut' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
               ${overlayCues.length ? `<div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>` : ''}
               ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
@@ -1513,7 +1513,7 @@ function screenEditor() {
         </section>
       </section>
 
-      ${mediaClip ? mediaInspector(story) : `<aside class="panel inspector">
+      ${state.focusMode ? '' : mediaClip ? mediaInspector(story) : `<aside class="panel inspector">
         <div class="inspector-head">
           <h2 class="inspector-title">Scene ${pad(state.selectedScene + 1)} · ${esc(truncate(sceneTitle(scene, state.selectedScene), 26))}</h2>
           <p class="inspector-sub">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p>
@@ -1729,7 +1729,8 @@ function cutPreview() {
     style = `--media-ratio:${ratioCrop.toFixed(4)};--vw:${(100 / cw).toFixed(2)}%;--vh:${(100 / ch).toFixed(2)}%;--vx:${(-(Number(crop.x) || 0) / cw * 100).toFixed(2)}%;--vy:${(-(Number(crop.y) || 0) / ch * 100).toFixed(2)}%`;
     cls += ' cut-cropped';
   }
-  return { cls, style };
+  cls += ratio >= 1 ? ' landscape-frame' : ' portrait-frame';
+  return { cls, style, ratio };
 }
 
 function cutOutputSize() {
@@ -1832,7 +1833,7 @@ function cutFocus() {
       <p class="small muted">The player preview is approximate; the render applies these in ffmpeg.</p>
       <div class="cut-label">Presets</div>
       <div class="filter-presets">
-        ${presets.map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}">${label}</button>`).join('')}
+        ${presets.map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="cut-preset" data-preset="${value}">${label}</button>`).join('')}
       </div>
     </div>
     <div class="focus-card">
@@ -1925,7 +1926,7 @@ function focusDock() {
   const mode = state.focusMode;
   return `<section class="panel focus-dock">
     <div class="focus-dock-head">
-      <div><span class="focus-kicker">Edit Focus</span><h2>${titles[mode] || 'Focus'}</h2></div>
+      <div><h2>${titles[mode] || 'Focus'}</h2></div>
       <button class="btn small" type="button" data-action="close-focus">${icon('arrowLeft', 12)} Back to timeline</button>
     </div>
     <div class="focus-dock-body">${mode === 'cut' ? cutFocus() : mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
@@ -5096,6 +5097,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'cut-aspect') {
       const aspect = target.dataset.aspect || 'source';
       await saveCut({ aspect, ...(aspect === 'source' ? {} : { fit: 'fill' }) });
+      if (aspect !== 'source') toast(`${aspect} · Fill crops to cover the frame. Choose Fit to keep the whole picture.`);
     }
     else if (action === 'cut-fit') { await saveCut({ fit: target.dataset.fit || 'fit' }); }
     else if (action === 'cut-crop') {
@@ -5109,6 +5111,16 @@ document.addEventListener('click', async (event) => {
     }
     else if (action === 'cut-reset') { await saveCut({ crop: null }); }
     else if (action === 'grade-reset') { await saveCut({ grade: { exposure: 0, contrast: 0, saturation: 0, temperature: 0 } }); }
+    else if (action === 'cut-preset') {
+      const preset = target.dataset.preset || 'warm';
+      const grades = {
+        warm: { exposure: 0, contrast: 6, saturation: 8, temperature: 35 },
+        cool: { exposure: 0, contrast: 4, saturation: 4, temperature: -35 },
+        bw: { exposure: 0, contrast: 10, saturation: -100, temperature: 0 },
+        vivid: { exposure: 4, contrast: 16, saturation: 28, temperature: 4 },
+      };
+      await saveCut({ grade: grades[preset] || grades.warm });
+    }
     else if (action === 'timeline-zoom') {
       const steps = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
       const dir = Number(target.dataset.dir || 0);
