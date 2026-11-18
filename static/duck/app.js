@@ -1493,7 +1493,7 @@ function screenEditor() {
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
               ${playerBar()}
             </div>
-            ${mediaClip || tab === 'cut' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
+            ${mediaClip || tab === 'cut' || state.focusMode === 'script' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
               ${overlayCues.length ? `<div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>` : ''}
               ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
@@ -2502,37 +2502,39 @@ function scriptFocus() {
       ${state.scriptBusy ? `<span class="status-spinner">${icon('loader', 12)}</span>` : ''}
       ${needsTranslationLink ? `<a class="status-link" href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Open Translation settings</a>` : ''}
     </div>
-    ${cues.length ? `<div class="script-focus-grid">
-      <div class="script-focus-pane">
-        <div class="focus-col-head"><span>Cues</span><span>${cues.length}</span></div>
-        <div class="focus-scroll">
-          ${cues.map((cue, index) => `<button class="focus-cue${Number(cue.start || 0) <= state.timelineTime && Number(cue.end || 0) > state.timelineTime ? ' is-current' : ''}" type="button" data-action="script-seek" data-time="${Number(cue.start || 0).toFixed(3)}">
-            <span class="focus-tc">${fmtTC(cue.start, 24)}</span><span>${esc(truncate(cue.text || '', 58))}</span>
-          </button>`).join('')}
-        </div>
-      </div>
+    ${cues.length ? `<div class="script-summary">
+      <strong>${cues.length} lines</strong>
+      <span>${fmtTC(Number(cues[0].start || 0), 24)}–${fmtTC(Number(cues[cues.length - 1].end || 0), 24)} of ${fmtTC(Number(state.edit?.end || 0) || Number(state.check?.result?.meta?.duration || 0), 24)}</span>
+      <span class="spacer"></span>
+      <label class="summary-burn"><input type="checkbox" data-action="caption-burn" ${track?.burn ? 'checked' : ''}> Burn captions</label>
+      <span class="chip">${track?.burn ? 'Burned into video' : 'SRT only'}</span>
+    </div>
+    <div class="script-focus-grid">
       <div class="script-focus-pane">
         <div class="focus-col-head"><span>Script</span><span class="focus-mode-tag">${esc(modeLabel)}</span></div>
-        <div class="focus-scroll">
-          ${cues.map((cue) => `<label class="focus-edit-row">
-            <span class="focus-edit-meta"><span class="focus-tc">${fmtTC(cue.start, 24)}</span>${cue.source_text && cue.source_text !== cue.text ? `<span class="focus-source">${esc(truncate(cue.source_text, 64))}</span>` : ''}</span>
-            <input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}" aria-label="Script line ${fmtTC(cue.start, 24)}">
-          </label>`).join('')}
+        <div class="focus-scroll" data-script-scroll>
+          ${cues.map((cue) => {
+            const current = Number(cue.start || 0) <= Number(state.timelineTime || 0) && Number(cue.end || 0) > Number(state.timelineTime || 0);
+            return `<label class="focus-edit-row${current ? ' is-current' : ''}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
+            <span class="focus-edit-meta"><button class="focus-tc focus-tc-btn" type="button" data-action="script-seek" data-time="${Number(cue.start || 0).toFixed(3)}" title="Seek to this line">${fmtTC(cue.start, 24)}</button>${cue.source_text && cue.source_text !== cue.text ? `<span class="focus-source">${esc(truncate(cue.source_text, 64))}</span>` : ''}</span>
+            <input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}" aria-label="Script line ${fmtTC(cue.start, 24)}" ${state.scriptBusy ? 'disabled' : ''}>
+          </label>`;
+          }).join('')}
         </div>
       </div>
       <aside class="script-focus-rules">
         <div class="rail-head">Script tools</div>
-        <div class="rule-block"><label>Target language</label><select data-action="script-target">
+        <div class="rule-block"><label>Target language</label><select data-action="script-target" ${state.scriptBusy ? 'disabled' : ''}>
           ${['en', 'vi', 'zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[code]}</option>`).join('')}
         </select></div>
         <button class="btn wide" type="button" data-action="script-translate" ${state.scriptBusy ? 'disabled' : ''}>${icon('captions', 13)} Translate</button>
         <p class="setup-note">First use may ask for a macOS language pack.</p>
-        <div class="rule-block"><label>Rewrite style</label><select data-action="script-mode">
+        <div class="rule-block"><label>Rewrite style</label><select data-action="script-mode" ${state.scriptBusy ? 'disabled' : ''}>
           ${[['clean', 'Clean up'], ['short', 'Shorten'], ['punchy', 'Punchier']].map(([value, label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
         </select></div>
         <button class="btn wide" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>${icon('sparkle', 13)} Rewrite</button>
         <p class="setup-note">${state.engine?.rewrite?.available === false ? 'Apple Intelligence is off. Rewrite uses a basic cleanup.' : 'Rewrite uses the best available local engine.'}</p>
-        <button class="btn wide" type="button" data-action="script-reset">Reset to source</button>
+        <button class="btn wide" type="button" data-action="script-reset" ${state.scriptBusy ? 'disabled' : ''}>Reset to source</button>
         <div class="rule-sep"></div>
         <div class="rail-head">Caption tools</div>
         <div class="rule-block"><label>Caption style</label><select data-action="caption-style">
@@ -2541,7 +2543,6 @@ function scriptFocus() {
         <div class="rule-block"><label>Position</label><select data-action="caption-position">
           ${['bottom', 'middle', 'top'].map((value) => `<option value="${value}" ${track?.position === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
         </select></div>
-        <div class="toggle-row"><span>Burn captions</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${track?.burn ? 'checked' : ''}><i></i></label></div>
         <button class="btn wide" type="button" data-action="download-captions">${icon('download', 13)} Download SRT</button>
       </aside>
     </div>` : '<div class="script-empty">No transcript yet. Re-read speech from the Check screen first.</div>'}
@@ -4648,6 +4649,7 @@ async function previewLine(cueId) {
 
 async function translateScript() {
   if (!state.project || !state.edit) return;
+  if (!window.confirm(`Translate all ${scriptCues().length} lines? Hand edits are replaced.`)) return;
   state.scriptBusy = true;
   state.scriptStatusKind = 'working';
   state.scriptStatus = 'Working on the script. Your local server may take several minutes.';
@@ -4674,6 +4676,7 @@ async function translateScript() {
 
 async function rewriteScript() {
   if (!state.project || !state.edit) return;
+  if (!window.confirm(`Rewrite all ${scriptCues().length} lines? Hand edits are replaced.`)) return;
   state.scriptBusy = true;
   state.scriptStatusKind = 'working';
   state.scriptStatus = 'Working on the script';
@@ -5028,7 +5031,16 @@ document.addEventListener('click', async (event) => {
     else if (action === 'script-translate') await translateScript();
     else if (action === 'script-rewrite') await rewriteScript();
     else if (action === 'script-reset') await resetScript();
-    else if (action === 'script-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); document.querySelectorAll('.focus-cue').forEach((row) => row.classList.toggle('is-current', Number(row.dataset.time || 0) <= state.timelineTime)); }
+    else if (action === 'script-seek') {
+      seekToTime(Number(target.dataset.time || 0) + 0.01);
+      document.querySelectorAll('.focus-edit-row').forEach((row) => {
+        const start = Number(row.dataset.start || 0);
+        const end = Number(row.dataset.end || 0);
+        const hit = start <= state.timelineTime && end > state.timelineTime;
+        row.classList.toggle('is-current', hit);
+        if (hit) row.scrollIntoView({ block: 'nearest' });
+      });
+    }
     else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); if (Number(state.timelineZoom || 1) > 1) centerTimelineOnPlayhead(); }
     else if (action === 'overlay-position') { state.overlayTop = !state.overlayTop; render(); }
     else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });

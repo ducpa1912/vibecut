@@ -2064,4 +2064,60 @@ dialog.modal .modal-body::-webkit-scrollbar-track { background: transparent; }
 .edit-clean .media-card.preview-large.landscape-frame { width: 100%; height: auto; max-height: 100%; }
 .segmented button.is-active { background: #9a5310; border-color: #9a5310; color: #fff; }
 .preview-row.landscape .media-card.preview-large { width: 100%; height: auto; max-height: none; }
-.workspace.edit.edit-clean:has(+ .focus-dock) { height: calc(100vh - 470px); min-height: 300px; }
+.workspace.edit.edit-clean:has(+ .focus-dock) { height: calc(100vh - 520px); min-height: 320px; }
+
+/* Script Focus: one editor, one tools rail, no twin scrollers. */
+.script-summary { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--muted); font-size: 10px; }
+.script-summary strong { color: var(--ink); font-size: 11px; }
+.script-summary .spacer { flex: 1; }
+.summary-burn { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-size: 10px; }
+.script-focus-grid { grid-template-columns: minmax(0, 1fr) 230px; height: calc(100vh - 605px); min-height: 260px; }
+.script-focus-rules { min-height: 0; overflow-y: auto; }
+.focus-edit-row.is-current { background: var(--amber-soft); box-shadow: inset 3px 0 0 var(--amber-2); }
+.focus-edit-row input:focus { outline: 2px solid var(--amber-2); outline-offset: 1px; }
+.focus-tc { font-size: 9px; }
+.focus-edit-row input { font-size: 12px; min-height: 28px; }
+.focus-col-head { font-size: 10px; }
+.focus-dock { max-height: none; overflow: visible; }
+.focus-dock-body { max-height: none; min-height: 0; overflow: visible; }
+@media (max-width: 1100px) {
+  .script-focus-grid { grid-template-columns: minmax(0, 1fr) minmax(176px, 200px); grid-template-rows: none; }
+  .script-focus-rules { grid-column: 2; grid-row: 1; flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+  .script-focus-pane { grid-column: 1; grid-row: 1; }
+}
+@media (min-height: 861px) {
+  .workspace.edit.edit-clean:has(+ .focus-dock) { height: 280px; min-height: 240px; }
+  .script-focus-grid { height: min(calc(100vh - 524px), 376px); min-height: 270px; }
+}
+@media (min-height: 761px) and (max-height: 860px) {
+  .workspace.edit.edit-clean:has(+ .focus-dock) { height: 180px; min-height: 180px; }
+  .script-focus-grid { height: calc(100vh - 424px); min-height: 220px; }
+}
+@media (max-height: 760px) {
+  .workspace.edit.edit-clean:has(+ .focus-dock) { height: 150px; min-height: 150px; }
+  .script-focus-grid { height: calc(100vh - 410px); min-height: 180px; }
+}
+@media (max-height: 560px) {
+  .workspace.edit.edit-clean:has(+ .focus-dock) { display: none; }
+  .script-focus-grid { height: calc(100vh - 266px); min-height: 170px; }
+  .focus-edit-row { padding: 1px 5px; }
+  .focus-edit-row input { min-height: 22px; font-size: 11px; }
+  .focus-edit-meta { min-height: 10px; }
+}
+
+.focus-tc-btn { border: 0; padding: 0; background: transparent; color: var(--muted); font: 9px var(--mono); cursor: pointer; text-align: left; }
+.focus-tc-btn:hover { color: var(--amber-ink); text-decoration: underline; }
+
+/* Focus mode clips the preview to its strip: the player may not paint over the dock. */
+.workspace.edit.edit-clean:has(+ .focus-dock) .preview-block { overflow: hidden; container-type: size; }
+.workspace.edit.edit-clean:has(+ .focus-dock) .media-card.preview-large {
+  width: min(100cqw, calc(100cqh * var(--media-ratio, 1.7778)));
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  aspect-ratio: var(--media-ratio, 1.7778);
+}
+.workspace.edit.edit-clean:has(+ .focus-dock) .media-card.preview-large video,
+.workspace.edit.edit-clean:has(+ .focus-dock) .media-card.preview-large img { object-fit: contain; }
