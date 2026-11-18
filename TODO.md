@@ -43,6 +43,14 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
   Next: flexible sizes 64–512, real review-project spans, second-load time, how the core calls Core
   ML without PyTorch, and what happens to the TorchScript user slot, MI-GAN and STTN.
 
+## Loop 3D — commit review debts (2026-11-18)
+
+- [ ] Fix the loop-26 review's publisher-digest/sparse-file statements (reversed by `c909766`).
+- [ ] `docs/teams/coreml-default/founder-test.md`: the Core ML Settings step needs the env var or is dropped.
+- [ ] Re-measure the app bundle and update the stale ≈981 MB figures.
+- [ ] Align the Python and JS import-error mappers; `\bpath\b` has no JS twin.
+- [ ] Fix the Core ML test module docstring (says default, asserts PyTorch).
+
 ## Loop 28 — layout odds (REQ-20261115-02 P2)
 
 - [ ] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll.
