@@ -169,6 +169,40 @@ def uuid_name() -> str:
     return hashlib.sha1(f"{time.time()}-{secrets.token_hex(8)}".encode()).hexdigest()[:12]
 
 
+def update(edit: dict, data_root: Path, effect_id: str, values: dict) -> dict:
+    """Change an existing effect in place: timing, copy, look or level."""
+    row = next(
+        (item for item in list_effects(edit) if str(item.get("id")) == str(effect_id)),
+        None,
+    )
+    if row is None:
+        raise KeyError(effect_id)
+    if values.get("text") is not None:
+        value = " ".join(str(values["text"]).split()).strip()
+        if not value:
+            raise EffectError("Type some text first.")
+        row["text"] = value[:240]
+        row["name"] = value[:80]
+    if values.get("style") is not None:
+        row["style"] = values["style"] if values["style"] in TEXT_STYLES else row.get("style", "headline")
+    if values.get("color") is not None:
+        row["color"] = str(values["color"])[:9]
+    if values.get("start") is not None:
+        row["start"] = max(0.0, float(values["start"]))
+    if values.get("end") is not None:
+        start = float(row.get("start") or 0.0)
+        row["end"] = max(start + 0.2, float(values["end"]))
+    if values.get("volume") is not None:
+        row["volume"] = max(0.0, min(1.5, float(values["volume"])))
+    if values.get("width") is not None:
+        row["width"] = max(0.04, min(1.0, float(values["width"])))
+    for key in ("x", "y"):
+        if values.get(key) is not None:
+            row[key] = max(0.0, min(1.0, float(values[key])))
+    edits.save_edit(edit, data_root)
+    return row
+
+
 def remove(edit: dict, data_root: Path, effect_id: str) -> dict:
     before = list_effects(edit)
     after = [item for item in before if str(item.get("id")) != effect_id]

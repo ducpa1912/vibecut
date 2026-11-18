@@ -194,6 +194,18 @@ class SfxTextBody(BaseModel):
     y: float = 0.84
 
 
+class SfxPatch(BaseModel):
+    text: str | None = Field(default=None, max_length=240)
+    style: str | None = Field(default=None, pattern="^(headline|caption|badge)$")
+    color: str | None = Field(default=None, max_length=9)
+    start: float | None = Field(default=None, ge=0.0)
+    end: float | None = Field(default=None, ge=0.0)
+    volume: float | None = Field(default=None, ge=0.0, le=1.5)
+    width: float | None = Field(default=None, ge=0.04, le=1.0)
+    x: float | None = Field(default=None, ge=0.0, le=1.0)
+    y: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class SfxFilterBody(BaseModel):
     preset: str = Field(default="warm", pattern="^(warm|cool|bw|vivid)$")
     start: float = 0.0
@@ -1642,6 +1654,44 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"effect": effect, "edit": edit}
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/sfx/{effect_id}")
+    def patch_sfx(
+        project_id: str, edit_id: str, effect_id: str, body: SfxPatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            effect = effects.update(edit, data_root, effect_id, body.model_dump(exclude_none=True))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Effect not found.") from exc
+        except effects.EffectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"effect": effect, "edit": edit}
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/sfx/{effect_id}/file")
+    def sfx_file(
+        project_id: str, edit_id: str, effect_id: str,
+        request: Request, t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        row = next((item for item in edit.get("sfx") or [] if str(item.get("id")) == effect_id), None)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Effect not found.")
+        path = data_root / "projects" / project_id / str(row.get("file") or "")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Effect file is missing.")
+        suffix = path.suffix.lower()
+        media_type = {
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".gif": "image/gif", ".webp": "image/webp", ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+        }.get(suffix, "application/octet-stream")
+        return FileResponse(path, media_type=media_type)
 
     @app.delete("/api/projects/{project_id}/edits/{edit_id}/sfx/{effect_id}")
     def delete_sfx(

@@ -1489,11 +1489,12 @@ function screenEditor() {
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
-                : `<video class="cut-video" style="filter:${gradeFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+                : `<video class="cut-video" style="filter:${gradeFilter()} ${sfxPreviewFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+              ${sfxOverlayMarkup()}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
               ${playerBar()}
             </div>
-            ${mediaClip || tab === 'cut' || state.focusMode === 'script' || state.focusMode === 'audio' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
+            ${mediaClip || tab === 'cut' || ['script', 'audio', 'sfx'].includes(state.focusMode) ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
               ${overlayCues.length ? `<div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>` : ''}
               ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
@@ -1984,7 +1985,7 @@ function audioFocus() {
 
 function sfxFocus() {
   return `<div class="focus-grid sfx-focus">
-    <div class="focus-card">
+    <div class="focus-card sfx-add-card">
       <h3>Add special effect</h3>
       <p class="small muted">Text, stickers, GIFs, images, layers, colour filters and sounds share the same timeline.</p>
       <div class="sfx-add-grid">
@@ -1993,14 +1994,158 @@ function sfxFocus() {
         <button class="btn" data-action="sfx-add" data-kind="gif">${icon('film', 14)} GIF / animation</button>
         <button class="btn" data-action="sfx-add" data-kind="image">${icon('grid', 14)} Image</button>
         <button class="btn" data-action="sfx-add" data-kind="layer">${icon('layers', 14)} Layer</button>
+        <button class="btn" data-action="sfx-filter">${icon('sparkle', 14)} Colour filter</button>
         <button class="btn" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Sound</button>
       </div>
     </div>
-    <div class="focus-card">
+    <div class="focus-card sfx-list-card">
       <h3>Timeline effects</h3>
-      ${inspectorSFX()}
+      <div class="sfx-list">
+        ${sfxRowsMarkup()}
+      </div>
     </div>
   </div>`;
+}
+
+function sfxRowsMarkup() {
+  const rows = state.edit?.sfx || [];
+  if (!rows.length) return '<p class="small muted">No effects yet. Add text, a sticker, a colour filter or a sound above.</p>';
+  return rows.map((effect) => `<div class="sfx-row" role="button" tabindex="0" data-action="sfx-edit" data-effect="${esc(effect.id)}">
+    <span class="sfx-kind">${esc(effect.kind)}</span>
+    <span class="sfx-name">${esc(effect.name || effect.text || 'Effect')}</span>
+    <span class="sfx-time">${fmtTC(effect.start, 24)}–${fmtTC(effect.end, 24)}</span>
+    <button class="icon-btn" type="button" data-action="sfx-remove" data-effect="${esc(effect.id)}" title="Remove ${esc(effect.name || effect.kind)}">${icon('trash', 14)}</button>
+  </div>`).join('');
+}
+
+function sfxFileUrl(id) {
+  return mediaUrl(`/api/projects/${encodeURIComponent(state.project?.id || '')}/edits/${encodeURIComponent(state.edit?.id || '')}/sfx/${encodeURIComponent(id)}/file`);
+}
+
+function activeSfx(time) {
+  const at = Number(time || 0);
+  return (state.edit?.sfx || []).filter((effect) => Number(effect.start || 0) <= at && Number(effect.end || 0) > at);
+}
+
+function sfxPreviewFilter() {
+  const presets = {
+    warm: 'sepia(.18) saturate(1.06)',
+    cool: 'hue-rotate(-10deg) saturate(.94)',
+    bw: 'grayscale(1)',
+    vivid: 'saturate(1.35) contrast(1.05)',
+  };
+  return activeSfx(state.timelineTime)
+    .filter((effect) => effect.kind === 'filter')
+    .map((effect) => presets[effect.preset] || '')
+    .join(' ');
+}
+
+function sfxOverlayMarkup() {
+  const visible = activeSfx(state.timelineTime).filter((effect) => ['text', 'image', 'gif', 'sticker', 'layer'].includes(effect.kind));
+  if (!visible.length) return '';
+  const sizes = { headline: 9.2, caption: 5.2, badge: 4.6 };
+  return `<div class="sfx-preview" aria-hidden="true">
+    ${visible.map((effect) => {
+      const x = Math.max(0, Math.min(1, Number(effect.x ?? 0.5)));
+      const y = Math.max(0, Math.min(1, Number(effect.y ?? 0.84)));
+      if (effect.kind === 'text') {
+        const size = sizes[effect.style] || sizes.headline;
+        return `<span class="sfx-text${effect.style === 'badge' ? ' badge' : ''}" style="left:${x * 100}%;top:${y * 100}%;transform:translate(${-x * 100}%, ${-y * 100}%);color:${esc(effect.color || '#ffffff')};font-size:${size}cqh">${esc(effect.text || '')}</span>`;
+      }
+      const width = Math.max(0.04, Math.min(1, Number(effect.width || 0.35)));
+      return `<img class="sfx-image" src="${sfxFileUrl(effect.id)}" alt="" style="left:${x * 100}%;top:${y * 100}%;transform:translate(${-x * 100}%, ${-y * 100}%);width:${width * 100}%">`;
+    }).join('')}
+  </div><span class="sfx-preview-tag">Effect preview · approximate</span>`;
+}
+
+async function patchSfx(effectId, values) {
+  if (!state.project || !state.edit || !effectId) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/sfx/${encodeURIComponent(effectId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(values),
+    });
+    state.edit = data.edit;
+    render();
+    toast('Effect updated.');
+  } catch (error) {
+    toast(`Effect: ${error.message}`, 'bad');
+  }
+}
+
+function openSfxEditor(effectId) {
+  const effect = (state.edit?.sfx || []).find((item) => String(item.id) === String(effectId));
+  if (!effect) return;
+  const kind = String(effect.kind || '');
+  const timing = `<div class="grid g2">
+    <div class="field"><label>Start</label><input id="sfx-edit-start" type="number" min="0" step="0.05" value="${Number(effect.start || 0).toFixed(2)}"></div>
+    <div class="field"><label>End</label><input id="sfx-edit-end" type="number" min="0" step="0.05" value="${Number(effect.end || 0).toFixed(2)}"></div>
+  </div>
+  <p class="small muted">${fmtTC(effect.start, 24)}–${fmtTC(effect.end, 24)}</p>`;
+  const text = kind === 'text' ? `<div class="field"><label>Text</label><input id="sfx-edit-text" type="text" maxlength="240" value="${esc(effect.text || '')}"></div>
+    <div class="grid g2">
+      <div class="field"><label>Style</label><select id="sfx-edit-style">${['headline', 'caption', 'badge'].map((value) => `<option value="${value}" ${effect.style === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}</select></div>
+      <div class="field"><label>Colour</label><input id="sfx-edit-color" type="color" value="${esc(effect.color || '#ffffff')}"></div>
+      <div class="field"><label>X · 0 left, 1 right</label><input id="sfx-edit-x" type="number" min="0" max="1" step="0.01" value="${Number(effect.x ?? 0.5).toFixed(2)}"></div>
+      <div class="field"><label>Y · 0 top, 1 bottom</label><input id="sfx-edit-y" type="number" min="0" max="1" step="0.01" value="${Number(effect.y ?? 0.84).toFixed(2)}"></div>
+    </div>` : '';
+  const look = ['image', 'gif', 'sticker', 'layer'].includes(kind) ? `<div class="grid g2">
+      <div class="field"><label>Width · share of frame</label><input id="sfx-edit-width" type="number" min="0.04" max="1" step="0.01" value="${Number(effect.width ?? 0.35).toFixed(2)}"></div>
+      <div class="field"><label>X · 0 left, 1 right</label><input id="sfx-edit-x" type="number" min="0" max="1" step="0.01" value="${Number(effect.x ?? 0.5).toFixed(2)}"></div>
+      <div class="field"><label>Y · 0 top, 1 bottom</label><input id="sfx-edit-y" type="number" min="0" max="1" step="0.01" value="${Number(effect.y ?? 0.5).toFixed(2)}"></div>
+    </div>` : '';
+  const volume = kind === 'sound' ? `<div class="field"><label>Volume <span class="audio-value">${Math.round((Number(effect.volume ?? 0.9)) * 100)}%</span></label><input id="sfx-edit-volume" type="range" min="0" max="1.5" step="0.01" value="${Number(effect.volume ?? 0.9)}"></div>` : '';
+  openModal(`<dialog class="modal sfx-modal" aria-label="Edit ${esc(kind)} effect">
+    <div class="modal-head"><h2>Edit ${esc(kind)} effect</h2><button class="icon-btn" type="button" data-action="close-modal">${icon('close', 16)}</button></div>
+    <div class="modal-body">
+      ${timing}
+      ${text}${look}${volume}
+      <div class="inline-control">
+        <button class="btn primary" type="button" data-action="sfx-save" data-effect="${esc(effect.id)}">Save changes</button>
+        <button class="btn" type="button" data-action="sfx-remove" data-effect="${esc(effect.id)}">${icon('trash', 13)} Remove</button>
+      </div>
+    </div>
+  </dialog>`);
+}
+
+async function saveSfxEditor(effectId) {
+  const value = (id) => document.getElementById(id)?.value;
+  const values = {
+    start: Number(value('sfx-edit-start')),
+    end: Number(value('sfx-edit-end')),
+  };
+  if (document.getElementById('sfx-edit-text') !== null) {
+    values.text = value('sfx-edit-text') || '';
+    values.style = value('sfx-edit-style') || 'headline';
+    values.color = value('sfx-edit-color') || '#ffffff';
+  }
+  for (const key of ['x', 'y', 'width', 'volume']) {
+    if (document.getElementById(`sfx-edit-${key}`) !== null) values[key] = Number(value(`sfx-edit-${key}`));
+  }
+  closeModal();
+  await patchSfx(effectId, values);
+}
+
+function openSfxFilterModal() {
+  const range = sfxRange();
+  openModal(`<dialog class="modal sfx-modal" aria-label="Add a colour filter">
+    <div class="modal-head"><h2>Add a colour filter</h2><button class="icon-btn" type="button" data-action="close-modal">${icon('close', 16)}</button></div>
+    <div class="modal-body">
+      <p class="small muted">A filter tints the frame between its start and end. The player shows an approximate preview.</p>
+      <div class="filter-presets">
+        ${[['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'B&W'], ['vivid', 'Vivid']].map(([preset, label]) => `<button class="filter-chip ${preset}" type="button" data-action="sfx-filter-add" data-preset="${preset}" data-start="${range.start.toFixed(2)}" data-end="${range.end.toFixed(2)}">${label}</button>`).join('')}
+      </div>
+      <div class="grid g2">
+        <div class="field"><label>Start</label><input id="sfx-filter-start" type="number" min="0" step="0.05" value="${range.start.toFixed(2)}"></div>
+        <div class="field"><label>End</label><input id="sfx-filter-end" type="number" min="0" step="0.05" value="${range.end.toFixed(2)}"></div>
+      </div>
+      <p class="small muted">${fmtTC(range.start, 24)}–${fmtTC(range.end, 24)} · this scene</p>
+      <div class="inline-control">
+        <button class="btn primary" type="button" data-action="sfx-filter-add" data-preset="warm">Add Warm</button>
+        <button class="btn" type="button" data-action="close-modal">Cancel</button>
+      </div>
+    </div>
+  </dialog>`);
 }
 
 function sfxRange() {
@@ -2435,7 +2580,17 @@ function timelinePanel() {
   const visualFx = (state.edit.sfx || []).filter((effect) => effect.kind !== 'sound');
   const scriptHeight = cues.length ? 22 : 32;
   const audioHeightLane = audioRows.length ? audioHeight : 32;
-  const sfxHeight = visualFx.length ? 22 : 32;
+  const packed = [];
+  const laneEnds = [];
+  visualFx.forEach((effect) => {
+    const start = Math.max(0, Number(effect.start || 0));
+    const end = Math.max(start + 0.05, Number(effect.end || total || start + 0.05));
+    let lane = laneEnds.findIndex((value) => value <= start + 0.001);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+    laneEnds[lane] = end;
+    packed.push({ effect, lane, start, end });
+  });
+  const sfxHeight = visualFx.length ? Math.max(30, laneEnds.length * 14 + 4) : 32;
   const laneRows = `22px 22px ${scriptHeight}px ${audioHeightLane}px ${sfxHeight}px`;
   const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.timelineTime || 0) / total) * 100)) : 0;
   const tickCount = Math.max(7, Math.round(7 * Number(state.timelineZoom || 1)));
@@ -2499,7 +2654,7 @@ function timelinePanel() {
             </button>
           </div>`;
         }).join('') : ''}</div>
-        <div class="timeline-track sfx${visualFx.length ? '' : ' is-empty'}">${visualFx.length ? visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('') : `<button class="lane-add" type="button" data-action="open-focus" data-focus="sfx">${icon('plus', 10)} Add an effect</button>`}</div>
+        <div class="timeline-track sfx${visualFx.length ? '' : ' is-empty'}">${visualFx.length ? packed.map((item) => timelineBlock(item.start, item.end, total, item.effect.name || item.effect.kind || 'FX', 'sfx-edit', `data-effect="${esc(item.effect.id)}"`, `top:${3 + item.lane * 14}px;bottom:auto;height:12px`)).join('') : `<button class="lane-add" type="button" data-action="open-focus" data-focus="sfx">${icon('plus', 10)} Add an effect</button>`}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
     </div>
@@ -2641,18 +2796,16 @@ function inspectorAudio() {
 }
 
 function inspectorSFX() {
-  const rows = state.edit?.sfx || [];
   return `<div class="sfx-add-grid">
-    <button class="btn small" type="button" data-action="sfx-add" data-kind="sound">${icon('volume', 13)} Sound</button>
+    <button class="btn small" type="button" data-action="sfx-text">${icon('captions', 13)} Text</button>
     <button class="btn small" type="button" data-action="sfx-add" data-kind="image">${icon('grid', 13)} Image</button>
     <button class="btn small" type="button" data-action="sfx-add" data-kind="gif">${icon('film', 13)} GIF</button>
     <button class="btn small" type="button" data-action="sfx-add" data-kind="sticker">${icon('sparkle', 13)} Sticker</button>
     <button class="btn small" type="button" data-action="sfx-add" data-kind="layer">${icon('layers', 13)} Layer</button>
-    <button class="btn small" type="button" data-action="sfx-text">${icon('captions', 13)} Text</button>
+    <button class="btn small" type="button" data-action="sfx-filter">${icon('sparkle', 13)} Filter</button>
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="sound">${icon('volume', 13)} Sound</button>
   </div>
-  <div class="sfx-list">
-    ${rows.length ? rows.map((effect) => `<div class="sfx-row"><span class="sfx-kind">${esc(effect.kind)}</span><span class="sfx-name">${esc(effect.name || effect.text || 'Effect')}</span><button class="icon-btn" type="button" data-action="sfx-remove" data-effect="${esc(effect.id)}" title="Remove">${icon('trash', 14)}</button></div>`).join('') : '<p class="small muted">No effects yet. Add text, a sticker, a filter or a sound.</p>'}
-  </div>`;
+  <div class="sfx-list">${sfxRowsMarkup()}</div>`;
 }
 
 function inspectorCaptions(scene) {
@@ -4950,6 +5103,14 @@ async function verifyModel(modelId) {
 
 /* ------------------------------------------------------------------ events */
 
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest?.('.sfx-row[data-action="sfx-edit"]');
+  if (!row) return;
+  event.preventDefault();
+  openSfxEditor(row.dataset.effect);
+});
+
 document.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
   const bar = event.target.closest?.('.toolbar');
@@ -5106,6 +5267,9 @@ document.addEventListener('click', async (event) => {
     else if (action === 'toggle-transcript-overlay') { state.transcriptOverlay = !state.transcriptOverlay; render(); }
     else if (action === 'sfx-add') startSfxUpload(target.dataset.kind || 'sound');
     else if (action === 'sfx-text') openSfxTextModal();
+    else if (action === 'sfx-filter') openSfxFilterModal();
+    else if (action === 'sfx-edit') openSfxEditor(target.dataset.effect);
+    else if (action === 'sfx-save') await saveSfxEditor(target.dataset.effect);
     else if (action === 'sfx-filter-add') await addSfxFilter(target.dataset.preset || 'warm', target.dataset.start, target.dataset.end);
     else if (action === 'sfx-text-add') await addSfxText();
     else if (action === 'sfx-remove') await removeSfx(target.dataset.effect || '');

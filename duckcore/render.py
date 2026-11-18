@@ -1262,9 +1262,14 @@ def _apply_visual_effects(
                 inputs += ["-loop", "1", "-framerate", str(int(target_fps)), "-i", str(candidate)]
         else:
             continue
-        width = max(0.04, min(1.0, float(effect.get("width") or 0.35)))
-        scaled = f"[{input_index}:v]scale={max(2, int(out_w * width))}:-2,format=rgba,setpts=PTS-STARTPTS[ov{input_index}]"
-        filters.append(scaled)
+        if kind == "text":
+            # Text is drawn at its own size: the PNG already carries the style's
+            # share of the frame height, so scaling it would break the preview.
+            filters.append(f"[{input_index}:v]format=rgba,setpts=PTS-STARTPTS[ov{input_index}]")
+        else:
+            width = max(0.04, min(1.0, float(effect.get("width") or 0.35)))
+            scaled = f"[{input_index}:v]scale={max(2, int(out_w * width))}:-2,format=rgba,setpts=PTS-STARTPTS[ov{input_index}]"
+            filters.append(scaled)
         label = f"[vfx{input_index}]"
         x = max(0.0, min(1.0, float(effect.get("x") or 0.5)))
         y = max(0.0, min(1.0, float(effect.get("y") or 0.5)))
