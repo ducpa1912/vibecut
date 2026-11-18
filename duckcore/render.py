@@ -522,7 +522,11 @@ def render_frame(
     if output.suffix.lower() in {".jpg", ".jpeg"}:
         command += ["-q:v", "2"]
     command.append(str(output))
-    _run(command)
+    try:
+        _run(command)
+    finally:
+        if filled and filled.get("ephemeral"):
+            Path(filled["path"]).unlink(missing_ok=True)
     if not output.is_file():
         raise RenderError("The render frame could not be written.")
     if progress:
@@ -1117,7 +1121,11 @@ def render_edit(
                     "-c:a", "aac", "-b:a", "192k", "-shortest",
                     str(segment),
                 ]
-            _run(command)
+            try:
+                _run(command)
+            finally:
+                if filled and filled.get("ephemeral"):
+                    Path(filled["path"]).unlink(missing_ok=True)
             segments.append(segment)
 
         if progress:

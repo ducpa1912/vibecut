@@ -40,8 +40,10 @@ DEFAULT_DEVICE = "gpu"
 # DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
 CLASSIC_METHODS = ()
 DEFAULT_METHOD = "lama"
-# 18: the GPU fill runs LaMa through Core ML (REQ-20261116-01), within 3/255 of PyTorch.
-VERSION = 18
+# 17: the default GPU output is still PyTorch's. A Core ML clip carries its own
+# `:coreml-gpu` stamp, so VERSION changes only when a fill's pixels change for
+# the default engine (or Core ML is promoted and its output differs).
+VERSION = 17
 MODEL_FILES = {"lama": "lama_fp32.onnx"}
 # The file an engine reads on the GPU through PyTorch, and through Core ML.
 GPU_MODEL_FILES = {"lama": "big-lama.pt"}
@@ -216,7 +218,7 @@ def _seed_package(origin: Path, destination: Path) -> None:
 def gpu_engine(method: str, directory: Path | str) -> str:
     """Select Core ML only when explicitly requested and installed."""
     wanted = (os.environ.get("DUCK_FILL_GPU_ENGINE") or DEFAULT_GPU_ENGINE).strip().lower()
-    if wanted != "pytorch" and coreml_problem(method, directory) is None:
+    if wanted == "coreml" and coreml_problem(method, directory) is None:
         return "coreml"
     return "pytorch"
 
@@ -1921,7 +1923,8 @@ def prepare_span(
         if code != 0 or written == 0:
             detail = writer.stderr_tail.strip()[-400:]
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
-        if counted is not None and not counted.cache_valid:
+        ephemeral = bool(counted is not None and not counted.cache_valid)
+        if ephemeral:
             # A mixed/fallback span must never become a reusable primary-engine clip.
             output = cache_dir / f"{key}.fallback-{uuid.uuid4().hex}.mp4"
         os.replace(part, output)
@@ -1963,4 +1966,5 @@ def prepare_span(
         "path": str(output), "key": key, "cached": False, "method": method,
         "engine": "custom" if custom_path is not None else method,
         "custom_fallback": custom_fallback,
+        "ephemeral": bool(counted is not None and not counted.cache_valid),
     }

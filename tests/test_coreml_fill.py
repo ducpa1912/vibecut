@@ -25,8 +25,11 @@ def coreml_here(monkeypatch):
     monkeypatch.setenv("DUCK_FILL_GPU_ENGINE", "coreml")
 
 
-def test_the_version_is_bumped_for_the_new_pixels() -> None:
-    assert textfill.VERSION == 18
+def test_the_version_stays_17_until_core_ml_is_the_default() -> None:
+    # PyTorch remains the default engine; a Core ML clip carries its own stamp,
+    # so the default fill pixels - and every existing cache key - are unchanged.
+    assert textfill.VERSION == 17
+    assert textfill.DEFAULT_GPU_ENGINE == "pytorch"
 
 
 def test_every_run_size_has_a_bucket_that_holds_it() -> None:
@@ -61,6 +64,8 @@ def test_pytorch_runs_when_asked_or_when_the_package_is_missing(tmp_path: Path, 
     monkeypatch.setenv("DUCK_FILL_GPU_ENGINE", "pytorch")
     assert textfill.gpu_engine("lama", tmp_path) == "pytorch"
     assert textfill.model_path("lama", tmp_path, "gpu").name == "big-lama.pt"
+    monkeypatch.setenv("DUCK_FILL_GPU_ENGINE", "onnx")
+    assert textfill.gpu_engine("lama", tmp_path) == "pytorch"
 
 
 def test_a_package_without_its_manifest_is_not_ready(tmp_path: Path, coreml_here) -> None:

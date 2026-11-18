@@ -13,7 +13,7 @@ not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open ch
 | Dev Mac | M1, 8 GB RAM, macOS 26.7.2 |
 | Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
 | Clean layers | 42 fill · 0 blur; 32 `moving`; one founder layer `auto: false` |
-| Fill | `textfill.VERSION` 18 development branch; PyTorch GPU default, Core ML opt-in blocked from default promotion by measured drift and native abort; CPU optional |
+| Fill | `textfill.VERSION` 17; PyTorch GPU default, Core ML opt-in blocked by measured drift and native abort; CPU optional |
 | Leftover-text check | post-render, per letter against the source, 40 of 42 lines, 68–81 s quiet, 170–190 s under load |
 | Last render | 0 leftover in 2,964 frame checks, 2 lines not checked; cold 620–847 s; estimate 6.7 % low, shown as a range |
 
