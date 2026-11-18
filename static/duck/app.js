@@ -1493,7 +1493,7 @@ function screenEditor() {
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
               ${playerBar()}
             </div>
-            ${mediaClip || tab === 'cut' || state.focusMode === 'script' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
+            ${mediaClip || tab === 'cut' || state.focusMode === 'script' || state.focusMode === 'audio' ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
               ${overlayCues.length ? `<div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>` : ''}
               ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
@@ -1964,6 +1964,7 @@ function audioFocus() {
   const sounds = (state.edit?.sfx || [])
     .filter((fx) => fx.kind === 'sound')
     .map((fx) => ({ id: fx.id, name: fx.name || 'Sound' }));
+  const total = Math.max(0, Number(state.edit?.end || 0) || Number(state.check?.result?.meta?.duration || 0) || 0);
   return audioFocusMarkup({
     esc,
     icon,
@@ -1974,6 +1975,10 @@ function audioFocus() {
     mixing: state.mixPlaying,
     sounds,
     voicePanel: inspectorVoice(),
+    total,
+    sourceMuted: Boolean(state.edit?.audio_source_muted),
+    fmtTime: fmtTC,
+    ticks: total ? getScenes().map((scene) => ({ at: Number(scene.start || 0), label: scene.title || '' })).filter((tick) => tick.at > 0 && tick.at < total) : [],
   });
 }
 
@@ -2220,13 +2225,14 @@ async function toggleAudioMixPreview() {
   const dub = audible.some((row) => row.kind === 'dub');
   const voiceOnly = audible.some((row) => row.kind === 'voice' && row.mode === 'voice_only');
   const voices = audible.filter((row) => row.kind === 'voice' || row.kind === 'dub');
+  const sourceMuted = Boolean(state.edit?.audio_source_muted);
   const playhead = Math.max(0, Number(state.timelineTime || 0));
   const total = Math.max(0, Number(timelineDuration() || 0));
   const video = document.querySelector('[data-preview]');
   if (video) {
     try {
       video.currentTime = playhead;
-      video.muted = soloActive || dub || voiceOnly;
+      video.muted = sourceMuted || soloActive || dub || voiceOnly;
       video.volume = voices.length ? 0.22 : 1;
       await video.play();
       state.mixVideo = true;
@@ -2256,9 +2262,27 @@ async function toggleAudioMixPreview() {
     last = Math.max(last, Number(row.start || 0) + Math.max(0.2, Number(row.duration || 0.2)));
   }
   state.mixPlaying = true;
+  const bed = sourceMuted ? 'source muted' : soloActive ? 'source removed by solo' : (dub || voiceOnly) ? 'source removed' : voices.length ? 'source 22%' : 'source 100%';
+  toast(`Preview mix · ${bed} · ${audible.length} row${audible.length === 1 ? '' : 's'}`);
   const stopAt = total > playhead ? total : last;
   state.mixTimer = setTimeout(() => stopAudioPlayback(), Math.max(400, (stopAt - playhead + 0.25) * 1000));
   syncAudioMixButton();
+}
+
+async function toggleAudioSource() {
+  if (!state.project || !state.edit) return;
+  const muted = !state.edit.audio_source_muted;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/audio/source`, {
+      method: 'PATCH',
+      body: JSON.stringify({ muted }),
+    });
+    state.edit = data.edit;
+    render();
+    toast(muted ? 'Original audio muted on render.' : 'Original audio back on render.');
+  } catch (error) {
+    toast(`Original audio: ${error.message}`, 'bad');
+  }
 }
 
 async function toggleAudioTrack(trackId, field) {
@@ -2597,7 +2621,22 @@ function inspectorScript() {
 }
 
 function inspectorAudio() {
-  return `<div class="audio-mini"><span class="audio-mini-icon">${icon('volume', 15)}</span><span><strong>Original audio</strong><small>${state.edit?.voice || state.edit?.dub ? 'Voice mix active' : 'Original only'}</small></span><span class="chip ${state.edit?.dub ? 'green' : ''}">${state.edit?.dub ? 'Dub' : state.edit?.voice ? 'Voice' : 'Audio'}</span></div>
+  const music = state.edit?.music;
+  const voice = state.edit?.voice;
+  const dub = state.edit?.dub;
+  const tracks = editAudioRows();
+  const musicRow = tracks.find((row) => row.kind === 'music');
+  const voices = tracks.filter((row) => !row.muted && (row.kind === 'voice' || row.kind === 'dub'));
+  const solo = tracks.some((row) => row.solo);
+  const muted = Boolean(state.edit?.audio_source_muted);
+  const bed = muted ? 'Muted' : solo ? 'Removed · solo' : (dub || tracks.some((row) => row.kind === 'voice' && row.mode === 'voice_only')) ? 'Removed' : voices.length ? '22% under voice' : '100%';
+  const pct = (value, fallback) => `${Math.round((Number(value ?? fallback) || 0) * 100)}%`;
+  return `<div class="audio-mini"><span class="audio-mini-icon">${icon('volume', 15)}</span><span><strong>Original audio</strong><small>${voices.length ? 'Voice mix active' : 'Original only'}</small></span><span class="chip ${bed === '100%' ? '' : 'amber'}">${bed}</span></div>
+  <div class="audio-tab-mix">
+    <div class="audio-tab-line"><span>Music</span><strong>${musicRow ? `${esc(musicRow.name || 'Music')} · ${pct(musicRow.volume, 0.25)}` : music ? `${esc(music.name || 'Music')} · ${pct(music.volume, 0.25)}` : 'none'}</strong></div>
+    <div class="audio-tab-line"><span>Tracks</span><strong>${tracks.length}</strong></div>
+  </div>
+  <button class="btn wide" type="button" data-action="open-focus" data-focus="audio">${icon('volume', 14)} Open Audio Focus</button>
   ${inspectorVoice()}`;
 }
 
@@ -5073,6 +5112,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'audio-remove') await removeAudioTrack(target.dataset.track || '');
     else if (action === 'audio-audition') await auditionAudioTrack(target.dataset.track || '');
     else if (action === 'audio-mix-preview') await toggleAudioMixPreview();
+    else if (action === 'audio-source-mute') await toggleAudioSource();
     else if (action === 'audio-mute' || action === 'audio-solo') await toggleAudioTrack(target.dataset.track || '', action === 'audio-mute' ? 'muted' : 'solo');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }

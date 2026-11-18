@@ -1382,7 +1382,8 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
         str(row.get("kind")) == "voice" and str(row.get("mode")) == "voice_only"
         for row in rows
     )
-    include_original = has_original and not dub and not voice_only and not solo
+    muted_source = bool(edit.get("audio_source_muted"))
+    include_original = has_original and not muted_source and not dub and not voice_only and not solo
     mixed = output.with_name(f".{output.stem}.mix.mp4")
     inputs = ["-i", str(output)]
     for row in rows:
@@ -1413,7 +1414,7 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
         )
         labels.append(label)
     if not labels:
-        if not solo:
+        if not solo and not muted_source:
             return
         filters.append(
             f"anullsrc=channel_layout=stereo:sample_rate=48000,"

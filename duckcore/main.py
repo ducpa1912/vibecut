@@ -152,6 +152,10 @@ class AudioTrackPatch(BaseModel):
     name: str | None = Field(default=None, max_length=120)
 
 
+class AudioSourcePatch(BaseModel):
+    muted: bool
+
+
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
@@ -1675,6 +1679,19 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         suffix = path.suffix.lower()
         media_type = "audio/wav" if suffix == ".wav" else "audio/mp4" if suffix in {".m4a", ".aac"} else "audio/mpeg" if suffix == ".mp3" else "application/octet-stream"
         return FileResponse(path, media_type=media_type)
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/audio/source")
+    def patch_audio_source(
+        project_id: str, edit_id: str, body: AudioSourcePatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        edit["audio_source_muted"] = bool(body.muted)
+        edits.save_edit(edit, data_root)
+        return {"edit": edit}
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/audio/{track_id}")
     def patch_audio_track(

@@ -58,11 +58,47 @@ export function mediaInspectorMarkup({
 
 export function audioFocusMarkup({
   esc, icon, rows, music, voice, dub, mixing, sounds = [], voicePanel = '',
+  total = 0, sourceMuted = false, fmtTime = () => '0:00', ticks = [],
 }) {
+  const span = Math.max(0.1, Number(total) || 0);
+  const pct = (value) => Math.max(0, Math.min(100, (Number(value) || 0) / span * 100));
+  const short = (value) => {
+    const seconds = Math.max(0, Number(value) || 0);
+    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+  };
+  const audible = rows.filter((row) => !row.muted);
+  const soloActive = rows.some((row) => row.solo);
+  const dubRow = audible.some((row) => row.kind === 'dub');
+  const voiceOnlyRow = audible.some((row) => row.kind === 'voice' && row.mode === 'voice_only');
+  const voices = audible.filter((row) => row.kind === 'voice' || row.kind === 'dub');
+  const musicRow = rows.find((row) => row.kind === 'music');
+  const level = (value, fallback) => `${Math.round((Number(value ?? fallback) || 0) * 100)}%`;
+  let bed;
+  if (sourceMuted) bed = { text: 'Muted here', tone: 'is-off', note: 'You muted the source bed in Audio Focus.' };
+  else if (soloActive) bed = { text: 'Removed · 0%', tone: 'is-off', note: 'A row is soloed, so the source bed is dropped on render.' };
+  else if (dubRow) bed = { text: 'Muted by dub', tone: 'is-off', note: 'The dub replaces the source audio.' };
+  else if (voiceOnlyRow) bed = { text: 'Removed · 0%', tone: 'is-off', note: 'A voice row is set to voice only, so the source is dropped.' };
+  else if (voices.length) bed = { text: '22% under voice', tone: 'is-duck', note: 'The source drops to 22% whenever a voice or dub row is present.' };
+  else bed = { text: '100%', tone: '', note: 'No voice row, so the source plays at full level.' };
   return `<div class="focus-grid audio-focus">
     <div class="focus-card audio-tracks-card">
-      <div class="audio-card-head"><h3>Voice & Music tracks</h3><button class="btn small" type="button" data-action="audio-mix-preview">${icon('play', 12)} ${mixing ? 'Stop' : 'Preview mix'}</button></div>
-      <p class="small muted">Drag a block edge to trim, drag the middle to move. Each row can audition on its own.</p>
+      <div class="audio-card-head">
+        <h3>Voice &amp; Music tracks</h3>
+        <span class="audio-head-actions">
+          <button class="btn small" type="button" data-action="add-music">${icon('volume', 12)} Add music</button>
+          <button class="btn small" type="button" data-action="sfx-add" data-kind="sound">${icon('sparkle', 12)} Add sound</button>
+          <button class="btn small primary" type="button" data-action="audio-mix-preview">${icon('play', 12)} ${mixing ? 'Stop' : 'Preview mix'}</button>
+        </span>
+      </div>
+      <p class="small muted">Each row sets its own Start and Length; M mutes it, S solos it, and play auditions it alone.</p>
+      ${rows.length ? `<div class="audio-placement" aria-label="Where each track sits in the project">
+        ${rows.map((row) => `<div class="audio-placement-row">
+          <span class="audio-placement-name" title="${esc(row.name || row.kind)}">${esc(row.name || row.kind)}</span>
+          <span class="audio-placement-lane"><span class="audio-placement-bar" style="left:${pct(row.start)}%;width:${Math.max(1.5, pct(row.duration))}%;background:${row.color}"></span>${ticks.map((tick) => `<span class="audio-placement-tick" style="left:${pct(tick.at)}%" title="${esc(tick.label)}"></span>`).join('')}</span>
+          <span class="audio-placement-time">${short(row.start)}–${short(Number(row.start || 0) + Number(row.duration || 0))}</span>
+        </div>`).join('')}
+        <div class="audio-placement-scale"><span>0:00</span><span>${short(span)}</span></div>
+      </div>` : ''}
       <div class="audio-focus-list">
         ${rows.length ? rows.map((row) => `<details class="audio-track-card" data-audio-row="${esc(row.id)}" style="--lane-color:${row.color}" ${row.open ? 'open' : ''}>
           <summary>
@@ -78,17 +114,24 @@ export function audioFocusMarkup({
             <label>Start<input type="number" min="0" step="0.05" value="${Number(row.start || 0).toFixed(2)}" data-audio-field="start" data-track="${esc(row.id)}"></label>
             <label>Length<input type="number" min="0.2" step="0.05" value="${Number(row.duration || 0).toFixed(2)}" data-audio-field="duration" data-track="${esc(row.id)}"></label>
             <label>In<input type="number" min="0" step="0.05" value="${Number(row.offset || 0).toFixed(2)}" data-audio-field="offset" data-track="${esc(row.id)}"></label>
-            <label>Volume <span class="audio-value">${Number(row.volume ?? 0.25).toFixed(2)}</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(row.volume ?? 0.25)}" data-audio-field="volume" data-track="${esc(row.id)}"></label>
+            <label>Volume <span class="audio-value">${level(row.volume, 0.25)}</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(row.volume ?? 0.25)}" data-audio-field="volume" data-track="${esc(row.id)}"><span class="audio-value-scale"><span>0</span><span>100%</span><span>150%</span></span></label>
             <label>Fade in<input type="number" min="0" step="0.05" value="${Number(row.fade_in || 0).toFixed(2)}" data-audio-field="fade_in" data-track="${esc(row.id)}"></label>
             <label>Fade out<input type="number" min="0" step="0.05" value="${Number(row.fade_out || 0).toFixed(2)}" data-audio-field="fade_out" data-track="${esc(row.id)}"></label>
           </div>
-        </details>`).join('') : '<p class="small muted">No voice, music or sound tracks.</p>'}
+        </details>`).join('') : `<div class="audio-empty">
+          <p class="small muted">No voice, music or sound tracks yet. Start with Add music or Add sound above, or build a voice-over in the Voice &amp; dub card.</p>
+        </div>`}
       </div>
     </div>
-    <div class="focus-card">
+    <div class="focus-card audio-source-card">
       <h3>Original audio</h3>
-      <div class="audio-status"><span class="chip">${dub ? 'Muted by dub' : 'Source bed'}</span><span class="small muted">${dub ? 'The dub replaces the source audio.' : 'Voice-over and music sit over it.'}</span></div>
-      <p class="small muted">Mute or solo a row and the source bed follows the same rule on render.</p>
+      <div class="audio-status"><span class="chip ${bed.tone}">${bed.text}</span><span class="small muted">${bed.note}</span></div>
+      <ul class="audio-mix-readout">
+        <li><span>Source bed</span><strong>${bed.text}</strong></li>
+        <li><span>Voice / dub</span><strong>${voices.length ? voices.map((row) => `${esc(row.name || row.kind)} ${level(row.volume, 1)}`).join(' · ') : 'none'}</strong></li>
+        <li><span>Music</span><strong>${musicRow ? `${esc(musicRow.name || 'Music')} ${level(musicRow.volume, 0.25)}` : music ? `Music ${level(music.volume, 0.25)}` : 'none'}</strong></li>
+      </ul>
+      <button class="btn wide" type="button" data-action="audio-source-mute">${icon('volume', 13)} ${sourceMuted ? 'Unmute original audio' : 'Mute original audio'}</button>
     </div>
     <div class="focus-card">
       <h3>Voice & dub</h3>
@@ -97,7 +140,7 @@ export function audioFocusMarkup({
     </div>
     <div class="focus-card">
       <h3>Music & SFX</h3>
-      ${music ? `<div class="kv"><span>${esc(music.name || 'Music')}</span><button class="btn small" data-action="remove-music">Remove</button></div>` : `<button class="btn wide" data-action="add-music">${icon('volume', 14)} Add music</button>`}
+      ${musicRow ? `<div class="kv"><span>${esc(musicRow.name || 'Music')} · ${level(musicRow.volume, 0.25)}</span><button class="btn small" data-action="audio-remove" data-track="${esc(musicRow.id)}">Remove</button></div>` : music ? `<div class="kv"><span>${esc(music.name || 'Music')} · ${level(music.volume, 0.25)}</span><button class="btn small" data-action="remove-music">Remove</button></div>` : `<button class="btn wide" data-action="add-music">${icon('volume', 14)} Add music</button>`}
       <div class="sfx-list" style="margin-top:10px">
         ${sounds.map((fx) => `<div class="sfx-row"><span class="sfx-kind">sound</span><span class="sfx-name">${esc(fx.name || 'Sound')}</span><button class="icon-btn" data-action="sfx-remove" data-effect="${esc(fx.id)}">${icon('trash', 14)}</button></div>`).join('') || '<p class="small muted">No sound effects yet.</p>'}
       </div>
