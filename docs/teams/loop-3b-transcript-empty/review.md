@@ -25,13 +25,13 @@ Script: `NODE_PATH="$(npm root -g)" node /tmp/probe-3b-final.cjs` against `build
 
 | Viewport | Box | Picture | Overlap | Head / Hide / Show | Empty text clipped |
 |---|---|---|---|---|---|
-| 800×600 | y 355–554, w 198 | y 63–266, w 156 | **no** | present, Hide → Show | **no** |
+| 800×600 | y 280–479, w 198 | y 63–266, w 156 | **no** | present, Hide → Show | **no** |
 | 1024×700 | y 365–511, w 422 | y 63–288 | **no** | present | no |
 | 1280×800 | beside, y 67, w 240 | y 67, h 478 | **no** | present | no |
 | 1440×900 | beside, y 67, w 240 | y 67, h 538 | **no** | present | no |
-| 200 % (720×450) | y 355, capped 200, scrolls | y 63, h 278 | **no** | present | no horizontal clip |
+| 200 % (720×450) | y 280, capped 200, scrolls | y 63, h 278 | **no** | present | no horizontal clip |
 
-At 800×600 the transcript ends at **479 px**, the timeline starts at **486 px**: no overlap. Before the fix the box did not exist.
+At 800×600 the transcript ends at **479 px**, the timeline starts at **486 px**: no overlap. Before the fix the box did not exist. The picture is 203 px tall at 800 so both fit.
 
 ## What got worse
 

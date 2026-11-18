@@ -455,3 +455,7 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261115-02 · P3 providers registry + Whisper folder, local LLM URL, ONNX voice slots (loop 25, closed `b9ad447`)
 - [x] Loop 8: SHA-256/publisher digest per pack, FFmpeg source offer, fill repair line, import error copy (loop 26, `a20954b`)
 - [x] Layout: frame timecode exposed as a tooltip (`98e1edf`); beside-the-time display stays open (loop 28)
+
+## REQ-20261118-01 — closed 2026-11-18
+- [x] 3A · Clean layer list visible at 800x600, 1024x700, 1280x800, 1440x900 and 200% zoom; rows select and Fill/Blur/Off changes the layer (`49be5ff`)
+- [x] 3B · Edit shows a Transcript box when there is no transcript, with the reason and next step; Hide/Show works (`6693b3e`)
