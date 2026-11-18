@@ -1495,7 +1495,7 @@ function screenEditor() {
             </div>
             ${mediaClip ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
-              <div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>
+              ${overlayCues.length ? `<div class="transcript-alpha-row"><label for="transcript-alpha">Opacity</label><input id="transcript-alpha" type="range" min="30" max="100" step="5" value="${Number(state.transcriptAlpha || 100)}" aria-label="Transcript opacity"><span data-alpha-value>${Number(state.transcriptAlpha || 100)}%</span></div>` : ''}
               ${state.transcriptSideHidden ? '' : (overlayCues.length ? overlayCues.map((cue) => `<div class="transcript-side-row">
                 <button class="transcript-row-main" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
                   <span class="transcript-side-time">${fmtTC(cue.start, 24)}</span>
@@ -1860,19 +1860,16 @@ function inspectorClean(scene, layer, layers) {
   if (!state.edit) return `<p class="small muted">Editor data is still loading. Clean controls appear when Check finishes.</p>`;
   const proof = state.previewCache.get(scene.id) || '';
   const sceneIndex = getScenes().indexOf(scene);
-  return `<div class="proof-pair">
-    <figure><div class="frame"><img src="${frameUrl(sceneMid(scene))}" alt=""></div><figcaption>Before</figcaption></figure>
-    <span class="arrow">${icon('chevronRight', 14)}</span>
-    <figure><div class="frame"><img src="${proof || frameUrl(sceneMid(scene))}" alt="After"></div><figcaption>${proof ? 'After · blur proof' : 'After · no proof yet'}</figcaption></figure>
-  </div>
-  <button class="btn wide" type="button" data-action="prove-scene" data-index="${sceneIndex}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${proof ? 'Prove again' : 'Prove this scene'}</button>
-  <div class="segmented">
+  const engineMissing = state.engine?.fill?.ready === false;
+  return `${layerListMarkup(layer, layers)}
+  <div class="segmented clean-choice">
     ${['fill', 'blur', 'exclude'].map((action) => {
       const label = action === 'exclude' ? 'Off' : action[0].toUpperCase() + action.slice(1);
       const active = layer && ((action === 'fill' && layer.enabled !== false && layer.kind === 'fill') || (action === 'blur' && layer.enabled !== false && layer.kind === 'blur') || (action === 'exclude' && layer.enabled === false));
       return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
     }).join('')}
   </div>
+  ${engineMissing ? `<p class="clean-engine-warn">AI fill is missing, so Fill will not run. <button class="btn small" type="button" data-action="settings">Set up</button></p>` : ''}
   ${layer ? `<p class="layer-note${layerRisk(layer) ? ' is-warn' : ''}">${esc(layerNote(layer))}</p>` : ''}
   ${layer ? `<div class="box-editor">
     <span class="rail-head">Fill box · normalized</span>
@@ -1884,8 +1881,13 @@ function inspectorClean(scene, layer, layers) {
     </div>
     <div class="box-actions"><button class="btn small" type="button" data-action="box-apply" data-layer="${esc(layer.id)}">Apply box</button><button class="btn small" type="button" data-action="recheck-scene">Re-check &amp; re-apply</button></div>
   </div>` : ''}
+  <div class="proof-pair">
+    <figure><div class="frame"><img src="${frameUrl(sceneMid(scene))}" alt=""></div><figcaption>Before</figcaption></figure>
+    <span class="arrow">${icon('chevronRight', 14)}</span>
+    <figure><div class="frame"><img src="${proof || frameUrl(sceneMid(scene))}" alt="After">${proof ? '' : '<span class="proof-none">Not cleaned yet</span>'}</div><figcaption>${proof ? 'After · blur proof' : 'After · no proof yet'}</figcaption></figure>
+  </div>
+  ${layers.length ? `<button class="btn wide" type="button" data-action="prove-scene" data-index="${sceneIndex}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${proof ? 'Prove again' : 'Prove this scene'}</button>` : ''}
   <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
-  ${layerListMarkup(layer, layers)}
   <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
   <div class="model-line"><span class="dot${state.engine?.fill?.ready ? '' : ' is-idle'}"></span><strong>AI fill · ${state.engine?.fill?.ready ? 'ready' : 'missing'}</strong><span>${esc(fillStatusText())}</span>${state.engine?.fill?.ready ? '' : `<button class="btn small" type="button" data-action="settings">Set up</button>`}</div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
@@ -3356,7 +3358,7 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = 
       ${beforeMarkup}
       <div class="after-layer">${afterMarkup}</div>
       <span class="split-tag before">Before</span>
-      <span class="split-tag after">After · blur</span>
+      <span class="split-tag after">${cached ? 'After · blur' : 'Source · no proof yet'}</span>
       <span class="split-handle" aria-hidden="true"></span>
       ${mediaOverlay}${overlay}
     </div>`;
@@ -3368,13 +3370,14 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false, steps = 
     return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}<span class="split-tag before">Before</span>${mediaOverlay}${overlay}</div>`;
   }
   if (view === 'after') {
-    return `<div class="proof-frame"><div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${mediaOverlay}${safeOverlay}</div>${cta}</div>`;
+    const afterTag = cached ? 'After' : 'Source · no proof yet';
+    return `<div class="proof-frame"><div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">${afterTag}</span>${cleaningMarkup}${mediaOverlay}${safeOverlay}</div>${cta}</div>`;
   }
   return `<div class="proof-frame"><div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
     ${beforeMarkup}
     <div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div>
     <span class="split-tag before">Before</span>
-    <span class="split-tag after">After</span>
+    <span class="split-tag after">${cached ? 'After' : 'No proof yet'}</span>
     <span class="split-handle" aria-hidden="true"></span>
     ${cleaningMarkup}
     ${mediaOverlay}${safeOverlay}
@@ -5036,7 +5039,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'dub-build') await buildDub();
     else if (action === 'voice-line') await previewLine(target.dataset.cue || '');
     else if (action === 'nav-clean-brush') { state.brushMode = true; state.brushStrokes = []; navigate(projectPath('clean')); }
-    else if (action === 'brush-toggle') { state.brushMode = !state.brushMode; if (!state.brushMode) state.brushStrokes = []; render(); }
+    else if (action === 'brush-toggle') { state.brushMode = !state.brushMode; if (!state.brushMode) state.brushStrokes = []; render(); if (state.brushMode) window.scrollTo({ top: 0 }); }
     else if (action === 'brush-kind') { state.brushKind = target.dataset.kind || 'fill'; render(); }
     else if (action === 'brush-undo') { state.brushStrokes.pop(); render(); }
     else if (action === 'brush-clear') { state.brushStrokes = []; render(); }
