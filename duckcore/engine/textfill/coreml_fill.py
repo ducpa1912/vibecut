@@ -158,6 +158,11 @@ class LamaCoreMLFiller:
                 self._models[key] = model
             return model
 
+    def fits(self, height: int, width: int) -> bool:
+        """Whether a work area of this size has its own exact Core ML function."""
+        fit_h, fit_w = _lama.fit(int(height), int(width))
+        return bucket(fit_h, fit_w) == _lama.input_size(fit_h, fit_w, True)
+
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
         """Fill ``mask`` (H, W bool) in ``area`` (H, W, 3 uint8). Same size out."""
         height, width = mask.shape

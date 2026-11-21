@@ -872,7 +872,7 @@ function screenWelcome() {
             <div class="latest-copy">
               <h3>${esc(latest.project_name || 'Project')} · ${esc(latest.title || 'Render')}</h3>
               <p>${esc(latest.stage || 'Render complete')} · H.264 · 1080p</p>
-              <p>${esc(latest.message || '')}</p>
+              <p>${esc(latest.message || '')}${latest.state === 'done' && Number(latest.elapsed_seconds) > 0 ? ` · took ${Math.round(Number(latest.elapsed_seconds))} s from queue to file` : ''}</p>
               <div class="actions">
                 <button class="btn small" type="button" data-action="play-render" data-job="${esc(latest.id || '')}" data-project="${esc(latest.project_id)}" data-edit="${esc(latest.edit_id)}">${icon('play', 13)} Play</button>
                 <button class="btn small" type="button" data-action="reveal" data-path="${esc(latest.output || '')}">${icon('folderOpen', 13)} Show in Finder</button>
@@ -3896,8 +3896,8 @@ function fillEngineControl() {
   let note = '';
   if (device === 'gpu') {
     note = gpuReady
-      ? (state.engine?.fill?.gpu_engine === 'coreml'
-        ? 'Apple GPU through Core ML. Speed and fill quality depend on the work area.'
+      ? ((state.engine?.fill?.gpu_engine_flag ? state.engine?.fill?.gpu_engine : state.settings?.fill?.gpu_engine) === 'coreml'
+        ? 'Apple GPU through Core ML where a box size fits, PyTorch for the rest.'
         : 'Apple GPU. Measured 4.6× faster on this Mac; same output.')
       : esc(gpuNote || 'GPU is unavailable.');
   } else if (cpuReady) {
@@ -3912,7 +3912,27 @@ function fillEngineControl() {
     <button class="${device === 'cpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="cpu" ${cpuReady ? '' : 'disabled'} title="${esc(state.engine?.fill?.cpu_problem || 'CPU engine is not installed')}">CPU</button>
     <button class="${device === 'gpu' ? 'is-active' : ''}" type="button" data-action="fill-device" data-device="gpu" ${gpuReady ? '' : 'disabled'} title="${esc(gpuNote || 'Apple GPU')}">GPU</button>
   </div>
+  ${device === 'gpu' && gpuReady ? gpuEngineControl() : ''}
   <p class="small muted">${note}</p>`;
+}
+
+// REQ-20261121-01: which engine runs the GPU fill, for a Core ML / PyTorch speed test.
+function gpuEngineControl() {
+  const fill = state.engine?.fill || {};
+  const flag = String(fill.gpu_engine_flag || '');
+  const coremlReady = Boolean(fill.coreml_ready);
+  const chosen = flag ? (fill.gpu_engine || 'pytorch') : (state.settings?.fill?.gpu_engine === 'coreml' ? 'coreml' : 'pytorch');
+  const locked = flag ? 'disabled title="Set by the DUCK_FILL_GPU_ENGINE launch flag"' : '';
+  const why = coremlReady ? '' : esc(fill.coreml_problem || 'Core ML is not available here.');
+  let line;
+  if (flag) line = `The launch flag sets the GPU engine to ${chosen === 'coreml' ? 'Core ML' : 'PyTorch'}. Open the app without it to choose here.`;
+  else if (chosen === 'coreml') line = 'Core ML is a test engine. It has its own function for some box sizes only; every other box is filled by PyTorch, and the render says how many each filled. Its fill differs slightly from PyTorch (up to 19/255 measured), so its clips are kept apart and the first Core ML render is a full fill. In one earlier run Core ML stopped the app mid-render.';
+  else line = coremlReady ? 'PyTorch is the default GPU engine.' : `Core ML: ${why}`;
+  return `<div class="segmented gpu-engine" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px">
+    <button class="${chosen === 'pytorch' ? 'is-active' : ''}" type="button" data-action="fill-gpu-engine" data-engine="pytorch" ${locked}>PyTorch</button>
+    <button class="${chosen === 'coreml' ? 'is-active' : ''}" type="button" data-action="fill-gpu-engine" data-engine="coreml" ${flag ? locked : (coremlReady ? '' : `disabled title="${why}"`)}>Core ML · test</button>
+  </div>
+  <p class="small muted">${line}</p>`;
 }
 
 function screenRender() {
@@ -4161,6 +4181,23 @@ async function setFillDevice(device) {
     toast(device === 'gpu' ? 'AI fill will use the GPU.' : 'AI fill will use the CPU.');
   } catch (error) {
     toast(`Fill engine: ${error.message}`, 'bad');
+  }
+}
+
+async function setFillGpuEngine(engine) {
+  if (engine !== 'pytorch' && engine !== 'coreml') return;
+  try {
+    const data = await api('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ fill_gpu_engine: engine }),
+    });
+    state.settings = data;
+    state.renderEstimateKey = '';
+    state.renderEstimate = null;
+    render();
+    toast(engine === 'coreml' ? 'The GPU fill will try Core ML first.' : 'The GPU fill will use PyTorch.');
+  } catch (error) {
+    toast(`GPU engine: ${error.message}`, 'bad');
   }
 }
 
@@ -5142,6 +5179,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'clear-model-slot') await saveModelSlot(target.dataset.slot, '');
     else if (action === 'clear-fill-model') saveFillModel('');
     else if (action === 'fill-device') await setFillDevice(target.dataset.device || 'cpu');
+    else if (action === 'fill-gpu-engine') await setFillGpuEngine(target.dataset.engine || 'pytorch');
     else if (action === 'clean-filter') { state.cleanFilter = target.dataset.filter === 'mine' ? 'mine' : 'all'; render(); }
     else if (action === 'search') openSearch();
     else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; state.timelineTime = sourceToTimeline(state.previewTime); navigate(projectPath('edit')); }

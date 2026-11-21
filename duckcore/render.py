@@ -539,9 +539,32 @@ def _fill_device(data_root: Path) -> str:
     from duckcore import app_settings
     from duckcore.engine import textfill
 
+    # The Render screen's GPU engine choice (REQ-20261121-01); the env flag still wins.
+    textfill.prefer_gpu_engine(app_settings.fill_gpu_engine(data_root))
     return textfill.chosen_device(
         "lama", app_settings.fill_device(data_root), textfill.models_dir(data_root),
     )
+
+
+def _done_message(output: Path) -> str:
+    """"Render complete", plus which GPU engine filled the boxes (REQ-20261121-01)."""
+    try:
+        summary = json.loads(Path(output).with_suffix(".fill.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "Render complete"
+    reused = int(summary.get("reused_clips") or 0)
+    filled = int(summary.get("filled_clips") or 0)
+    seconds = float(summary.get("fill_seconds") or 0.0)
+    if not filled:
+        return f"Render complete · {reused} filled clip{'s' if reused != 1 else ''} reused, no new fill" if reused else "Render complete"
+    tail = f" · {reused} reused" if reused else ""
+    if summary.get("gpu_engine") == "coreml":
+        coreml = int(summary.get("coreml_areas") or 0)
+        total = coreml + int(summary.get("gpu_areas") or 0)
+        return (f"Render complete · Core ML test: Core ML filled {coreml} of {total} boxes, "
+                f"PyTorch the rest · fill {seconds:.0f} s{tail}")
+    engine = "PyTorch GPU" if summary.get("gpu_engine") == "pytorch" else "CPU"
+    return f"Render complete · {engine} fill {seconds:.0f} s{tail}"
 
 
 RENDER_RATES_FILE = "render_rates.json"
@@ -633,9 +656,9 @@ def _estimate_key(edit: dict, meta: dict, data_root: Path | None = None) -> str:
             engine = textfill.method_stamp(
                 "lama", textfill.models_dir(data_root), "gpu", custom=path,
             ) if path is not None else ""
-            device = textfill.chosen_device(
-                "lama", app_settings.fill_device(data_root), textfill.models_dir(data_root),
-            )
+            device = _fill_device(Path(data_root))
+            if device == "gpu" and path is None:
+                engine = textfill.gpu_engine("lama", textfill.models_dir(data_root))
         except Exception:  # noqa: BLE001 - a missing model is still a key
             engine = "missing"
     payload = {
@@ -1006,6 +1029,10 @@ def render_edit(
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     output = output_dir / f"{edit['id']}_{stamp}.mp4"
+    # Which GPU engine filled what, for the Core ML / PyTorch test (REQ-20261121-01).
+    fill_summary = {"chosen": textfill.gpu_engine("lama", textfill.models_dir(data_root)) if device == "gpu" else "cpu",
+                    "gpu_engine": "", "coreml_areas": 0, "gpu_areas": 0,
+                    "fill_seconds": 0.0, "filled_clips": 0, "reused_clips": 0}
     clips = [clip for clip in edit.get("clips") or [] if float(clip.get("end") or 0) > float(clip.get("start") or 0)]
     if not clips:
         raise RenderError("This edit has no clips.")
@@ -1096,6 +1123,16 @@ def render_edit(
                         if progress is not None else None
                     ),
                 )
+                if filled:
+                    if filled.get("cached"):
+                        fill_summary["reused_clips"] += 1
+                    else:
+                        fill_summary["filled_clips"] += 1
+                        fill_summary["gpu_engine"] = filled.get("gpu_engine") or fill_summary["gpu_engine"]
+                        fill_summary["coreml_areas"] += int(filled.get("coreml_areas") or 0)
+                        fill_summary["gpu_areas"] += int(filled.get("gpu_areas") or 0)
+                        fill_summary["fill_seconds"] = round(
+                            fill_summary["fill_seconds"] + float(filled.get("fill_seconds") or 0.0), 1)
             segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
             video_filter = _blur_filter(
                 edit, meta, clip_start=start, target_fps=target_fps,
@@ -1199,6 +1236,10 @@ def render_edit(
         for segment in segments:
             segment.unlink(missing_ok=True)
         remember_render_time(Path(data_root), rendered, time.monotonic() - started)
+        try:
+            output.with_suffix(".fill.json").write_text(json.dumps(fill_summary), encoding="utf-8")
+        except OSError:
+            pass
         return output
     except Exception:
         for segment in segments:
@@ -1787,7 +1828,7 @@ class RenderQueue:
                         report = {}
                     self._update(
                         item["id"], state="done", stage="Done",
-                        progress=1.0, message="Render complete", output=str(output),
+                        progress=1.0, message=_done_message(output), output=str(output),
                         elapsed_seconds=round(time.time() - item["created"], 1),
                         checked_frames=int(report.get("frames") or 0),
                         check_hits=len(report.get("times") or []),

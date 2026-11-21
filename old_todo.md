@@ -459,3 +459,9 @@ Closed, verified against code and tests on 2026-11-16:
 ## REQ-20261118-01 — closed 2026-11-18
 - [x] 3A · Clean layer list visible at 800x600, 1024x700, 1280x800, 1440x900 and 200% zoom; rows select and Fill/Blur/Off changes the layer (`49be5ff`)
 - [x] 3B · Edit shows a Transcript box when there is no transcript, with the reason and next step; Hide/Show works (`6693b3e`)
+
+## REQ-20261121-01 — done 2026-11-21
+
+- [x] REQ-20261121-01 · Render screen: GPU engine choice saved in settings; `DUCK_FILL_GPU_ENGINE` still overrides
+- [x] REQ-20261121-01 · Core ML routes per box (fits → Core ML, else PyTorch) instead of dropping the whole span to PyTorch
+- [x] REQ-20261121-01 · after a render, say how many boxes each engine filled and the fill time

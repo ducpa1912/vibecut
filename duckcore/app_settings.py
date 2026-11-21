@@ -81,6 +81,12 @@ def fill_device(data_root: Path | str) -> str:
     return "cpu" if stored == "cpu" else "gpu"
 
 
+def fill_gpu_engine(data_root: Path | str) -> str:
+    """The GPU engine the user chose on the Render screen. Default PyTorch; Core ML is a test."""
+    stored = str(load(data_root).get("fill_gpu_engine") or "pytorch").strip().lower()
+    return "coreml" if stored == "coreml" else "pytorch"
+
+
 def snapshot(data_root: Path | str) -> dict[str, Any]:
     from duckcore import model_slots
     root = Path(data_root)
@@ -96,6 +102,7 @@ def snapshot(data_root: Path | str) -> dict[str, Any]:
         },
         "fill": {
             "device": fill_device(root),
+            "gpu_engine": fill_gpu_engine(root),
             "model": fill_model_status(root),
         },
         "storage": {
@@ -122,6 +129,11 @@ def update(data_root: Path | str, payload: dict[str, Any]) -> dict[str, Any]:
         if device not in {"cpu", "gpu"}:
             raise ValueError("Fill device must be cpu or gpu.")
         current["fill_device"] = device
+    if "fill_gpu_engine" in payload:
+        engine = str(payload["fill_gpu_engine"] or "pytorch").strip().lower()
+        if engine not in {"pytorch", "coreml"}:
+            raise ValueError("GPU fill engine must be pytorch or coreml.")
+        current["fill_gpu_engine"] = engine
     if "translation_model_path" in payload:
         current["translation_model_path"] = str(payload["translation_model_path"] or "").strip()[:2000]
     if "fill_model_path" in payload:

@@ -215,9 +215,22 @@ def _seed_package(origin: Path, destination: Path) -> None:
     os.replace(part, destination)
 
 
+# The engine the user picked on the Render screen (REQ-20261121-01). One core
+# serves one data root, so the choice is process-wide; the env flag still wins.
+_PREFERRED_GPU_ENGINE = DEFAULT_GPU_ENGINE
+
+
+def prefer_gpu_engine(name: str | None) -> str:
+    """Remember the user's GPU engine choice; anything unknown is PyTorch."""
+    global _PREFERRED_GPU_ENGINE
+    wanted = str(name or "").strip().lower()
+    _PREFERRED_GPU_ENGINE = wanted if wanted in GPU_ENGINES else DEFAULT_GPU_ENGINE
+    return _PREFERRED_GPU_ENGINE
+
+
 def gpu_engine(method: str, directory: Path | str) -> str:
-    """Select Core ML only when explicitly requested and installed."""
-    wanted = (os.environ.get("DUCK_FILL_GPU_ENGINE") or DEFAULT_GPU_ENGINE).strip().lower()
+    """Select Core ML only when asked for (flag or choice) and installed."""
+    wanted = (os.environ.get("DUCK_FILL_GPU_ENGINE") or _PREFERRED_GPU_ENGINE or DEFAULT_GPU_ENGINE).strip().lower()
     if wanted == "coreml" and coreml_problem(method, directory) is None:
         return "coreml"
     return "pytorch"
@@ -1139,6 +1152,42 @@ class _CountedFiller:
         return self.filler.fill(area, mask)
 
 
+class _CoreMLRouted:
+    """Core ML for the box sizes it has a function for; PyTorch on the GPU for the rest.
+
+    Before REQ-20261121-01 the first size Core ML lacked moved the whole span to
+    PyTorch, so a Core ML render mostly timed PyTorch. The route is fixed by the
+    box size alone, so the same box always gets the same engine and the clip
+    stays a valid cache entry. A real Core ML failure stops Core ML for the span.
+    """
+
+    def __init__(self, coreml, load_torch: Callable[[], object]):
+        self.coreml = coreml
+        self.load_torch = load_torch
+        self.torch = None
+        self.coreml_areas = 0
+        self.gpu_areas = 0
+        self.cache_valid = True
+
+    def _torch(self):
+        if self.torch is None:
+            self.torch = self.load_torch()
+        return self.torch
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if self.coreml is not None and self.coreml.fits(*mask.shape):
+            try:
+                result = self.coreml.fill(area, mask)
+                self.coreml_areas += 1
+                return result
+            except RuntimeError as exc:
+                LOGGER.warning("AI fill moved from Core ML to PyTorch for this span: %s", exc)
+                self.coreml = None
+                self.cache_valid = False
+        self.gpu_areas += 1
+        return self._torch().fill(area, mask)
+
+
 class _GpuOrCpu:
     """The primary engine until it fails, then its next fallback engine."""
 
@@ -1146,16 +1195,25 @@ class _GpuOrCpu:
         self.load_cpu = load_cpu
         self.filler = None
         self.on_gpu = True
-        self.cache_valid = True
+        self._valid = True
         try:
             self.filler = load_gpu()
         except (FillError, OSError, RuntimeError) as exc:
             LOGGER.warning("AI fill is trying its fallback: the primary engine could not load: %s", exc)
             self._to_cpu()
 
+    @property
+    def cache_valid(self) -> bool:
+        # A primary engine that mixed in a fallback itself (Core ML routing) says so.
+        return self._valid and bool(getattr(self.filler, "cache_valid", True))
+
+    @cache_valid.setter
+    def cache_valid(self, value: bool) -> None:
+        self._valid = bool(value)
+
     def _to_cpu(self) -> None:
         self.on_gpu = False
-        self.cache_valid = False
+        self._valid = False
         self.filler = self.load_cpu()
 
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -1863,8 +1921,22 @@ def prepare_span(
         # by a killed server.
         for stale in cache_dir.glob(".*.part.mp4"):
             stale.unlink(missing_ok=True)
+        routed = None
         if custom_filler is not None:
             filler = custom_filler
+        elif device == "gpu" and Path(path).suffix == ".mlpackage":
+            torch_path = Path(directory) / GPU_MODEL_FILES[method]
+            routed = _CoreMLRouted(None, lambda: _filler(method, torch_path, "gpu"))
+            try:
+                routed.coreml = _filler(method, path, "gpu")
+            except (FillError, OSError, RuntimeError) as exc:
+                # Counted as PyTorch boxes below, and the clip is not cached as Core ML.
+                LOGGER.warning("AI fill could not load Core ML; PyTorch fills this span: %s", exc)
+                routed.cache_valid = False
+            filler = _GpuOrCpu(
+                lambda: routed,
+                lambda: _fallback_filler(method, directory, path),
+            )
         elif device == "gpu":
             filler = _GpuOrCpu(
                 lambda: _filler(method, path, "gpu"),
@@ -1932,9 +2004,11 @@ def prepare_span(
         if counted is not None:
             LOGGER.info(
                 "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d "
-                "engine=%s device=%s follow=%s",
+                "engine=%s device=%s follow=%s coreml_areas=%s gpu_areas=%s",
                 start, written, counted.runs, counted.units, took, took / max(1, written), saved.hits,
                 "custom" if custom_path is not None else method, device, follow_motion,
+                routed.coreml_areas if routed is not None else "-",
+                routed.gpu_areas if routed is not None else "-",
             )
         # A resumed clip spent little time on what it reused: not a speed to learn.
         # A user model is not LaMa either: its speed must not teach the default.
@@ -1946,7 +2020,9 @@ def prepare_span(
             _learn_rate(
                 data_root, method, units, took, device,
                 custom=custom_path, reused=bool(saved is not None and saved.hits)
-                or bool(counted is not None and not counted.cache_valid),
+                or bool(counted is not None and not counted.cache_valid)
+                # A Core ML speed must not teach the PyTorch estimate.
+                or routed is not None,
             )
     except BaseException:
         _stop(reader.proc if reader is not None else None)
@@ -1967,4 +2043,8 @@ def prepare_span(
         "engine": "custom" if custom_path is not None else method,
         "custom_fallback": custom_fallback,
         "ephemeral": bool(counted is not None and not counted.cache_valid),
+        "gpu_engine": ("coreml" if routed is not None else "pytorch") if device == "gpu" and custom_path is None else "",
+        "coreml_areas": routed.coreml_areas if routed is not None else 0,
+        "gpu_areas": routed.gpu_areas if routed is not None else 0,
+        "fill_seconds": round(took, 1),
     }

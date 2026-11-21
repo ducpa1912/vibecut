@@ -16,6 +16,10 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
+## REQ-20261121-01 — Choose Core ML or PyTorch per render (2026-11-21)
+
+- [ ] REQ-20261121-01 · founder speed test on a quiet Mac: same edit, once per engine (script in `docs/teams/render-engine-choice/review.md`)
+
 ## REQ-20261118-01 — Clean layers and the missing transcript (2026-11-18)
 
 - [ ] proposal · add a real **Remove layer** action (today only Off, kept and greyed) — founder decision

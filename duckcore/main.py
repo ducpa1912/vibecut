@@ -113,6 +113,7 @@ class SettingsPatch(BaseModel):
     translation_engine: str | None = None
     translation_model_path: str | None = None
     fill_device: str | None = None
+    fill_gpu_engine: str | None = None
     fill_model_path: str | None = None
 
 
@@ -312,6 +313,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     renders = render.RenderQueue(data_root)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
     engine_cache: dict = {"at": 0.0, "value": None}
+    from duckcore import app_settings as _settings_at_start
+    from duckcore.engine import textfill as _textfill_at_start
+
+    _textfill_at_start.prefer_gpu_engine(_settings_at_start.fill_gpu_engine(data_root))
 
     app = FastAPI(
         title="DuckSuite Core",
@@ -454,6 +459,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         whisper = stt._whisper_command()
         fill_cpu_problem = textfill.method_problem("lama", model_dir)
         fill_gpu_problem = textfill.gpu_problem("lama", model_dir)
+        coreml_problem = textfill.coreml_problem("lama", model_dir)
         rewrite = {"available": False, "reason": "The rewrite helper is missing."}
         rewrite_helper = script._helper("rewrite_apple")
         if rewrite_helper is not None:
@@ -488,6 +494,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 "gpu_ready": fill_gpu_problem is None,
                 "gpu_problem": fill_gpu_problem or "",
                 "gpu_engine": textfill.gpu_engine("lama", model_dir) if fill_gpu_problem is None else "",
+                "coreml_ready": coreml_problem is None,
+                "coreml_problem": coreml_problem or "",
+                # The launch flag overrides the Render choice; the UI says so.
+                "gpu_engine_flag": (os.environ.get("DUCK_FILL_GPU_ENGINE") or "").strip().lower(),
             },
             "rewrite": rewrite,
             "stories": {"engine": "local", "ready": True},
@@ -538,6 +548,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             app_settings.update(data_root, body.model_dump(exclude_none=True))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if body.fill_gpu_engine is not None:
+            from duckcore.engine import textfill
+
+            textfill.prefer_gpu_engine(app_settings.fill_gpu_engine(data_root))
+            engine_cache["at"] = 0.0
         return app_settings.snapshot(data_root)
 
     @app.get("/api/translation/model")
