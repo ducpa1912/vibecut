@@ -63,6 +63,16 @@ Note: PyTorch clips of an edit already rendered since 2026-11-15 are reused, so 
 - A real Core ML fill inside the built app (needs a project and the founder's footage).
 - The control in a real window at the narrow and 200 % sizes (loop 28 covers layout).
 
+## Code review (2026-11-23)
+
+Reviewed `1c1a41a` line by line. One bug fixed: a render with the user's own fill model, or one
+with no engine name, said "CPU fill" in its finished message; it now says "Your fill model" (or
+"CPU" only for the CPU). Checked and fine: `FillError` is a `RuntimeError`, so a PyTorch failure
+inside Core ML routing still reaches the CPU fallback; the wrapper's `cache_valid` sees a mixed
+span; a retried render writes its own `.fill.json`; the estimate key now names the engine, so every
+edit re-estimates once (not a fill). Known cost: with Core ML on, both GPU models are loaded
+(about 0.85 GB + 0.4 GB peak, 3C measurements).
+
 ## Report row
 
 - `docs/reports/ducksuite-product-progress.html`: not added; the insert anchor is not named (same as

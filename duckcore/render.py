@@ -563,7 +563,8 @@ def _done_message(output: Path) -> str:
         total = coreml + int(summary.get("gpu_areas") or 0)
         return (f"Render complete · Core ML test: Core ML filled {coreml} of {total} boxes, "
                 f"PyTorch the rest · fill {seconds:.0f} s{tail}")
-    engine = "PyTorch GPU" if summary.get("gpu_engine") == "pytorch" else "CPU"
+    engine = {"pytorch": "PyTorch GPU", "custom": "Your fill model", "cpu": "CPU"}.get(
+        str(summary.get("gpu_engine") or ""), "AI")
     return f"Render complete · {engine} fill {seconds:.0f} s{tail}"
 
 

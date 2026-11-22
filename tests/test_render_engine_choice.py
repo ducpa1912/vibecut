@@ -151,6 +151,10 @@ def test_the_done_message_names_the_engine_and_the_counts(tmp_path) -> None:
     summary.update(gpu_engine="pytorch", coreml_areas=0, gpu_areas=0)
     output.with_suffix(".fill.json").write_text(json.dumps(summary))
     assert "PyTorch GPU fill 412 s" in render._done_message(output)
+    for engine, words in (("custom", "Your fill model fill"), ("cpu", "CPU fill"), ("", "AI fill")):
+        summary.update(gpu_engine=engine)
+        output.with_suffix(".fill.json").write_text(json.dumps(summary))
+        assert words in render._done_message(output)
     summary.update(filled_clips=0, reused_clips=4)
     output.with_suffix(".fill.json").write_text(json.dumps(summary))
     assert "no new fill" in render._done_message(output)

@@ -2043,7 +2043,9 @@ def prepare_span(
         "engine": "custom" if custom_path is not None else method,
         "custom_fallback": custom_fallback,
         "ephemeral": bool(counted is not None and not counted.cache_valid),
-        "gpu_engine": ("coreml" if routed is not None else "pytorch") if device == "gpu" and custom_path is None else "",
+        # Which engine filled this span: the user's model, Core ML routing, PyTorch, or the CPU.
+        "gpu_engine": "custom" if custom_path is not None else (
+            ("coreml" if routed is not None else "pytorch") if device == "gpu" else "cpu"),
         "coreml_areas": routed.coreml_areas if routed is not None else 0,
         "gpu_areas": routed.gpu_areas if routed is not None else 0,
         "fill_seconds": round(took, 1),
