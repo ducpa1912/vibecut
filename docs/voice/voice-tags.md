@@ -65,6 +65,17 @@ picker for that sentence.
 The re-transcription self-check compares the spoken words after tags and
 interjections are stripped, so `[sad]` is never counted as a missing word.
 
+## Long jobs and rate limits
+
+A voiceover is one sentence per request. Every finished line is cached under
+its voice, text, rate, language and emotion. If a later line fails, the lines
+before it are saved as a **partial take** in Takes; clicking **Load settings**
+restores the full script and the same voice/rate, and **Make voiceover** reuses
+the cached lines instead of sending them again.
+
+OpenRouter 429 and 5xx responses are retried three times with a short backoff,
+honouring `Retry-After` when present. A 401/403 is never retried.
+
 ## What is not done
 
 - MiniMax voice cloning is not part of this lane; MiniMax is a stock voice

@@ -91,6 +91,9 @@ export function takeMeta(take) {
   if (Number.isFinite(rate) && Math.abs(rate - 1) > 0.001) parts.push(`${rate.toFixed(2)}×`);
   const emotion = String(take?.settings?.emotion || "");
   if (emotion && emotion !== "auto") parts.push(`emotion ${emotion}`);
+  if (take?.partial) {
+    parts.push(`partial ${(take.chunks || []).length}/${take.total_lines || "?"}`);
+  }
   if (take?.seconds) parts.push(seconds(take.seconds));
   return parts.filter(Boolean).join(" · ");
 }
@@ -352,7 +355,7 @@ export function createTakesPanel({
           el("strong", { text: take.label || "Take" }),
           el("span", { class: "vg-take-meta", text: takeMeta(take) }),
         ]),
-        el("span", { class: "vg-take-kind", text: take.kind === "voiceover" ? "Voiceover" : "Preview" }),
+        el("span", { class: `vg-take-kind${take.partial ? " is-partial" : ""}`, text: take.partial ? "Partial" : (take.kind === "voiceover" ? "Voiceover" : "Preview") }),
       ]),
       flagsFor(take),
       tagNotes.length ? el("span", { class: "vg-take-checknote", text: tagNotes.join(" ") }) : null,

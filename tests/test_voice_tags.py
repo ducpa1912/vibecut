@@ -79,6 +79,42 @@ def test_catalog_has_engine_specific_options():
     assert "no whisper" in catalog["minimax"]["hint"]
 
 
+def test_a_429_is_retried_before_the_line_fails(monkeypatch, tmp_path):
+    import urllib.error
+
+    monkeypatch.setattr(tts.audio, "openrouter_key", lambda: "key")
+    monkeypatch.setattr(tts.audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(tts.voice_clone, "is_clone", lambda voice: False)
+    monkeypatch.setattr(tts.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        tts.audio, "_convert",
+        lambda source, output, extra=None: output.write_bytes(b"RIFF" + b"0" * 64),
+    )
+    calls = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"\x00\x00" * 100
+
+    def fake_urlopen(request, timeout=0):
+        calls.append(request)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, None)
+        return Reply()
+
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    output = tmp_path / "line.wav"
+    tts._openrouter_voice("Hello", "bram", output, engine="heygen", model="heygen/heygen-voice-1-turbo")
+    assert len(calls) == 3
+    assert output.is_file()
+
+
 def test_cache_key_changes_with_emotion():
     plain = tts.line_cache_key("minimax", "", "voice", "hello", 1.0, "en")
     sad = tts.line_cache_key("minimax", "", "voice", "hello", 1.0, "en", "sad")

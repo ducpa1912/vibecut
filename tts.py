@@ -23,6 +23,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import wave
@@ -53,6 +54,9 @@ SYNTHESIZERS = ("minimax", "elevenlabs", "heygen", "fish", "gemini", "kokoro", "
 CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "heygen", "fish", "gemini"})
 LOCAL_ENGINES = frozenset({"kokoro", "say"})
 OPENROUTER_ENGINES = frozenset({"heygen", "fish", "gemini"})
+#: OpenRouter/provider hiccups worth retrying inside one line.
+OPENROUTER_RETRY_CODES = frozenset({429, 500, 502, 503, 504})
+OPENROUTER_RETRIES = 3
 #: HeyGen Voice on OpenRouter: ten stock voices, raw 44.1 kHz mono s16le PCM.
 HEYGEN_VOICES = (
     "nadine", "tabitha", "bram", "gareth", "noelle",
@@ -810,6 +814,18 @@ def _minimax_voice(
         pass
 
 
+def _openrouter_retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:
+    """Short waits for 429/5xx, honouring Retry-After when the provider sends it."""
+    headers = getattr(exc, "headers", None)
+    raw = headers.get("Retry-After") if headers is not None else None
+    try:
+        if raw is not None:
+            return max(0.5, min(60.0, float(str(raw).strip())))
+    except (TypeError, ValueError):
+        pass
+    return min(20.0, 2.0 * (2 ** attempt))
+
+
 def _openrouter_voice(
     text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
     model: str = "", timeout: float = 300,
@@ -860,17 +876,25 @@ def _openrouter_voice(
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            content = response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            audio._openrouter_auth_failure(
-                int(exc.code), audio._openrouter_http_error_text(exc, key),
-            )
-        raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001
-        raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
+    content = None
+    for attempt in range(OPENROUTER_RETRIES):
+        try:
+            with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
+                content = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code in OPENROUTER_RETRY_CODES and attempt < OPENROUTER_RETRIES - 1:
+                time.sleep(_openrouter_retry_delay(exc, attempt))
+                continue
+            if exc.code in {401, 403}:
+                audio._openrouter_auth_failure(
+                    int(exc.code), audio._openrouter_http_error_text(exc, key),
+                )
+            raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
+    if content is None:
+        raise audio.AudioError(f"OpenRouter {engine} voice returned no audio after retries.")
     if engine == "heygen":
         raw = output.with_name(f"{output.stem}.{engine}.tmp.wav")
         with wave.open(str(raw), "wb") as handle:

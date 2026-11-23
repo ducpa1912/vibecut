@@ -610,6 +610,70 @@ def create_voiceover(
     work.mkdir(parents=True, exist_ok=True)
     cache = settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
+
+    def finish(
+        parts: list[Path], chunks: list[dict], *, partial: bool = False,
+        failed_line: int = 0, error: str = "",
+    ) -> dict:
+        output = work / ("partial.wav" if partial else "voiceover.wav")
+        try:
+            _concat(parts, output)
+        except Exception as exc:  # noqa: BLE001
+            raise TakeError(
+                f"Could not join the spoken lines: {exc}. Try a shorter script, then make it again."
+            ) from exc
+        check = _check(output)
+        if partial:
+            self_check = {
+                "status": "skipped",
+                "threshold": SELF_CHECK_THRESHOLD,
+                "lines": [],
+                "note": (
+                    f"Partial take: line {failed_line} could not be spoken. "
+                    "The lines before it are saved; make the voiceover again to continue."
+                ),
+            }
+        else:
+            self_check = (
+                _self_check(output, chunks, language=language, work=work, cancel_event=cancel_event)
+                if selfcheck else
+                {"status": "skipped", "threshold": SELF_CHECK_THRESHOLD, "lines": [], "note": ""}
+            )
+        take_id = f"take_{uuid.uuid4().hex[:24]}"
+        target = audio_dir() / f"{take_id}.wav"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(output, target)
+        record = {
+            "id": take_id,
+            "kind": "voiceover",
+            "label": " ".join(str(label or "Voiceover").split())[:120],
+            "created": _now(),
+            "starred": False,
+            "clone_voice": str(clone or ""),
+            "cached": all(chunk["cached"] for chunk in chunks),
+            "seconds": round(float(
+                (check or {}).get("duration")
+                or (chunks[-1]["end"] if chunks else 0.0)
+            ), 3),
+            "check": check,
+            "chunks": chunks,
+            "selfcheck": self_check,
+            "settings": {
+                "text": script,
+                "engine": str(engine or ""),
+                "voice": str(voice or ""),
+                "rate": round(float(rate or 1.0), 3),
+                "language": str(language or ""),
+                "emotion": str(emotion or ""),
+            },
+        }
+        if partial:
+            record["partial"] = True
+            record["failed_line"] = int(failed_line)
+            record["total_lines"] = len(chunks_text)
+            record["error"] = str(error or "")[:300]
+        return _remember(record)
+
     try:
         parts: list[Path] = []
         chunks: list[dict] = []
@@ -636,11 +700,24 @@ def create_voiceover(
                 ))
             except TakeError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - reword, keep the cause
-                raise TakeError(
+            except Exception as exc:  # noqa: BLE001 - keep the finished lines
+                message = (
                     f"Could not speak line {index} of {len(chunks_text)}: {exc}. "
-                    "Check the voice is still in the library and the key in Setup, then try again."
-                ) from exc
+                    "The lines before it are saved; make the voiceover again to continue."
+                )
+                if parts:
+                    try:
+                        if progress is not None:
+                            progress(1.0, f"Saved {len(parts)} lines; line {index} failed")
+                        return finish(
+                            parts, chunks, partial=True, failed_line=index,
+                            error=message,
+                        )
+                    except TakeError:
+                        raise
+                    except Exception:
+                        pass
+                raise TakeError(message) from exc
             _stop(cancel_event)
             seconds = _probe(path)
             parts.append(path)
@@ -659,45 +736,7 @@ def create_voiceover(
         _stop(cancel_event)
         if progress is not None:
             progress(0.92, "Joining the lines")
-        output = work / "voiceover.wav"
-        try:
-            _concat(parts, output)
-        except Exception as exc:  # noqa: BLE001
-            raise TakeError(
-                f"Could not join the spoken lines: {exc}. Try a shorter script, then make it again."
-            ) from exc
-        check = _check(output)
-        self_check = (
-            _self_check(output, chunks, language=language, work=work, cancel_event=cancel_event)
-            if selfcheck else
-            {"status": "skipped", "threshold": SELF_CHECK_THRESHOLD, "lines": [], "note": ""}
-        )
-        take_id = f"take_{uuid.uuid4().hex[:24]}"
-        target = audio_dir() / f"{take_id}.wav"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(output, target)
-        record = {
-            "id": take_id,
-            "kind": "voiceover",
-            "label": " ".join(str(label or "Voiceover").split())[:120],
-            "created": _now(),
-            "starred": False,
-            "clone_voice": str(clone or ""),
-            "cached": all(chunk["cached"] for chunk in chunks),
-            "seconds": round(float((check or {}).get("duration") or played), 3),
-            "check": check,
-            "chunks": chunks,
-            "selfcheck": self_check,
-            "settings": {
-                "text": script,
-                "engine": str(engine or ""),
-                "voice": str(voice or ""),
-                "rate": round(float(rate or 1.0), 3),
-                "language": str(language or ""),
-                "emotion": str(emotion or ""),
-            },
-        }
-        stored = _remember(record)
+        stored = finish(parts, chunks)
         if progress is not None:
             progress(1.0, "Done")
         return stored

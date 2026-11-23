@@ -392,8 +392,8 @@
     {
       "path": "tts.py",
       "baseline": "a3da0b1",
-      "sha256": "7d87b37e9e74a7b58671dc1182085cc345ebd5bc269dacdc02feabba76e4309e",
-      "lane_version": "1.0.2",
+      "sha256": "c207f9a91f7ce2041e3713e7a77bd25b8ddfa34b6f5e16b28463b5feb6dd7394",
+      "lane_version": "1.0.3",
       "changes": [
         {
           "date": "2026-11-23",
@@ -404,6 +404,11 @@
           "date": "2026-11-23",
           "from_commit": "28caf1e",
           "note": "Emotion and engine-aware voice tags for HeyGen and MiniMax"
+        },
+        {
+          "date": "2026-11-23",
+          "from_commit": "8b60d48",
+          "note": "Retry OpenRouter 429/5xx with backoff"
         }
       ]
     },

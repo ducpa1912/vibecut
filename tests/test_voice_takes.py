@@ -258,6 +258,53 @@ def test_voiceover_cancel_and_one_at_a_time(api, monkeypatch):
         voice_takes._VOICEOVER.release()
 
 
+def test_a_failed_line_saves_the_finished_lines(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_sample(engine, voice, text, cache, rate=1.0, language="", emotion=""):
+        calls.append(text)
+        if len(calls) == 2:
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        path = Path(cache) / f"partial-{len(calls)}.wav"
+        path.write_bytes(b"RIFF" + b"0" * 64)
+        return path
+
+    monkeypatch.setattr(tts, "voice_sample", fake_sample)
+    monkeypatch.setattr(voice_takes, "_probe", lambda path: 0.4)
+    monkeypatch.setattr(voice_takes, "_check", lambda path: {"available": True, "duration": 0.4})
+    monkeypatch.setattr(
+        voice_takes, "_concat",
+        lambda parts, output: output.write_bytes(parts[0].read_bytes()),
+    )
+    take = voice_takes.create_voiceover(
+        text="One clear line. Two clear lines. Three clear lines.",
+        engine="say", voice="Samantha", selfcheck=False,
+    )
+    assert take["partial"] is True
+    assert take["failed_line"] == 2
+    assert len(take["chunks"]) == 1
+    assert "429" in take["error"]
+    assert take["selfcheck"]["status"] == "skipped"
+    assert "line 2" in take["selfcheck"]["note"]
+    assert (tmp_path / "takes" / "audio" / f"{take['id']}.wav").is_file()
+
+
+def test_voiceover_script_has_no_character_cap():
+    source = (ROOT / "voice_takes.py").read_text(encoding="utf-8")
+    page = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
+    assert "MAX_SCRIPT_CHARS" not in source
+    assert "MAX_SCRIPT" not in page
+    assert "no length limit" in page
+
+
+def test_partial_take_is_shown_in_the_takes_list():
+    next_js = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
+    takes_js = (ROOT / "static" / "voice" / "takes.js").read_text(encoding="utf-8")
+    assert "Partial voiceover" in next_js
+    assert "take.partial" in takes_js
+    assert "is-partial" in takes_js
+
+
 def test_new_shell_holds_the_takes_aside():
     next_js = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
     takes_js = (ROOT / "static" / "voice" / "takes.js").read_text(encoding="utf-8")

@@ -1023,9 +1023,18 @@ function paintVoiceover() {
     if (scriptResult) {
       const take = scriptResult;
       const lines = (take.chunks || []).length;
+      const partial = Boolean(take.partial);
       result.append(el("strong", {
-        text: `Voiceover ready · ${lines} line${lines === 1 ? "" : "s"} · ${Math.round(Number(take.seconds) || 0)}s`,
+        text: partial
+          ? `Partial voiceover · ${lines} line${lines === 1 ? "" : "s"} saved`
+          : `Voiceover ready · ${lines} line${lines === 1 ? "" : "s"} · ${Math.round(Number(take.seconds) || 0)}s`,
       }));
+      if (partial) {
+        result.append(el("p", {
+          class: "vg-vo-error",
+          text: take.error || `Line ${take.failed_line} could not be spoken. The lines before it are saved; run the same script again to continue from the cache.`,
+        }));
+      }
       const flags = checkFlags(take);
       if (flags.length) {
         result.append(el("div", { class: "vg-take-flags" }, flags.map((flag) => el("span", {
@@ -1112,7 +1121,16 @@ async function makeVoiceover() {
     scriptState = "idle";
     scriptResult = take;
     scriptStage = "";
-    setNotice(`Voiceover ready: ${(take.chunks || []).length} lines. It is in Takes.`, "ok");
+    if (take.partial) {
+      scriptError = take.error || `Line ${take.failed_line} could not be spoken. The lines before it are saved.`;
+      setNotice(
+        `Saved ${(take.chunks || []).length} lines; line ${take.failed_line} failed. It is in Takes.`,
+        "bad",
+      );
+    } else {
+      scriptError = "";
+      setNotice(`Voiceover ready: ${(take.chunks || []).length} lines. It is in Takes.`, "ok");
+    }
     await takesPanel.refresh();
   } catch (cause) {
     scriptState = "idle";
