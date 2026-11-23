@@ -33,8 +33,10 @@ CLIP_RATIO = 0.001
 FRAME_SECONDS = 0.02
 #: A clone reference that is shorter than this cannot teach a voice much.
 MIN_REFERENCE_SECONDS = 8.0
-#: The spec's guard: anything longer opens the trimmer.
-MAX_REFERENCE_SECONDS = 15.0
+#: The longest reference a clone may keep (HeyGen uses up to three minutes).
+MAX_REFERENCE_SECONDS = 180.0
+#: What the trimmer proposes: a short, clean window, never the whole 3 min.
+MAX_SUGGESTED_SECONDS = 15.0
 #: The window the trimmer starts on.
 TARGET_WINDOW_SECONDS = 12.0
 
@@ -244,7 +246,7 @@ def best_window(
     path: Path,
     *,
     min_seconds: float = 10.0,
-    max_seconds: float = MAX_REFERENCE_SECONDS,
+    max_seconds: float = MAX_SUGGESTED_SECONDS,
     target_seconds: float = TARGET_WINDOW_SECONDS,
 ) -> dict:
     """The cleanest speech window, never longer than ``max_seconds``.

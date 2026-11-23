@@ -39,6 +39,9 @@ export const CONSENT_COPY = {
   video: "I am the speaker in this video, or I have their written permission to clone their voice.",
 };
 
+//: A reference over this opens the trimmer; the trimmer itself allows up to 3 min.
+const TRIM_ABOVE_SECONDS = 15;
+
 const READ_LINES = [
   "Hi, this is my voice for VibeCut. I am reading a few lines so the clone can learn how I sound.",
   "I speak at my normal pace, with my normal energy, the same way I talk in my videos.",
@@ -451,7 +454,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       peaks: Array.isArray(current.peaks) ? current.peaks : [],
       best: current.best || {},
       minSeconds: Number(current.limits?.min_seconds || 8),
-      maxSeconds: Number(current.limits?.max_seconds || 15),
+      maxSeconds: Number(current.limits?.max_seconds || 180),
       onConfirm: (range) => {
         trimOpenedFor = "";
         if (reference?.id !== current.id) return;
@@ -468,7 +471,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     });
   }
 
-  /** Upload once; over 15 s opens the trimmer on the server's best window. */
+  /** Upload once; over three minutes opens the trimmer on the best window. */
   async function prepareReference(file) {
     if (!trim || !file) return;
     const token = ++refToken;
@@ -483,10 +486,9 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       }
       reference = result;
       const duration = Number(result?.duration) || 0;
-      const max = Number(result?.limits?.max_seconds || 15);
-      if (duration > max) {
+      if (duration > TRIM_ABOVE_SECONDS) {
         refRange = null;
-        setNotice(`The recording is ${Math.round(duration)} s. Choose 8-15 s of clean speech to use.`, "bad");
+        setNotice(`The recording is ${Math.round(duration)} s. Choose 8 s to 3 min of clean speech to use.`, "bad");
         if (!disposed) render();
         requestTrim();
       } else {
@@ -549,11 +551,10 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
         if (!reference) await prepareReference(recording);
         if (reference) {
           const duration = Number(reference.duration) || 0;
-          const max = Number(reference.limits?.max_seconds || 15);
-          if (duration > max && !refRange) {
+          if (duration > TRIM_ABOVE_SECONDS && !refRange) {
             busy = "";
             task = "";
-            setNotice("Choose 8-15 s of clean speech in the trimmer, then press Clone my voice.", "bad");
+            setNotice("Choose 8 s to 3 min of clean speech in the trimmer, then press Clone my voice.", "bad");
             render();
             requestTrim();
             return;
@@ -729,7 +730,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
     const cloning = busy === "clone" || busy === "cancel";
     const tooLong = trim && reference
-      && Number(reference.duration) > Number(reference.limits?.max_seconds || 15)
+      && Number(reference.duration) > TRIM_ABOVE_SECONDS
       && !refRange;
     const go = el("button", {
       class: "st-btn st-btn-primary st-btn-small", type: "button",
@@ -749,9 +750,9 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     const trimNote = trim && reference
       ? el("p", { class: "st-hint", text: refRange
         ? `Using ${Number(refRange.seconds).toFixed(1)} s of the recording.`
-        : `The recording is ${Math.round(Number(reference.duration) || 0)} s. Choose 8-15 s of clean speech.` })
+        : `The recording is ${Math.round(Number(reference.duration) || 0)} s. Choose 8 s to 3 min of clean speech; 10-15 s is best.` })
       : null;
-    const adjust = trim && reference && Number(reference.duration) > Number(reference.limits?.max_seconds || 15)
+    const adjust = trim && reference
       ? el("button", {
         class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Adjust the part",
         on: { click: () => requestTrim() },

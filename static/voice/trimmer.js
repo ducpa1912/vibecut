@@ -1,9 +1,10 @@
 /**
  * Voice Room — reference trimmer.
  *
- * A reference longer than 15 s is never sent whole. The server proposes the
- * cleanest 10-15 s window; this overlay draws the waveform, lets the creator
- * drag or type the start and end, preview the loop, and confirm one range.
+ * The server proposes a clean 10-15 s window, but the creator may keep up to
+ * three minutes of a reference. This overlay draws the waveform, lets the
+ * creator drag or type the start and end, preview the loop, and confirm one
+ * range.
  *
  * Keys: Space plays or stops, Enter confirms, Esc cancels. Scroll zooms,
  * Shift+scroll pans, and Fit all / Fit selection reset the view.
@@ -15,7 +16,9 @@ import { el, formatDuration } from "./ui.js";
 import { syncTokenCookie } from "./api.js";
 
 export const MIN_WINDOW = 8;
-export const MAX_WINDOW = 15;
+//: The clone supports up to three minutes; 10-15 s is only the suggestion.
+export const MAX_WINDOW = 180;
+export const BEST_WINDOW = 15;
 const MIN_VIEW = 2;
 
 /** Keep a range inside the file and inside the clone limits. */
@@ -128,7 +131,7 @@ export function openTrimmer({
     el("div", { class: "vr-trimmer-head" }, [
       el("div", {}, [
         el("h2", { text: title }),
-        el("p", { class: "hint", text: `${Math.round(total)} s in this file. Keep 8-15 s of clean speech for the clone.` }),
+        el("p", { class: "hint", text: `${Math.round(total)} s in this file. Keep 8 s to 3 min of clean speech; 10-15 s is best.` }),
       ]),
       el("button", { class: "vr-trimmer-close", type: "button", text: "✕", "aria-label": "Close the trimmer" }),
     ]),

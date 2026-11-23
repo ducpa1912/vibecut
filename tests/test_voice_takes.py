@@ -171,6 +171,31 @@ def test_cleanup_removes_every_expired_take_not_only_the_review_page(api, tmp_pa
     assert api.get("/api/voices/takes").json()["takes"] == []
 
 
+def test_a_long_script_is_chunked_not_rejected(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_sample(engine, voice, text, cache, rate=1.0, language="", emotion=""):
+        calls.append(text)
+        path = Path(cache) / f"long-{len(calls)}.wav"
+        path.write_bytes(b"RIFF" + b"0" * 64)
+        return path
+
+    monkeypatch.setattr(tts, "voice_sample", fake_sample)
+    monkeypatch.setattr(voice_takes, "_probe", lambda path: 0.4)
+    monkeypatch.setattr(voice_takes, "_check", lambda path: {"available": True, "duration": 0.4})
+    monkeypatch.setattr(
+        voice_takes, "_concat",
+        lambda parts, output: output.write_bytes(parts[0].read_bytes()),
+    )
+    script = "A clear sentence for the voiceover. " * 400
+    take = voice_takes.create_voiceover(
+        text=script, engine="say", voice="Samantha", selfcheck=False,
+    )
+    assert len(take["chunks"]) == 400
+    assert len(calls) == 400
+    assert take["settings"]["text"] == script.strip()
+
+
 def test_split_script_keeps_sentences_whole_and_under_the_limit():
     text = "One short line. " + ("A much longer sentence, with clauses, that has to be split. " * 4)
     chunks = voice_takes.split_script(text)

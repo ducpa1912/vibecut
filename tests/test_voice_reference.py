@@ -1,4 +1,4 @@
-"""The 15 s reference guard and the trimmer's server side.
+"""The three-minute reference limit and the trimmer's server side.
 
 A 60 s stretch of real speech comes from data/media. Cleaning is faked to copy the cut, so no
 model runs; the cloud is never called.
@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import audio
 import settings_store
 import voice_audio
+import voice_errors
 import voice_extract
 import voice_reference
 
@@ -81,7 +82,7 @@ def test_a_long_clip_opens_on_a_clean_10_to_15_second_window(api, tmp_path):
     assert body["best"]["ok"] is True
     assert len(body["peaks"]) >= 24
     assert body["limits"]["min_seconds"] == 8
-    assert body["limits"]["max_seconds"] == 15
+    assert body["limits"]["max_seconds"] == 180
     assert body["audio_url"] == f"/api/voices/reference/{body['id']}/audio"
 
 
@@ -115,12 +116,13 @@ def test_clone_from_the_best_window_and_the_session_is_removed(api, tmp_path):
 
 
 @needs_ffmpeg
-def test_the_server_enforces_the_8_to_15_second_limits(api, tmp_path):
+def test_the_server_enforces_the_8_second_and_3_minute_limits(api, tmp_path):
     ref = upload(api, tone(tmp_path / "long.wav", 60.0)).json()
     url = f"/api/voices/reference/{ref['id']}/clone"
-    too_long = api.post(url, json={"consent": True, "start": 0, "end": 30})
-    assert too_long.status_code == 400
-    assert "15 s or less" in too_long.json()["detail"]
+    # A 60 s reference cannot demonstrate the 3 min cap; test the shared
+    # message and the constant, then the real short-range refusal.
+    assert voice_audio.MAX_REFERENCE_SECONDS == 180
+    assert "3 min or less" in voice_errors.trim_too_long(200.0, 180.0)
     too_short = api.post(url, json={"consent": True, "start": 1, "end": 4})
     assert too_short.status_code == 400
     assert "at least 8 s" in too_short.json()["detail"]
@@ -164,6 +166,14 @@ def test_window_defaults_to_the_best_part_when_no_range_is_sent():
     assert voice_reference.window_for(meta, 2.0, 900.0) == (2.0, 60.0)
 
 
+def test_the_trimmer_opens_at_15_seconds_but_allows_3_minutes():
+    trimmer = (VOICE / "trimmer.js").read_text(encoding="utf-8")
+    clone = (VOICE / "voiceclone.js").read_text(encoding="utf-8")
+    assert "MAX_WINDOW = 180" in trimmer
+    assert "Keep 8 s to 3 min" in trimmer
+    assert "TRIM_ABOVE_SECONDS = 15" in clone
+
+
 def test_trimmer_js_holds_the_controls_and_limits():
     text = (VOICE / "trimmer.js").read_text(encoding="utf-8")
     for name in ("openTrimmer", "clampWindow", "windowLabel", "zoomRange"):
@@ -194,7 +204,7 @@ def test_trimmer_pure_helpers_clamp_and_read_out():
         "  edge: m.clampWindow(-3, 500, 20),\n"
         "  ok: m.windowLabel(0, 12),\n"
         "  short: m.windowLabel(0, 4),\n"
-        "  long: m.windowLabel(0, 30),\n"
+        "  long: m.windowLabel(0, 200),\n"
         "  zoom: m.zoomRange({start: 0, end: 60}, 0.5, 30, 60),\n"
         "};\n"
         "process.stdout.write(JSON.stringify(out));\n"
@@ -205,9 +215,9 @@ def test_trimmer_pure_helpers_clamp_and_read_out():
     )
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
-    assert out["big"]["seconds"] == 15
+    assert out["big"]["seconds"] == 60
     assert out["small"]["seconds"] == 8
-    assert out["edge"] == {"start": 0, "end": 15, "seconds": 15}
+    assert out["edge"] == {"start": 0, "end": 20, "seconds": 20}
     assert out["ok"] == {"tone": "ok", "text": "12.0 s · ok"}
     assert out["short"]["tone"] == "bad" and "too short" in out["short"]["text"]
     assert out["long"]["tone"] == "bad" and "too long" in out["long"]["text"]

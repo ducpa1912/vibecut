@@ -2,8 +2,8 @@
 
 A long recording should not be sent to the cloud whole. The page uploads it
 once, this module decodes it, measures it and proposes the cleanest 10-15 s
-window. The trimmer then asks for a range, and the clone is cut from the same
-file, so nothing is uploaded twice.
+window. The trimmer may extend that selection to three minutes, and the clone
+is cut from the same file, so nothing is uploaded twice.
 
 Sessions live under ``DATA/cache/reference/<ref_id>`` and expire after two
 hours. They hold the creator's own audio, so deleting a session removes the

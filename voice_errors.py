@@ -77,9 +77,10 @@ CLEANUP_WARNING = (
 )
 
 
-def trim_too_long(seconds: float, limit: float = 15.0) -> str:
+def trim_too_long(seconds: float, limit: float = 180.0) -> str:
+    limit_text = "3 min" if float(limit) >= 180 else f"{limit:.0f} s"
     return (
-        f"That selection is {seconds:.1f} s. Trim it to {limit:.0f} s or less, then clone it."
+        f"That selection is {seconds:.1f} s. Trim it to {limit_text} or less, then clone it."
     )
 
 

@@ -34,7 +34,6 @@ const LINE_KEY = "vibecut.voice.testline.v1";
 const RATE_KEY = "vibecut.voice.rate.v1";
 const SCRIPT_KEY = "vibecut.voice.script.v1";
 const VOICE_KEY = "vibecut.voice.pick.v1";
-const MAX_SCRIPT = 4000;
 const VIEWS = ["library", "create", "compare", "recent", "settings"];
 const NAV = [
   ["library", "Library", "01"],
@@ -1184,16 +1183,16 @@ function buildVoiceover() {
   emotion.addEventListener("change", () => { scriptEmotion = emotion.value; });
 
   const area = el("textarea", {
-    class: "vg-script", rows: 8, maxLength: MAX_SCRIPT, value: script,
-    placeholder: "Paste or type the script. Each sentence is spoken as its own line, so one bad line can be fixed without redoing the rest.",
+    class: "vg-script", rows: 8, value: script,
+    placeholder: "Paste or type the script. There is no length limit: each sentence is spoken as its own line, so one bad line can be fixed without redoing the rest.",
     "aria-label": "Voiceover script",
   });
   area.disabled = scriptState === "running" || scriptState === "stopping";
-  const count = el("span", { class: "vg-script-count", text: `${script.length}/${MAX_SCRIPT}` });
+  const count = el("span", { class: "vg-script-count", text: `${script.length} characters` });
   area.addEventListener("input", () => {
     script = area.value;
     store(SCRIPT_KEY, script);
-    count.textContent = `${script.length}/${MAX_SCRIPT}`;
+    count.textContent = `${script.length} characters`;
     paintVoiceover();
   });
   const keepNote = el("div", { class: "vg-vo-keep" });
@@ -1216,7 +1215,7 @@ function buildVoiceover() {
       script = keep.text;
       area.value = script;
       store(SCRIPT_KEY, script);
-      count.textContent = `${script.length}/${MAX_SCRIPT}`;
+      count.textContent = `${script.length} characters`;
     }
     setNotice(`Using the settings kept on “${item.name || "this voice"}”.`, "ok");
     paintVoiceover();

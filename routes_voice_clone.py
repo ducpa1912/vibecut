@@ -794,8 +794,9 @@ def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
 def upload_reference(request: Request, file: UploadFile = File(...)) -> dict:
     """Keep a reference upload and propose a clean 10-15 s window.
 
-    The clip over 15 s never goes to the cloud whole: the trimmer uses this
-    session and the clone is cut from it.
+    A clip up to three minutes can be cloned whole; a longer one opens the
+    trimmer, which still allows up to three minutes. The clone is cut from
+    this session, so the file is uploaded once.
     """
     _guard(request)
     suffix = Path(file.filename or "voice.wav").suffix.lower() or ".wav"
@@ -852,7 +853,7 @@ def _clone_reference(
             404,
             voice_errors.fix(
                 "That reference is not on this Mac any more",
-                "Upload the recording again, choose 8-15 s, then clone it",
+                "Upload the recording again, choose 8 s to 3 min, then clone it",
             ),
         )
     try:
@@ -1606,7 +1607,6 @@ def list_takes() -> dict:
         "cleanup": voice_takes.cleanup_plan(),
         "limits": {
             "cleanup_days": voice_takes.CLEANUP_DAYS,
-            "max_script_chars": voice_takes.MAX_SCRIPT_CHARS,
             "self_check_threshold": voice_takes.SELF_CHECK_THRESHOLD,
         },
     }

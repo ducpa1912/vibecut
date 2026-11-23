@@ -33,7 +33,6 @@ import voice_tags
 
 CLEANUP_DAYS = 30
 MAX_LISTED = 200
-MAX_SCRIPT_CHARS = 4000
 MAX_CHUNK_CHARS = 220
 SELF_CHECK_THRESHOLD = 0.60
 STORE_VERSION = 1
@@ -597,10 +596,8 @@ def create_voiceover(
     script = str(text or "").strip()
     if not script:
         raise TakeError("Type the script first, then make the voiceover.")
-    if len(script) > MAX_SCRIPT_CHARS:
-        raise TakeError(
-            f"That script is {len(script)} characters. Keep it under {MAX_SCRIPT_CHARS} characters, or split it into two voiceovers."
-        )
+    # There is no script cap: the script is split into sentence-sized
+    # requests, so a long script never becomes one huge request.
     chunks_text = split_script(script)
     if not chunks_text:
         raise TakeError("Type the script first, then make the voiceover.")
