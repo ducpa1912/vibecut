@@ -289,6 +289,20 @@ def test_a_failed_line_saves_the_finished_lines(monkeypatch, tmp_path):
     assert (tmp_path / "takes" / "audio" / f"{take['id']}.wav").is_file()
 
 
+def test_a_first_line_failure_says_no_lines_were_saved(monkeypatch):
+    def fake_sample(*args, **kwargs):
+        raise RuntimeError("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr(tts, "voice_sample", fake_sample)
+    with pytest.raises(voice_takes.TakeError) as caught:
+        voice_takes.create_voiceover(
+            text="One clear line.", engine="say", voice="Samantha", selfcheck=False,
+        )
+    message = str(caught.value)
+    assert "No lines were saved" in message
+    assert "lines before it" not in message
+
+
 def test_voiceover_script_has_no_character_cap():
     source = (ROOT / "voice_takes.py").read_text(encoding="utf-8")
     page = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")

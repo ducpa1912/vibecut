@@ -701,11 +701,11 @@ def create_voiceover(
             except TakeError:
                 raise
             except Exception as exc:  # noqa: BLE001 - keep the finished lines
-                message = (
-                    f"Could not speak line {index} of {len(chunks_text)}: {exc}. "
-                    "The lines before it are saved; make the voiceover again to continue."
-                )
                 if parts:
+                    message = (
+                        f"Could not speak line {index} of {len(chunks_text)}: {exc}. "
+                        "The lines before it are saved; make the voiceover again to continue."
+                    )
                     try:
                         if progress is not None:
                             progress(1.0, f"Saved {len(parts)} lines; line {index} failed")
@@ -717,7 +717,11 @@ def create_voiceover(
                         raise
                     except Exception:
                         pass
-                raise TakeError(message) from exc
+                    raise TakeError(message) from exc
+                raise TakeError(
+                    f"Could not speak line {index} of {len(chunks_text)}: {exc}. "
+                    "No lines were saved. Wait for the rate limit to clear, then try again."
+                ) from exc
             _stop(cancel_event)
             seconds = _probe(path)
             parts.append(path)

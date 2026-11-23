@@ -392,8 +392,8 @@
     {
       "path": "tts.py",
       "baseline": "a3da0b1",
-      "sha256": "c207f9a91f7ce2041e3713e7a77bd25b8ddfa34b6f5e16b28463b5feb6dd7394",
-      "lane_version": "1.0.3",
+      "sha256": "a1356e989d846455cfedc60ef733a9f1ee57dd37651c8b243b4a682b8adc3d4f",
+      "lane_version": "1.0.4",
       "changes": [
         {
           "date": "2026-11-23",
@@ -409,6 +409,11 @@
           "date": "2026-11-23",
           "from_commit": "8b60d48",
           "note": "Retry OpenRouter 429/5xx with backoff"
+        },
+        {
+          "date": "2026-11-23",
+          "from_commit": "4683c8e",
+          "note": "Explain and stop retrying daily OpenRouter quotas"
         }
       ]
     },

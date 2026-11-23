@@ -883,14 +883,42 @@ def _openrouter_voice(
                 content = response.read()
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in OPENROUTER_RETRY_CODES and attempt < OPENROUTER_RETRIES - 1:
+            detail = audio._openrouter_http_error_text(exc, key)
+            lowered = detail.lower()
+            daily = any(word in lowered for word in ("per-day", "daily", "day limit", "quota"))
+            retry_after = None
+            headers = getattr(exc, "headers", None)
+            if headers is not None:
+                try:
+                    retry_after = float(str(headers.get("Retry-After") or "").strip())
+                except (TypeError, ValueError):
+                    retry_after = None
+            if (
+                exc.code in OPENROUTER_RETRY_CODES
+                and not daily
+                and attempt < OPENROUTER_RETRIES - 1
+            ):
                 time.sleep(_openrouter_retry_delay(exc, attempt))
                 continue
             if exc.code in {401, 403}:
-                audio._openrouter_auth_failure(
-                    int(exc.code), audio._openrouter_http_error_text(exc, key),
-                )
-            raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
+                audio._openrouter_auth_failure(int(exc.code), detail)
+            if exc.code == 429:
+                parts = ["OpenRouter is rate-limiting this voice (HTTP 429)."]
+                if detail:
+                    parts.append(detail)
+                if daily:
+                    parts.append(
+                        "The free-model daily allowance is used up; wait for the reset before retrying."
+                    )
+                elif retry_after:
+                    parts.append(f"Wait about {int(retry_after)} s, then retry.")
+                else:
+                    parts.append("Wait a minute, then retry. Finished lines are cached.")
+                raise audio.AudioError(" ".join(parts)) from exc
+            message = f"OpenRouter {engine} voice failed: {exc}."
+            if detail:
+                message += f" {detail}"
+            raise audio.AudioError(message) from exc
         except Exception as exc:  # noqa: BLE001
             raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
     if content is None:

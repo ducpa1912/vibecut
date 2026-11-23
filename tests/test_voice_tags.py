@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import audio
@@ -113,6 +114,33 @@ def test_a_429_is_retried_before_the_line_fails(monkeypatch, tmp_path):
     tts._openrouter_voice("Hello", "bram", output, engine="heygen", model="heygen/heygen-voice-1-turbo")
     assert len(calls) == 3
     assert output.is_file()
+
+
+def test_a_daily_quota_is_not_retried_and_is_explained(monkeypatch, tmp_path):
+    import io
+    import urllib.error
+
+    monkeypatch.setattr(tts.audio, "openrouter_key", lambda: "key")
+    monkeypatch.setattr(tts.audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(tts.voice_clone, "is_clone", lambda voice: False)
+    monkeypatch.setattr(tts.time, "sleep", lambda seconds: None)
+    calls = []
+
+    def fake_urlopen(request, timeout=0):
+        calls.append(request)
+        body = io.BytesIO(b'{"error":{"message":"Rate limit exceeded: free-models-per-day"}}')
+        raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, body)
+
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(tts.audio.AudioError) as caught:
+        tts._openrouter_voice(
+            "Hello", "bram", tmp_path / "line.wav", engine="heygen",
+            model="heygen/heygen-voice-1-turbo",
+        )
+    message = str(caught.value)
+    assert "daily allowance" in message
+    assert "free-models-per-day" in message
+    assert len(calls) == 1
 
 
 def test_cache_key_changes_with_emotion():
