@@ -134,6 +134,7 @@ let loadedVoice = null;
 let script = String(stored(SCRIPT_KEY, ""));
 let scriptVoice = String(stored(VOICE_KEY, ""));
 let scriptRate = rate;
+let scriptEmotion = "auto";
 let scriptState = "idle";
 let scriptStage = "";
 let scriptSeconds = 0;
@@ -325,6 +326,7 @@ function loadTakeSettings(take) {
     store(RATE_KEY, rate);
     if (playerRefs?.rateSelect) playerRefs.rateSelect.value = String(rate);
   }
+  scriptEmotion = saved.emotion || "auto";
   if (saved.engine && saved.voice) {
     loadedVoice = {
       engine: saved.engine,
@@ -541,6 +543,7 @@ function buildPlayer() {
   const detail = el("span", { text: "Pick a voice to preview" });
   const line = el("input", {
     type: "text", maxLength: 300, value: testLine, "aria-label": "Test line",
+    title: "Tags such as [sad], [laughs] or [pause] are translated for the voice you play.",
   });
   line.addEventListener("input", () => {
     setTestLine(line.value, "player");
@@ -1101,6 +1104,7 @@ async function makeVoiceover() {
         text: script,
         rate: scriptRate,
         language,
+        emotion: scriptEmotion === "auto" ? "" : scriptEmotion,
         label: script.trim().slice(0, 48),
         task,
         selfcheck: true,
@@ -1127,6 +1131,16 @@ async function makeVoiceover() {
   }
 }
 
+function emotionRows(engine) {
+  const info = catalog?.voice_tags?.[engine];
+  const rows = Array.isArray(info?.options) ? info.options : [];
+  return rows.length ? rows : [{ id: "auto", label: "Automatic" }];
+}
+
+function emotionHint(engine) {
+  return catalog?.voice_tags?.[engine]?.hint || "This voice does not read emotion tags.";
+}
+
 function buildVoiceover() {
   const node = el("div", { class: "vg-vo" });
   const choices = voiceChoices();
@@ -1145,6 +1159,7 @@ function buildVoiceover() {
   voice.addEventListener("change", () => {
     scriptVoice = voice.value;
     store(VOICE_KEY, scriptVoice);
+    paintEmotion();
     paintKeep(true);
   });
   const speed = el("select", { class: "vg-rate-select", "aria-label": "Voiceover rate" }, RATES.map(
@@ -1152,6 +1167,21 @@ function buildVoiceover() {
   ));
   speed.disabled = scriptState === "running" || scriptState === "stopping";
   speed.addEventListener("change", () => { scriptRate = Number(speed.value) || 1; });
+
+  const emotion = el("select", { class: "vg-emotion-select", "aria-label": "Emotion" });
+  const emotionNote = el("p", { class: "vg-vo-taghint" });
+  function paintEmotion() {
+    const job = parseVoiceChoice(scriptVoice);
+    const rows = emotionRows(job?.engine);
+    if (!rows.some((row) => row.id === scriptEmotion)) scriptEmotion = "auto";
+    emotion.replaceChildren(...rows.map((row) => el("option", {
+      value: row.id, text: row.label, selected: row.id === scriptEmotion,
+    })));
+    const running = scriptState === "running" || scriptState === "stopping";
+    emotion.disabled = running || rows.length <= 1;
+    emotionNote.textContent = emotionHint(job?.engine);
+  }
+  emotion.addEventListener("change", () => { scriptEmotion = emotion.value; });
 
   const area = el("textarea", {
     class: "vg-script", rows: 8, maxLength: MAX_SCRIPT, value: script,
@@ -1245,15 +1275,18 @@ function buildVoiceover() {
     el("div", { class: "vg-vo-controls" }, [
       el("label", { class: "vg-field" }, [el("span", { text: "Voice" }), voice]),
       el("label", { class: "vg-field" }, [el("span", { text: "Rate" }), speed]),
+      el("label", { class: "vg-field" }, [el("span", { text: "Emotion" }), emotion]),
       make,
       stop,
     ]),
+    emotionNote,
     keepNote,
     status,
     error,
     result,
   );
   window.setTimeout(() => {
+    paintEmotion();
     paintVoiceover();
     paintKeep(false);
   }, 0);

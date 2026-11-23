@@ -32,6 +32,7 @@ from typing import Any, Callable, Mapping, Sequence
 import packs
 import editions
 import voice_clone
+import voice_tags
 
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
@@ -126,6 +127,7 @@ def line_cache_key(
     text: str,
     rate: float = 1.0,
     language: str = "",
+    emotion: str = "",
 ) -> str:
     """SHA-256 cache key for one sentence.
 
@@ -141,6 +143,8 @@ def line_cache_key(
         "language": str(language or "").strip().lower(),
         "schema": 1,
     }
+    if emotion:
+        payload["emotion"] = str(emotion).strip().lower()
     blob = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
@@ -156,8 +160,9 @@ def line_cache_path(
     rate: float = 1.0,
     language: str = "",
     suffix: str = ".flac",
+    emotion: str = "",
 ) -> Path:
-    key = line_cache_key(engine, model, voice, text, rate, language)
+    key = line_cache_key(engine, model, voice, text, rate, language, emotion)
     return (cache_dir / f"{key}{suffix}").resolve()
 
 
@@ -749,22 +754,28 @@ def _elevenlabs_voice(
 
 def _minimax_voice(
     text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "", timeout: float = 300,
+    model: str = "", timeout: float = 300, emotion: str = "",
 ) -> None:
     key = audio.minimax_key()
     if not key:
         raise audio.AudioError("Set MINIMAX_API_KEY to use MiniMax voice.")
     model = model or str((audio.settings_store.load_settings().get("minimax") or {}).get("tts_model") or "speech-2.8-turbo")
+    requested_emotion = str(emotion or "").strip().lower()
+    if requested_emotion not in voice_tags.MINIMAX_EMOTIONS:
+        requested_emotion = ""
+    voice_setting = {
+        "voice_id": voice or "female-shaonv",
+        "speed": max(0.5, min(2.0, float(rate or 1.0))),
+        "vol": 1.0,
+        "pitch": 0,
+    }
+    if requested_emotion:
+        voice_setting["emotion"] = requested_emotion
     payload = json.dumps({
         "model": model,
         "text": text,
         "stream": False,
-        "voice_setting": {
-            "voice_id": voice or "female-shaonv",
-            "speed": max(0.5, min(2.0, float(rate or 1.0))),
-            "vol": 1.0,
-            "pitch": 0,
-        },
+        "voice_setting": voice_setting,
         "audio_setting": {
             "sample_rate": 44100,
             "bitrate": 128000,
@@ -889,6 +900,7 @@ def synthesize_line(
     model: str = "",
     timeout: float = 300,
     language: str = "",
+    emotion: str = "",
 ) -> Path:
     engine = str(engine or "").strip().lower()
     if is_removed_engine(engine):
@@ -909,7 +921,10 @@ def synthesize_line(
     elif engine == "elevenlabs":
         audio._elevenlabs_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "minimax":
-        audio._minimax_voice(text, voice, target, rate, model=model, timeout=timeout)
+        minimax_extra = {"model": model, "timeout": timeout}
+        if emotion:
+            minimax_extra["emotion"] = emotion
+        audio._minimax_voice(text, voice, target, rate, **minimax_extra)
     elif engine in OPENROUTER_ENGINES:
         audio._openrouter_voice(
             text, voice, target, rate, engine, model=model, timeout=timeout,
@@ -981,9 +996,11 @@ def voice_sample(
     *,
     model: str = "",
     language: str = "",
+    emotion: str = "",
 ) -> Path:
     target = line_cache_path(
         cache_dir, engine, model, voice, text, rate, language, suffix=".wav",
+        emotion=emotion,
     )
     if target.is_file() and target.stat().st_size > 512:
         return target
@@ -992,6 +1009,8 @@ def voice_sample(
         extra["model"] = model
     if language:
         extra["language"] = language
+    if emotion:
+        extra["emotion"] = emotion
     return audio.synthesize_line(
         engine, voice, text, target, rate=rate, **extra,
     )

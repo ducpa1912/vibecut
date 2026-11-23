@@ -9,6 +9,7 @@
     "voice_persona.py",
     "voice_readiness.py",
     "voice_reference.py",
+    "voice_tags.py",
     "voice_takes.py"
   ],
   "copies": [
@@ -391,9 +392,20 @@
     {
       "path": "tts.py",
       "baseline": "a3da0b1",
-      "sha256": "935b31e33553eac0167d2bbc9e45bd81be6a4693be58fa60754d711513a2217d",
-      "lane_version": "1.0.0",
-      "changes": []
+      "sha256": "7d87b37e9e74a7b58671dc1182085cc345ebd5bc269dacdc02feabba76e4309e",
+      "lane_version": "1.0.2",
+      "changes": [
+        {
+          "date": "2026-11-23",
+          "from_commit": "28caf1e",
+          "note": "Emotion and engine-aware voice tags for HeyGen and MiniMax"
+        },
+        {
+          "date": "2026-11-23",
+          "from_commit": "28caf1e",
+          "note": "Emotion and engine-aware voice tags for HeyGen and MiniMax"
+        }
+      ]
     },
     {
       "path": "url_ingest/__init__.py",

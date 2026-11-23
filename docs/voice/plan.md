@@ -13,6 +13,7 @@ The Voice Room is the `voice-room` lane: port `8797`, data in this worktree's `d
 | Setup | One Setup for this app: OpenRouter, MiniMax and ElevenLabs keys; voices; local Whisper; library backup and restore; `.vcutvoice` import | `setup.js` |
 | Language | Detected locally with Whisper right after a recording or an upload; a manual pick wins | `POST /api/voices/detect-language` |
 | App | **VibeCut Voice**: its own edition, left rail and mobile tabs, one persistent player, at `/voices` and `/` | `next.js`, `next.css`, `voices-next.html`, `edition voice` |
+| Emotion | One script, prepared for the selected engine: HeyGen audio tags or MiniMax emotion/interjections | `voice_tags.py`, `next.js` |
 | Founder tools | Finder launchers (`Voice Room Server.command`, `Record Voice Room.command`), Playwright recording, a guarded live check | `scripts/` |
 
 ## Fixed in the 2026-11-01 review

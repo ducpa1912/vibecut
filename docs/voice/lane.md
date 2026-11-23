@@ -80,6 +80,9 @@ The app uses a left rail on desktop, bottom tabs on mobile, and five views:
 Library, Create, Compare, Recent and Settings. It loads `static/voice/next.css`
 and `static/voice/next.js`.
 
+Emotional scripts are prepared for the selected engine: HeyGen square-bracket
+tags or MiniMax emotions/interjections. See `docs/voice/voice-tags.md`.
+
 ## Media library
 
 `data/media` holds the founder's real files, including the ones the tests read

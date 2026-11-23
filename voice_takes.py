@@ -29,6 +29,7 @@ from typing import Callable, Sequence
 
 import settings_store
 import voice_audio
+import voice_tags
 
 CLEANUP_DAYS = 30
 MAX_LISTED = 200
@@ -159,6 +160,7 @@ def _clean_row(row: dict) -> dict | None:
             "voice": str(settings.get("voice") or ""),
             "rate": float(settings.get("rate") or 1.0),
             "language": str(settings.get("language") or ""),
+            "emotion": str(settings.get("emotion") or ""),
         },
     }
 
@@ -218,6 +220,7 @@ def record_preview(
     label: str = "",
     clone: str = "",
     cached: bool = False,
+    emotion: str = "",
 ) -> dict | None:
     """Keep one preview. Storage trouble never fails the preview itself."""
     source = Path(source)
@@ -248,6 +251,7 @@ def record_preview(
             "voice": str(voice or ""),
             "rate": round(float(rate or 1.0), 3),
             "language": str(language or ""),
+            "emotion": str(emotion or ""),
         },
     }
     try:
@@ -492,7 +496,7 @@ def _words(text: str) -> list[str]:
 
 def compare_line(script: str, heard: str) -> float:
     """How closely a re-transcription matches the line it should have said."""
-    wanted = _words(script)
+    wanted = _words(voice_tags.compare_text(script))
     got = _words(heard)
     if not wanted or not got:
         return 0.0
@@ -578,6 +582,7 @@ def create_voiceover(
     language: str = "",
     label: str = "",
     clone: str = "",
+    emotion: str = "",
     selfcheck: bool = True,
     cancel_event: threading.Event | None = None,
     progress: Callable[[float, str], None] | None = None,
@@ -616,14 +621,19 @@ def create_voiceover(
             _stop(cancel_event)
             if progress is not None:
                 progress((index - 1) / len(chunks_text), f"Speaking line {index} of {len(chunks_text)}")
+            prepared = voice_tags.prepare(line, engine, emotion)
+            spoken = prepared["text"]
+            spoken_emotion = prepared["emotion"]
             before = tts.line_cache_path(
-                cache, engine, "", voice, line, rate, language, suffix=".wav",
+                cache, engine, "", voice, spoken, rate, language, suffix=".wav",
+                emotion=spoken_emotion,
             )
             cached = before.is_file() and before.stat().st_size > 512
             try:
                 path = Path(_speak(
-                    lambda line=line: tts.voice_sample(
+                    lambda line=spoken, em=spoken_emotion: tts.voice_sample(
                         engine, voice, line, cache, rate=rate, language=language,
+                        emotion=em,
                     ),
                     cancel_event,
                 ))
@@ -640,6 +650,9 @@ def create_voiceover(
             chunks.append({
                 "index": index,
                 "text": line,
+                "spoken": prepared["text"],
+                "emotion": prepared["emotion"],
+                "tag_notes": list(prepared["notes"]),
                 "start": round(played, 3),
                 "end": round(played + seconds, 3),
                 "seconds": round(seconds, 3),
@@ -684,6 +697,7 @@ def create_voiceover(
                 "voice": str(voice or ""),
                 "rate": round(float(rate or 1.0), 3),
                 "language": str(language or ""),
+                "emotion": str(emotion or ""),
             },
         }
         stored = _remember(record)

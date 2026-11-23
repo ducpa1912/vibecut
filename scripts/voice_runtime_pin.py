@@ -37,6 +37,7 @@ OWNED_MODULES = frozenset({
     "voice_readiness.py",
     "voice_reference.py",
     "voice_takes.py",
+    "voice_tags.py",
 })
 #: Shared files that are not Python imports but that the lane cannot run without.
 PINNED_FILES = (

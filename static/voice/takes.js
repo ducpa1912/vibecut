@@ -89,6 +89,8 @@ export function takeMeta(take) {
   if (take?.cached) parts.push("from cache");
   const rate = Number(take?.settings?.rate);
   if (Number.isFinite(rate) && Math.abs(rate - 1) > 0.001) parts.push(`${rate.toFixed(2)}×`);
+  const emotion = String(take?.settings?.emotion || "");
+  if (emotion && emotion !== "auto") parts.push(`emotion ${emotion}`);
   if (take?.seconds) parts.push(seconds(take.seconds));
   return parts.filter(Boolean).join(" · ");
 }
@@ -340,6 +342,9 @@ export function createTakesPanel({
     }
     actions.push(del);
 
+    const tagNotes = [...new Set(
+      (take.chunks || []).flatMap((chunk) => chunk.tag_notes || []),
+    )].slice(0, 2);
     return el("article", { class: `vg-take${active ? " is-active" : ""}`, "data-take": take.id }, [
       el("div", { class: "vg-take-head" }, [
         star,
@@ -350,6 +355,7 @@ export function createTakesPanel({
         el("span", { class: "vg-take-kind", text: take.kind === "voiceover" ? "Voiceover" : "Preview" }),
       ]),
       flagsFor(take),
+      tagNotes.length ? el("span", { class: "vg-take-checknote", text: tagNotes.join(" ") }) : null,
       driftFor(take),
       el("div", { class: "vg-take-actions" }, actions),
     ]);

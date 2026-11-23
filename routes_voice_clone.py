@@ -37,6 +37,7 @@ import voice_errors
 import voice_persona
 import voice_readiness
 import voice_reference
+import voice_tags
 import voice_takes
 
 
@@ -159,6 +160,7 @@ class RenameBody(BaseModel):
 class SampleBody(BaseModel):
     text: str = ""
     rate: float = 1.0
+    emotion: str = ""
 
     model_config = {"extra": "forbid"}
 
@@ -168,6 +170,7 @@ class AnyVoiceSampleBody(BaseModel):
     voice: str = ""
     text: str = ""
     rate: float = 1.0
+    emotion: str = ""
 
     model_config = {"extra": "forbid"}
 
@@ -222,6 +225,7 @@ class VoiceoverBody(BaseModel):
     language: str = ""
     label: str = ""
     clone: str = ""
+    emotion: str = ""
     selfcheck: bool = True
     #: Client task id; `DELETE /api/voices/tasks/{task}` stops this voiceover.
     task: str = ""
@@ -1382,27 +1386,37 @@ def _audio_message(exc: Exception) -> str:
     return voice_errors.fix(message, "Check the voice and the key in Setup, then try again.")
 
 
-def _cached_line(engine: str, voice: str, text: str, rate: float, language: str, cache) -> bool:
+def _cached_line(
+    engine: str, voice: str, text: str, rate: float, language: str, cache,
+    emotion: str = "",
+) -> bool:
     """True when this exact line is already on this Mac, so nothing is sent."""
     import tts
 
     try:
         target = tts.line_cache_path(
             cache, engine, "", voice, text, rate, language, suffix=".wav",
+            emotion=emotion,
         )
         return target.is_file() and target.stat().st_size > 512
     except (OSError, ValueError):
         return False
 
 
-def _keep_preview(path, *, engine: str, voice: str, text: str, rate: float,
-                  language: str, label: str, clone: str, cache) -> None:
+def _keep_preview(
+    path, *, engine: str, voice: str, text: str, rate: float, language: str,
+    label: str, clone: str, cache, emotion: str = "", spoken: str = "",
+    cache_emotion: str = "",
+) -> None:
     """History is a convenience: a failed copy never fails the preview."""
     try:
         voice_takes.record_preview(
             path, engine=engine, voice=voice, text=text, rate=rate,
-            language=language, label=label, clone=clone,
-            cached=_cached_line(engine, voice, text, rate, language, cache),
+            language=language, label=label, clone=clone, emotion=emotion,
+            cached=_cached_line(
+                engine, voice, spoken or text, rate, language, cache,
+                emotion=cache_emotion,
+            ),
         )
     except Exception:  # noqa: BLE001 - never break playback for history
         pass
@@ -1478,16 +1492,19 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
     language = str(locked.get("language") or record.get("language") or "")
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
+    prepared = voice_tags.prepare(text, "heygen", body.emotion)
     try:
         path = audio.voice_sample(
-            "heygen", voice_id, text, cache, rate=rate, language=language,
+            "heygen", voice_id, prepared["text"], cache, rate=rate,
+            language=language, emotion=prepared["emotion"],
         )
     except audio.AudioError as exc:
         raise HTTPException(400, _audio_message(exc)) from exc
     _keep_preview(
         path, engine="heygen", voice=voice_id, text=text, rate=rate,
         language=language, label=str(record.get("name") or "Cloned voice"),
-        clone=voice_id, cache=cache,
+        clone=voice_id, cache=cache, emotion=body.emotion,
+        spoken=prepared["text"], cache_emotion=prepared["emotion"],
     )
     return FileResponse(path, media_type="audio/wav", filename="cloned-voice.wav")
 
@@ -1536,6 +1553,7 @@ def voice_catalog() -> dict:
         "engines": engines,
         "clones": voice_clone.list_clones(),
         "clone_available": voice_clone.available(),
+        "voice_tags": voice_tags.catalog()["engines"],
     }
 
 
@@ -1555,15 +1573,18 @@ def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse
     language = str((record or {}).get("language") or "")
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
+    prepared = voice_tags.prepare(text, engine, body.emotion)
     try:
         path = audio.voice_sample(
-            engine, body.voice, text, cache, rate=rate, language=language,
+            engine, body.voice, prepared["text"], cache, rate=rate,
+            language=language, emotion=prepared["emotion"],
         )
     except audio.AudioError as exc:
         raise HTTPException(400, _audio_message(exc)) from exc
     _keep_preview(
         path, engine=engine, voice=body.voice, text=text, rate=rate,
-        language=language,
+        language=language, emotion=body.emotion, spoken=prepared["text"],
+        cache_emotion=prepared["emotion"],
         label=str((record or {}).get("name") or body.voice or "Stock voice"),
         clone=body.voice if record else "", cache=cache,
     )
@@ -1693,6 +1714,7 @@ def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
             language=language,
             label=body.label or " ".join(str(body.text or "").split())[:48],
             clone=clone,
+            emotion=body.emotion,
             selfcheck=bool(body.selfcheck),
             cancel_event=cancel_event,
             progress=lambda fraction, stage: voice_takes.set_progress(

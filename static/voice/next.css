@@ -950,3 +950,14 @@ body.vg-root {
 
 .vg-take-check { display: grid; gap: 3px; }
 .vg-take-checknote { color: var(--hint); font-size: 10px; line-height: 1.4; }
+
+.vg-emotion-select {
+  min-width: 140px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.vg-vo-taghint { margin: -4px 0 0; color: var(--dim); font-size: 10.5px; line-height: 1.45; }
