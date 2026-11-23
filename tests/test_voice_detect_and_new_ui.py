@@ -82,3 +82,13 @@ def test_voices_serves_the_standalone_app(api):
 def test_the_app_hides_with_the_voice_room_switch(api, monkeypatch):
     monkeypatch.setenv("VIBECUT_FEATURES", "")
     assert api.get("/voices").status_code == 404
+
+
+def test_new_shell_declares_the_rename_state():
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "static" / "voice" / "next.js").read_text()
+    # cloneRow uses both; without the declarations, a library with one clone
+    # throws ReferenceError before the page paints.
+    assert "let renamingId" in text
+    assert "let renameValue" in text
