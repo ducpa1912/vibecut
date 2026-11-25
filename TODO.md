@@ -16,6 +16,21 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
+## REQ-20261125-03 — App Store readiness plan (2026-11-25)
+
+Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes: Codex release/licensing, OpenCode product, PO review/merge.
+
+- [ ] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`
+- [ ] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex)
+- [ ] REQ-20261125-03 · R2 GPL out: kokoro_onnx, espeak-ng, pcaudio; bundle scan test (Codex, needs D9)
+- [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
+- [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
+- [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
+- [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (OpenCode, needs D3)
+- [ ] REQ-20261125-03 · P-C loop 28 layout; P-D split + reorder (needs D8); P-E layer remove + box select (OpenCode)
+- [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
+- [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
+
 ## REQ-20261121-01 — Choose Core ML or PyTorch per render (2026-11-21)
 
 - [ ] REQ-20261121-01 · founder speed test on a quiet Mac: same edit, once per engine (script in `docs/teams/render-engine-choice/review.md`)

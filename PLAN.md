@@ -4,6 +4,8 @@ Current plan only. Closed loops 1–4 and the ink-check loop are archived in `ol
 not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open checkboxes,
 `MEMORY.md` the decisions in force, `AGENTS.md` the working contract.
 
+> **2026-11-25:** App Store readiness and the three-agent plan (REQ-20261125-03): `docs/plans/2026-11-25-app-store-readiness.md`. It supersedes the "paused" App Store row once the founder lifts Gate A.
+
 ## Where the build stands (2026-11-16; fill and render figures measured 2026-11-12)
 
 | Fact | Value |
