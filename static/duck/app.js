@@ -4207,6 +4207,29 @@ async function openSettings() {
   } catch (_) { /* keep current */ }
   const storage = state.settings?.storage || {};
   const translationEngine = state.settings?.translation?.engine || 'auto';
+  /* Settings → Workflows. The ladders are fixed in this build: no local text or
+     music provider ships, and the silent-video script has none. An empty ladder
+     is never drawn as a list; each workflow gets one plain line instead. */
+  function workflowRows(engine, settings, voiceCount) {
+    const rewriteReady = Boolean(settings?.model_slots?.rewrite?.ready || engine?.rewrite?.available);
+    const rewriteNote = rewriteReady
+      ? 'On-device writer.'
+      : engine?.rewrite?.reason === 'appleIntelligenceNotEnabled'
+        ? 'Apple Intelligence is off.'
+        : 'Off in this build.';
+    return [
+      { id: 'rewrite', label: 'Script rewrite', note: rewriteNote },
+      { id: 'script', label: 'Silent-video script', note: 'Not set up in this build.' },
+      { id: 'tts', label: 'Voice-over', note: voiceCount > 0 ? 'On-device voices.' : 'No voices found.' },
+      { id: 'music', label: 'Music', note: 'No music generator ships.' },
+      { id: 'stt', label: 'Transcription', note: engine?.speech?.default ? 'On-device speech.' : 'On-device speech is unavailable.' },
+    ];
+  }
+  function workflowsMarkup() {
+    const rows = workflowRows(state.engine, state.settings, state.voices.length);
+    return rows.map((row) => `<div class="kv" data-workflow="${esc(row.id)}"><span>${esc(row.label)}</span><strong class="small">${esc(row.note)}</strong></div>`).join('')
+      + '<p class="small muted">Workflows run on this Mac. There is nothing to choose in this build.</p>';
+  }
   openModal(`<dialog class="modal" aria-label="Settings">
     <div class="modal-head"><h2>Settings</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body">
@@ -4240,6 +4263,10 @@ async function openSettings() {
           </div>
           <button class="btn small" type="button" data-action="save-translation">Save translation</button>
           <p class="small muted">DuckSuite ships no translation model and downloads none. Point it at a CTranslate2 folder you obtained yourself: it needs model.bin, config.json and sentencepiece.bpe.model. The folder is copied into DuckSuite.</p>
+        </section>
+        <section style="grid-column:1/-1">
+          <h3>Workflows</h3>
+          ${workflowsMarkup()}
         </section>
         <section class="settings-models">
           <h3>Models</h3>

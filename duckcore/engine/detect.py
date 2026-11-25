@@ -1858,15 +1858,21 @@ def _report_warnings(
         elif state == "engine_empty":
             detail = str(audio.get("speech_error") or "").strip()
             language = str(audio.get("speech_language") or "auto")
-            suffix = f" Engine: {detail[:180]}" if detail else ""
+            if detail:
+                # The engine's words are diagnostics, not something a buyer can
+                # act on. Keep them in the log and out of the report sentence.
+                LOGGER.warning(
+                    "Speech engine returned no transcript (language: %s): %s",
+                    language,
+                    detail[:500],
+                )
             warnings.append({
                 "code": "speech_engine_empty",
                 "severity": "warning",
                 "message": (
-                    f"Speech was on, but no engine returned a transcript "
-                    f"(language: {language}).{suffix} Retry speech on this "
-                    "video; re-importing is not needed. If it still fails, "
-                    "check Setup → Engines."
+                    f"Speech was not read (language: {language}). Retry speech "
+                    "on this video; re-importing is not needed. If it still "
+                    "fails, check Setup → Engines."
                 ),
                 "tracklet_ids": [],
             })
