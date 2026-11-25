@@ -102,6 +102,39 @@ TODO line only when it creates new work. It still gets a commit and a report lin
 One request, one MEMORY entry, one TODO block, one commit. A second request during the same turn
 gets its own id and its own block, even when the code lands together.
 
+## Three agents (since 2026-11-25, REQ-20261125-03)
+
+Three agents work on DuckSuite. Each has its own folder, branch, port and data root.
+
+| Agent | Folder | Branch | Port | Data root |
+|---|---|---|---|---|
+| Opus (PO) | `drop_eval/ducksuite` | `ducksuite` (integration) | 8805 | the founder's (read only) |
+| OpenCode | `drop_eval/ducksuite-opencode` | `oc/<loop>` | 8821 | `build/scratch-root` in its folder |
+| Codex | `drop_eval/ducksuite-codex` | `cx/<loop>` | 8831 | `build/scratch-root` in its folder |
+
+1. **One loop per agent.** Each agent works one loop at a time, from `docs/teams/<loop>/BRIEF.md`.
+   The brief names the files the agent owns, and no other agent touches them while the loop is
+   open. `static/duck/app.js` has one owner at a time.
+2. **Own branch only.** Commit on your own branch and nowhere else. Never push or merge. Never
+   switch branches in another agent's folder, and never stash, reset or edit there. Only the PO
+   merges (`--no-ff`, after the full suite passes) into `ducksuite` and pushes.
+3. **Leave the PO's files alone.** Only the PO writes `MEMORY.md`, `TODO.md`, `PLAN.md`,
+   `PRODUCT.md` and the report HTML. An agent writes its loop's `docs/teams/<loop>/review.md`,
+   and the PO folds it into the working documents. This overrides any agent file that says
+   "update MEMORY/TODO".
+4. **Shared venv, your own build.** Each folder has its own `build/`. The build venv
+   `build/duckcore-venv` is a symlink to the PO's copy. Never `pip install` into it: a loop that
+   needs a new package asks for one in its review, and the PO adds it.
+5. **Never open the app.** Only the PO builds and opens `DuckSuite-Xcode.app` for the founder.
+   The app has one bundle id and one container, so an agent that opens it would use the founder's
+   data. Agents test against the core on their own port with their own scratch data root:
+   `python3 duck_app.py --data-root "$PWD/build/scratch-root" --port <port>`.
+6. **No founder media.** Never read founder projects or frames, and never generate test media.
+   If a loop needs footage, say so in its review.
+7. **Done.** A loop is done when `python3 -m pytest -q tests` and `node --check
+   static/duck/app.js` pass, the work is committed on your branch, and `review.md` says what
+   changed, what was measured, and what could not be verified.
+
 ## Team
 
 Five roles. Claude Code loads them from `.claude/agents/` and can spawn them by name; other harnesses

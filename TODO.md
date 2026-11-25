@@ -20,7 +20,7 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes: Codex release/licensing, OpenCode product, PO review/merge.
 
-- [ ] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`
+- [x] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`. Done 2026-11-25; briefs `docs/teams/{r1-ffmpeg-back,r2-gpl-out,pa-settings-leftovers}/BRIEF.md`
 - [ ] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex)
 - [ ] REQ-20261125-03 · R2 GPL out: kokoro_onnx, espeak-ng, pcaudio; bundle scan test (Codex, needs D9)
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
