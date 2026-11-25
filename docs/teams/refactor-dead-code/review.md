@@ -36,6 +36,16 @@ sub-leader. Fill output unchanged: `VERSION` stays 17, no cold render.
 | 4 | Full suite | 373 passed |
 | 5 | Rebuilt app opens and its core listens on 127.0.0.1 only | see commit notes below |
 
+## Revision 2026-11-25: the "Write .srt file" switch
+
+Founder asked what the removed story and caption code did; checking it showed the **Write .srt
+file** switch (Script inspector and Render) drew `data-action="caption-srt"` with no handler, before
+and after this pass, so renders never wrote a `.srt`. Its helper `setCaptionSrt` was the orphan this
+pass removed. Fixed: the change handler now sends `{ srt }` through `patchCaptions`, as the burn
+switch does. New guards: `tests/test_ui_actions.py` (all 123 drawn actions have a handler) and the
+captions route test now switches `srt` on and off. 375 tests pass. Not clicked in a real window (needs
+a project).
+
 ## Not done (bigger refactors, need a brief)
 
 - `static/duck/app.js` is still one 5,800-line file; `pipeline.py` 3,000 lines. Splitting them is a

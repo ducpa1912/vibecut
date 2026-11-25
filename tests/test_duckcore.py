@@ -273,6 +273,19 @@ def test_captions_generate_edit_and_srt(tmp_path: Path) -> None:
         assert styled.json()["captions"]["style"]["id"] == "bold"
         assert styled.json()["captions"]["style"]["position"] == "top"
 
+        # The "Write .srt file" switch: on and off, saved on the track the render reads.
+        from duckcore import captions as caption_module
+
+        for wanted in (True, False):
+            switched = client.patch(
+                f"/api/projects/{project['id']}/edits/{edit['id']}/captions",
+                headers=headers,
+                json={"srt": wanted},
+            )
+            assert switched.status_code == 200
+            assert caption_module.wants_srt(switched.json()["captions"]) is wanted
+            assert switched.json()["captions"]["cues"][0]["text"] == "Edited line."
+
         srt = client.get(
             f"/api/projects/{project['id']}/edits/{edit['id']}/captions.srt",
             headers=headers,

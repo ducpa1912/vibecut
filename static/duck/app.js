@@ -5425,6 +5425,11 @@ document.addEventListener('change', async (event) => {
   if (action === 'script-target') { state.scriptTarget = target.value; render(); await translateScript(); }
   else if (action === 'script-mode') { state.scriptMode = target.value; render(); }
   else if (action === 'caption-burn') await patchCaptions({ burn: target.checked });
+  else if (action === 'caption-srt') {
+    // The switch had no handler; a render only writes the .srt when this is on.
+    await patchCaptions({ srt: target.checked });
+    toast(target.checked ? 'A .srt file will be written next to the render.' : 'No .srt file will be written.');
+  }
   else if (action === 'caption-style') await patchCaptions({ style: target.value });
   else if (action === 'caption-position') await patchCaptions({ position: target.value });
   else if (action === 'cue-save') await saveCue(target.dataset.cue || '', target.value);
