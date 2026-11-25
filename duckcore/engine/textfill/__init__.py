@@ -168,7 +168,13 @@ def engine_choice(data_root: Path | str) -> tuple[Path | None, str]:
 
 
 def seed_models(data_root: Path | str) -> None:
-    """Copy the bundle's fill models into app data once, so packs share one folder."""
+    """Point app data at the bundle's fill models, so packs share one folder.
+
+    REQ-20261125-02: a link, not a copy. The models ship inside the app; a
+    second copy in app data cost 0.3 GB. An identical older copy is replaced by
+    a link after its cache stamp is pinned, so no fill cache goes cold. Where a
+    link cannot be made the old copy stays (or one is made).
+    """
     override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
     if not override:
         return
@@ -182,37 +188,159 @@ def seed_models(data_root: Path | str) -> None:
         if not origin.is_file():
             continue
         destination = target / name
-        if destination.is_file() and destination.stat().st_size == origin.stat().st_size:
+        if destination.is_symlink():
+            if os.path.realpath(destination) != os.path.realpath(origin):
+                _link_model(origin, destination)  # the app moved: follow it
             continue
-        try:
-            os.link(origin, destination)  # same volume: no copy, no extra bytes
-        except OSError:
-            shutil.copy2(origin, destination)
+        if destination.is_file() and destination.stat().st_size == origin.stat().st_size:
+            if _file_digest(destination) != _file_digest(origin):
+                continue  # same size, other content: leave it alone
+            # Keep the stamp every cached fill was made under, then drop the copy.
+            _pin_stamp(destination, _model_stamp(destination), _file_digest(destination))
+        _link_model(origin, destination)
     for name in COREML_MODEL_FILES.values():
         _seed_package(source / name, target / name)
 
 
+def _link_model(origin: Path, destination: Path) -> None:
+    """Make ``destination`` a link to ``origin``; a hard link or a copy if not."""
+    part = destination.with_name(f".{destination.name}.part")
+    _remove_tree(part)
+    try:
+        os.symlink(origin, part)
+    except OSError:
+        try:
+            if origin.is_dir():
+                raise OSError("directories need a symlink")
+            os.link(origin, part)  # same volume: no copy, no extra bytes
+        except OSError:
+            if origin.is_dir():
+                shutil.copytree(origin, part)
+            else:
+                shutil.copy2(origin, part)
+    if destination.is_dir() and not destination.is_symlink():
+        old = destination.with_name(f".{destination.name}.old")
+        _remove_tree(old)
+        os.replace(destination, old)
+        os.replace(part, destination)
+        _remove_tree(old)
+    else:
+        os.replace(part, destination)
+
+
+def _remove_tree(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _seed_package(origin: Path, destination: Path) -> None:
-    """Copy a Core ML package folder once, linking its files where the volume allows."""
-    from .coreml_fill import package_digest
+    """Link a Core ML package folder to the bundle, pinning an identical copy's stamp."""
+    from .coreml_fill import package_digest, package_stamp
 
     if not (origin / "Manifest.json").is_file():
         return
+    if destination.is_symlink():
+        if os.path.realpath(destination) != os.path.realpath(origin):
+            _link_model(origin, destination)
+        return
     if (destination / "Manifest.json").is_file():
-        if package_digest(destination) == package_digest(origin):
-            return
-    part = destination.with_name(f".{destination.name}.part")
-    shutil.rmtree(part, ignore_errors=True)
+        digest = package_digest(destination)
+        if digest == package_digest(origin):
+            _pin_stamp(destination, package_stamp(destination), digest)
+    _link_model(origin, destination)
 
-    def link(src, dst):
-        try:
-            os.link(src, dst)
-        except OSError:
-            shutil.copy2(src, dst)
 
-    shutil.copytree(origin, part, copy_function=link)
-    shutil.rmtree(destination, ignore_errors=True)
-    os.replace(part, destination)
+# Cache stamps of linked models, pinned to their content (REQ-20261125-02). A
+# model's stamp was its size and file time; the bundle's file time moves with
+# every build or update, so a linked model keeps the stamp it was first seen
+# with for as long as its content is the same.
+PINS_FILE = "stamps.json"
+_PINS_LOCK = threading.Lock()
+
+
+def _pins_path(model: Path) -> Path:
+    return Path(model).parent / PINS_FILE
+
+
+def _read_pins(model: Path) -> dict:
+    try:
+        data = json.loads(_pins_path(model).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"stamps": {}, "seen": {}}
+    data.setdefault("stamps", {})
+    data.setdefault("seen", {})
+    return data
+
+
+def _write_pins(model: Path, data: dict) -> None:
+    path = _pins_path(model)
+    part = path.with_name(f".{path.name}.{os.getpid()}.part")
+    try:
+        part.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+        os.replace(part, path)
+    except OSError:
+        part.unlink(missing_ok=True)
+
+
+def _file_digest(path: Path) -> str:
+    """The content hash of a model file, remembered by path, size and time."""
+    real = Path(os.path.realpath(path))
+    stat = real.stat()
+    seen = f"{real}:{stat.st_size}:{stat.st_mtime_ns}"
+    with _PINS_LOCK:
+        known = _read_pins(path)["seen"].get(seen)
+    if known:
+        return known
+    digest = hashlib.sha256()
+    with real.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    value = digest.hexdigest()
+    with _PINS_LOCK:
+        data = _read_pins(path)
+        data["seen"] = {k: v for k, v in data["seen"].items() if not k.startswith(f"{real}:")}
+        data["seen"][seen] = value
+        _write_pins(path, data)
+    return value
+
+
+def _package_digest(path: Path, metadata: str) -> str:
+    """A Core ML package's content hash, remembered by its file metadata."""
+    from .coreml_fill import package_digest
+
+    seen = f"{os.path.realpath(path)}:{metadata}"
+    with _PINS_LOCK:
+        known = _read_pins(path)["seen"].get(seen)
+    if known:
+        return known
+    value = package_digest(path)
+    with _PINS_LOCK:
+        data = _read_pins(path)
+        data["seen"] = {k: v for k, v in data["seen"].items() if not k.startswith(f"{os.path.realpath(path)}:")}
+        data["seen"][seen] = value
+        _write_pins(path, data)
+    return value
+
+
+def _pin_stamp(model: Path, stamp: str, digest: str) -> None:
+    with _PINS_LOCK:
+        data = _read_pins(model)
+        data["stamps"][Path(model).name] = {"digest": digest, "stamp": stamp}
+        _write_pins(model, data)
+
+
+def _pinned(model: Path, live: str, digest: str) -> str:
+    """The stamp pinned to this content, or pin the live one now."""
+    with _PINS_LOCK:
+        data = _read_pins(model)
+        row = data["stamps"].get(Path(model).name)
+        if isinstance(row, dict) and row.get("digest") == digest and row.get("stamp"):
+            return str(row["stamp"])
+        data["stamps"][Path(model).name] = {"digest": digest, "stamp": live}
+        _write_pins(model, data)
+    return live
 
 
 # The engine the user picked on the Render screen (REQ-20261121-01). One core
@@ -634,7 +762,10 @@ def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
 
 def _model_stamp(path: Path) -> str:
     stat = path.stat()
-    return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
+    live = f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
+    if Path(path).is_symlink():
+        return _pinned(Path(path), live, _file_digest(Path(path)))
+    return live
 
 
 def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVICE,
@@ -648,7 +779,10 @@ def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVIC
         if path.suffix == ".mlpackage":
             from .coreml_fill import package_stamp
 
-            return f"{package_stamp(path)}:coreml-gpu"
+            stamp = package_stamp(path)
+            if Path(path).is_symlink():
+                stamp = _pinned(Path(path), stamp, _package_digest(Path(path), stamp))
+            return f"{stamp}:coreml-gpu"
         return f"{_model_stamp(path)}:gpu"
     if method in CLASSIC_METHODS:
         try:
@@ -939,6 +1073,8 @@ def lama_plan(layers, *, start: float, fps: float, frames: int):
 
 # Model results kept on disk, so a stopped render or a small edit needs fewer runs.
 SAVED_DIR = "saved"
+# Level 3 measured on 40 real fills: 0.30 of raw, 16 ms to write, 13 ms to read.
+SAVED_PNG_LEVEL = 3
 SAVED_MAX_AGE = 14 * 24 * 3600
 # Across every video in this data folder.
 SAVED_MAX_BYTES = 2 * 1024 ** 3
@@ -972,22 +1108,35 @@ class _SavedFills:
         self.hits = 0
         self.used: set[Path] = set()
         self.writable = True
+        # A hit on an older `.npy` fill: touched like any hit, never rewritten.
+        self.legacy: Path | None = None
 
     def _path(self, area: np.ndarray, mask: np.ndarray) -> Path:
         digest = hashlib.sha1(f"{VERSION}|{self.stamp}|{area.shape}".encode())
         digest.update(area.tobytes())
         digest.update(mask.tobytes())
-        return self.directory / f"{digest.hexdigest()}.npy"
+        # Lossless PNG (REQ-20261125-02): the same pixels in about 30 % of the
+        # raw `.npy` bytes. Older `.npy` fills of the same name are still read.
+        return self.directory / f"{digest.hexdigest()}.png"
 
     def _read(self, path: Path, shape: tuple) -> np.ndarray | None:
-        try:
-            found = np.load(path, allow_pickle=False)
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError):
-            _remove_quietly(path)
-            return None
-        return found if found.shape == shape else None
+        for candidate in (path, path.with_suffix(".npy")):
+            try:
+                if candidate.suffix == ".png":
+                    with Image.open(candidate) as image:
+                        found = np.asarray(image)
+                else:
+                    found = np.load(candidate, allow_pickle=False)
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError):
+                _remove_quietly(candidate)
+                continue
+            if found.shape == shape:
+                if candidate is not path:
+                    self.legacy = candidate
+                return found
+        return None
 
     def _write(self, path: Path, result: np.ndarray) -> None:
         if not self.writable or _free_disk(self.directory) < SAVED_MIN_FREE:
@@ -995,8 +1144,11 @@ class _SavedFills:
         temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
+            pixels = np.ascontiguousarray(result)
+            if pixels.dtype != np.uint8 or not (pixels.ndim == 2 or (pixels.ndim == 3 and pixels.shape[2] in (3, 4))):
+                return  # never a LaMa result; not worth a format of its own
             with temporary.open("wb") as handle:
-                np.save(handle, result, allow_pickle=False)
+                Image.fromarray(pixels).save(handle, format="PNG", compress_level=SAVED_PNG_LEVEL)
             os.replace(temporary, path)
         except OSError as exc:
             # A full disk costs the resume, never the render.
@@ -1008,13 +1160,14 @@ class _SavedFills:
         if not getattr(self.filler, 'cache_valid', True):
             return self.filler.fill(area, mask)
         path = self._path(area, mask)
+        self.legacy = None
         found = self._read(path, area.shape)
         if found is not None:
             if path not in self.used:
                 self.hits += 1
                 # Recently used fills are the last to be tidied away.
                 try:
-                    os.utime(path)
+                    os.utime(self.legacy or path)
                 except OSError:
                     pass
             self.used.add(path)
@@ -1053,9 +1206,88 @@ def saved_fill_disk(path: Path | str) -> dict:
 
 def _saved_folders(data_root: Path | str, *others: Path) -> list[Path]:
     """Every saved-fill folder in this data folder, so the cap covers them all."""
-    jobs = Path(data_root) / "jobs"
-    found = [*jobs.glob(f"*/fill/{SAVED_DIR}"), *jobs.glob(f"*/fill/sample/{SAVED_DIR}"), *others]
+    # DuckSuite keeps projects in `projects/`; `jobs/` is the VibeCut layout this
+    # came from. Before REQ-20261125-02 only `jobs/` was searched, so the age and
+    # size limits only ever saw the project being rendered.
+    found = []
+    for parent in ("projects", "jobs"):
+        jobs = Path(data_root) / parent
+        found += [*jobs.glob(f"*/fill/{SAVED_DIR}"), *jobs.glob(f"*/fill/sample/{SAVED_DIR}")]
+    found += list(others)
     return list(dict.fromkeys(found))
+
+
+def convert_saved_fills(data_root: Path | str, *, stop: Callable[[], bool] | None = None) -> dict:
+    """Rewrite older raw `.npy` saved fills as lossless PNG, same name and time.
+
+    REQ-20261125-02: the pixels are compared after the write; any file that does
+    not round-trip exactly stays `.npy`. A running fill is never raced: the
+    loop stops while one runs (``busy``) and resumes next start.
+    """
+    before = after = done = kept = 0
+    for folder in _saved_folders(data_root):
+        try:
+            entries = [Path(e.path) for e in os.scandir(folder) if e.name.endswith(".npy")]
+        except OSError:
+            continue
+        for path in entries:
+            if (stop is not None and stop()) or busy():
+                return {"converted": done, "kept": kept, "bytes_before": before, "bytes_after": after, "stopped": True}
+            target = path.with_suffix(".png")
+            part = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+            try:
+                stat = path.stat()
+                pixels = np.load(path, allow_pickle=False)
+                if pixels.dtype != np.uint8 or not (pixels.ndim == 2 or (pixels.ndim == 3 and pixels.shape[2] in (3, 4))):
+                    kept += 1
+                    continue
+                with part.open("wb") as handle:
+                    Image.fromarray(np.ascontiguousarray(pixels)).save(
+                        handle, format="PNG", compress_level=SAVED_PNG_LEVEL)
+                with Image.open(part) as image:
+                    same = np.array_equal(np.asarray(image), pixels)
+                if not same:
+                    part.unlink(missing_ok=True)
+                    kept += 1
+                    continue
+                os.utime(part, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # keep its age for pruning
+                os.replace(part, target)
+                path.unlink(missing_ok=True)
+                before += stat.st_size
+                after += target.stat().st_size
+                done += 1
+            except (OSError, ValueError) as exc:
+                part.unlink(missing_ok=True)
+                kept += 1
+                LOGGER.warning("saved fill kept as .npy: %s", exc)
+    return {"converted": done, "kept": kept, "bytes_before": before, "bytes_after": after, "stopped": False}
+
+
+def _prune_clips(data_root: Path | str, *others: Path, now: float | None = None) -> int:
+    """Drop fill clips no render has used for SAVED_MAX_AGE (REQ-20261125-02).
+
+    A clip is touched each time a render reuses it, so only clips of edits left
+    alone for two weeks go; such an edit's next render fills again once.
+    """
+    now = time.time() if now is None else now
+    jobs = Path(data_root) / "projects"
+    folders = {*(jobs.glob("*/fill")), *(Path(o) for o in others)}
+    dropped = 0
+    for folder in folders:
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.name.endswith(".mp4") or entry.name.startswith("."):
+                continue
+            try:
+                if now - entry.stat().st_mtime > SAVED_MAX_AGE:
+                    Path(entry.path).unlink(missing_ok=True)
+                    dropped += 1
+            except OSError:
+                continue
+    return dropped
 
 
 def _prune_saved(directories, *, now: float | None = None) -> None:
@@ -1777,6 +2009,10 @@ def prepare_span(
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
     if output.is_file() and output.stat().st_size > 1024:
+        try:
+            os.utime(output)  # a reused clip is a used clip: the last to be tidied
+        except OSError:
+            pass
         return {
             "path": str(output), "key": key, "cached": True, "method": method,
             "engine": "custom" if custom_path is not None else method,
@@ -1852,6 +2088,7 @@ def prepare_span(
         if method in KEYED_METHODS:
             counted = _CountedFiller(filler, method)
             _prune_saved(_saved_folders(data_root, cache_dir / SAVED_DIR))
+            _prune_clips(data_root, cache_dir)
             saved = filler = _SavedFills(
                 counted, cache_dir / SAVED_DIR, stamp,
             )

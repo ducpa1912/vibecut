@@ -301,6 +301,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     from duckcore.engine import textfill as _textfill
 
     _textfill.seed_models(data_root)
+    # REQ-20261125-02: older raw saved fills become lossless PNG, in the background.
+    threading.Thread(
+        target=_textfill.convert_saved_fills, args=(Path(data_root),),
+        daemon=True, name="saved-fill-png",
+    ).start()
     if not token:
         raise ValueError("DuckSuite core requires a launch token.")
 
