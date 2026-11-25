@@ -35,14 +35,3 @@ def load_settings() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def save_settings(value: dict[str, Any]) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def get_secret(name: str) -> str:
-    env_name = _SECRET_ENV.get(str(name or "").strip().lower())
-    return os.environ.get(env_name, "") if env_name else ""

@@ -136,10 +136,6 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
 }
 
 
-def default_workflows() -> dict[str, dict[str, Any]]:
-    return copy.deepcopy(DEFAULT_WORKFLOWS)
-
-
 def _int(value: Any, default: int, low: int, high: int) -> int:
     try:
         number = int(value)

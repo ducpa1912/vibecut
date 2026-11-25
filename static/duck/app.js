@@ -1019,15 +1019,6 @@ function stageRow(key, title, sub, pct, done) {
   </div>`;
 }
 
-function checkStage(key, title, sub, pct, done) {
-  const p = Math.round(Math.max(0, Math.min(1, pct)) * 100);
-  return `<div class="check-stage" data-stage="${key}">
-    <span class="stage-icon ${done ? 'done' : p > 0 ? 'doing' : ''}">${done ? icon('check', 13) : p > 0 ? icon('loader', 13) : icon('circle', 13)}</span>
-    <div><div class="stage-title">${esc(title)}</div><div class="stage-sub">${esc(sub)}</div><div class="progress"><span style="width:${p}%"></span></div></div>
-    <span class="stage-pct">${done ? 'Done' : p > 0 ? `${p}%` : 'Pending'}</span>
-  </div>`;
-}
-
 function patchCheckProgress() {
   const check = state.check || {};
   const scenes = checkScenes();
@@ -1652,23 +1643,6 @@ function storyProofRows(stories) {
   }).join('');
 }
 
-function segmentsForScene(scene) {
-  if (!scene) return [];
-  const start = Number(scene.start || 0);
-  const end = Number(scene.end || 0);
-  return getSegments().filter((segment) => Number(segment.start || 0) < end && Number(segment.end || 0) > start);
-}
-
-function transcriptRow(segment, index) {
-  const active = Number(segment.start || 0) <= state.previewTime && Number(segment.end || 0) > state.previewTime;
-  return `<button class="transcript-row${active ? ' is-active' : ''}" type="button" data-action="seek" data-time="${Number(segment.start || 0).toFixed(3)}">
-    <span class="tc">${fmtTC(segment.start, state.check?.result?.meta?.fps || 24)}</span>
-    <span class="transcript-speaker">Speaker</span>
-    <span class="transcript-text">${esc(segment.text || '')}</span>
-    <span class="row-more">${icon('more', 14)}</span>
-  </button>`;
-}
-
 function layerListMarkup(active, layers, emptyText = 'No text detected in this scene.') {
   const visible = state.showAllLayers ? layers : layers.slice(0, 6);
   return `<div class="layer-head"><span>${visible.length} of ${layers.length} layer${layers.length === 1 ? '' : 's'}</span>${layers.length > 6 ? `<button class="layer-head-more" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer' : 'Show all'}</button>` : ''}</div>
@@ -1932,25 +1906,6 @@ function focusDock() {
     </div>
     <div class="focus-dock-body">${mode === 'cut' ? cutFocus() : mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
   </section>`;
-}
-
-function focusShell() {
-  const titles = { cut: 'Cut Focus', script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
-  const mode = state.focusMode;
-  return `<section class="focus-shell">
-    <div class="focus-head">
-      <div><span class="focus-kicker">Edit Focus</span><h1>${titles[mode] || 'Focus'}</h1></div>
-      <button class="btn" type="button" data-action="close-focus">${icon('arrowLeft', 14)} Back to Edit</button>
-    </div>
-    <div class="focus-body">${mode === 'cut' ? cutFocus() : mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
-  </section>`;
-}
-
-function waveformBars(seed = 0) {
-  return `<span class="waveform">${Array.from({ length: 44 }, (_unused, index) => {
-    const height = 22 + Math.abs(Math.sin((index + seed) * 1.7)) * 70;
-    return `<i style="height:${height.toFixed(0)}%"></i>`;
-  }).join('')}</span>`;
 }
 
 function audioFocus() {
@@ -2728,34 +2683,6 @@ function scriptFocus() {
   </div>`;
 }
 
-function scriptDrawer(focus = false) {
-  const cues = scriptCues();
-  if (!cues.length) {
-    return `<section class="script-drawer"><div class="script-head"><strong>Script</strong><span class="spacer"></span><button class="btn small" type="button" data-action="${focus ? 'close-focus' : 'close-script'}">Close</button></div><p class="small muted" style="padding:18px">Generate captions first. The script uses the caption track.</p></section>`;
-  }
-  return `<section class="script-drawer">
-    <div class="script-head">
-      <strong>Script</strong><span class="small muted">${cues.length} lines · ${esc(scriptLanguage())}</span>
-      <span class="spacer"></span>
-      <select data-action="script-target" aria-label="Target language">
-        ${['en','vi','zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({en:'English',vi:'Vietnamese',zh:'Chinese'})[code]}</option>`).join('')}
-      </select>
-      <button class="btn small" type="button" data-action="script-translate" ${state.scriptBusy ? 'disabled' : ''}>Translate</button>
-      <select data-action="script-mode" aria-label="Rewrite style">
-        ${[['clean','Clean up'],['short','Shorten'],['punchy','Punchier']].map(([value,label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
-      </select>
-      <button class="btn small" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>Rewrite</button>
-      <button class="btn small" type="button" data-action="script-reset">Reset</button>
-      <button class="btn small" type="button" data-action="${focus ? 'close-focus' : 'close-script'}">Close</button>
-    </div>
-    ${state.scriptBusy ? '<div class="script-progress">Working on the script…</div>' : ''}
-    <div class="script-columns">
-      <div class="script-column"><h3>Original</h3><div class="script-rows">${cues.map((cue) => `<div class="script-row"><span class="tc">${fmtTC(cue.start, 24)}</span><p>${esc(cue.source_text || cue.text || '')}</p></div>`).join('')}</div></div>
-      <div class="script-column"><h3>Script</h3><div class="script-rows">${cues.map((cue) => `<label class="script-row editing"><span class="tc">${fmtTC(cue.start, 24)}</span><input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}"></label>`).join('')}</div></div>
-    </div>
-  </section>`;
-}
-
 function inspectorScript() {
   const track = state.edit?.captions;
   return `<div class="field"><label>Target language</label><select data-action="script-target">
@@ -2806,22 +2733,6 @@ function inspectorSFX() {
     <button class="btn small" type="button" data-action="sfx-add" data-kind="sound">${icon('volume', 13)} Sound</button>
   </div>
   <div class="sfx-list">${sfxRowsMarkup()}</div>`;
-}
-
-function inspectorCaptions(scene) {
-  const track = state.edit?.captions;
-  const cues = (track?.cues || []).filter((cue) => Number(cue.end || 0) > Number(scene.start || 0) && Number(cue.start || 0) < Number(scene.end || 0));
-  return `<div class="toggle-row"><span>Burn into render</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${track?.burn ? 'checked' : ''}><i></i></label></div>
-  <div class="field"><label>Style</label><select data-action="caption-style">
-    ${['clean', 'bold', 'minimal'].map((value) => `<option value="${value}" ${track?.style === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
-  </select></div>
-  <div class="field"><label>Position</label><select data-action="caption-position">
-    ${['bottom', 'middle', 'top'].map((value) => `<option value="${value}" ${track?.position === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
-  </select></div>
-  ${track ? `<div class="layer-list${state.showAllCues ? ' is-expanded' : ''}">${(state.showAllCues ? cues : cues.slice(0, 6)).map((cue) => `<label class="field"><span class="small muted mono">${fmtTC(cue.start, 24)}</span><input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}"></label>`).join('')}</div>` : `<p class="small muted">No captions yet. Generate from the transcript.</p>`}
-  ${cues.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-cues">${state.showAllCues ? 'Show fewer cues' : `Show all ${cues.length} cues`}</button>` : ''}
-  <button class="btn primary wide" type="button" data-action="caption-generate">${icon('captions', 14)} ${track ? 'Regenerate captions' : 'Generate captions'}</button>
-  ${track ? `<button class="btn wide" type="button" data-action="download-captions">${icon('download', 14)} Download SRT</button>` : ''}`;
 }
 
 function inspectorVoice() {
@@ -4089,13 +4000,6 @@ function openVideoModal(url, title = 'Preview') {
   setupPlayerBars();
 }
 
-function openAudioModal(url, title = 'Voice-over') {
-  openModal(`<dialog class="modal" aria-label="${esc(title)}">
-    <div class="modal-head"><h2>${esc(title)}</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
-    <div class="modal-body"><audio controls autoplay style="width:100%" src="${url}"></audio></div>
-  </dialog>`);
-}
-
 async function openFfmpegSource() {
   try {
     const offer = await api('/api/licenses/ffmpeg-source');
@@ -4150,21 +4054,6 @@ function openSearch() {
   input.addEventListener('input', draw);
   draw();
   input.focus();
-}
-
-async function setCaptionSrt(value) {
-  if (!state.project || !state.edit) return;
-  try {
-    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/captions`, {
-      method: 'PATCH',
-      body: JSON.stringify({ srt: Boolean(value) }),
-    });
-    state.edit.captions = data.captions || state.edit.captions;
-    render();
-    toast(value ? 'A .srt file will be written next to the render.' : 'No .srt file will be written.');
-  } catch (error) {
-    toast(`Caption file: ${error.message}`, 'bad');
-  }
 }
 
 async function setFillDevice(device) {

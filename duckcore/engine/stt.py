@@ -302,14 +302,6 @@ def _child_run(
                     pass
 
 
-def _hf_hub_dir() -> Path:
-    if os.environ.get("HF_HUB_CACHE"):
-        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
-    home = os.environ.get("HF_HOME")
-    base = Path(home).expanduser() if home else Path.home() / ".cache" / "huggingface"
-    return base / "hub"
-
-
 def _local_whisper_pack(job_dir: Path, model: str | None) -> str | None:
     """Use the DuckSuite data pack before any Hugging Face cache."""
     if normalize_whisper_model(model) != DEFAULT_WHISPER_MODEL:
@@ -330,16 +322,6 @@ def _local_whisper_pack(job_dir: Path, model: str | None) -> str | None:
         if found is not None:
             return str(found)
     return None
-
-
-def whisper_model_cached(model: str) -> bool:
-    """True when the Whisper weights are already on this machine."""
-    value = str(model or "").strip()
-    if not value:
-        return False
-    if Path(value).expanduser().is_dir():
-        return True
-    return (_hf_hub_dir() / ("models--" + value.replace("/", "--"))).is_dir()
 
 
 def _whisper_env(model: str) -> dict[str, str]:
@@ -1686,26 +1668,6 @@ def guess_language(*texts: str) -> str:
     return ""
 
 
-def speech_language_for(options: Mapping[str, Any], meta: Mapping[str, Any]) -> str:
-    """The language to transcribe a job in.
-
-    An explicit per-job choice wins. Otherwise a title written in another
-    script beats the Setup default, and "auto" lets the engine detect it.
-    """
-    explicit = str(options.get("speech_language_explicit") or "").strip()
-    if explicit:
-        return explicit
-    configured = str(
-        options.get("speech_language")
-        or (settings_store.load_settings().get("stt") or {}).get("language")
-        or "en"
-    )
-    guessed = guess_language(
-        str(meta.get("name") or ""), str(meta.get("title") or ""),
-    )
-    return guessed or configured
-
-
 def no_speech_transcript(language: str = "") -> dict:
     """What a read returns when the loudness gate finds no speech.
 
@@ -1895,75 +1857,6 @@ def transcribe_source(
             "provider": provider,
             "path": str(path),
         }
-    return None
-
-
-def transcribe_routes(
-    wav_path: Path,
-    job_dir: Path,
-    duration: float,
-    language: str,
-    routes: Iterable[Mapping[str, Any]] | None,
-    timeout: float,
-    progress: Callable[..., None],
-    *,
-    job_id: str = "",
-    request_id: str = "",
-    engines: Mapping[str, Callable[..., Any]] | None = None,
-    logger: Callable[..., None] | None = None,
-    legacy: bool = False,
-) -> dict | None:
-    """Route dispatcher kept for the pre-v2 caller and its compatibility tests.
-
-    Only Apple and Whisper run.  A route that names anything else, including a
-    saved cloud engine, returns no transcript; ``legacy`` is accepted so the old
-    caller keeps its signature, but there is no longer a cloud or ``auto``
-    ladder behind it.
-    """
-    chosen = dict(engines or {})
-
-    def callable_for(name: str, fallback: Callable[..., Any]) -> Callable[..., Any]:
-        return chosen.get(name) or fallback
-
-    def emit(fraction: float, message: str) -> None:
-        try:
-            progress("reading", fraction, message)
-        except TypeError:
-            progress(fraction, message)
-
-    for route_index, route in enumerate(routes or []):
-        provider = str(route.get("provider") or "").lower()
-        model = str(route.get("model") or "")
-        started = time.time()
-        label = ENGINE_LABELS.get(provider, "local speech")
-        emit(0.70 + min(0.16, route_index * 0.02), f"Transcribing speech · {label}")
-        result = None
-        try:
-            if provider in {"auto", "whisper", "local"}:
-                result = callable_for("whisper", transcribe)(
-                    wav_path, job_dir, duration,
-                    lambda fraction, message: emit(
-                        0.70 + 0.16 * fraction, message,
-                    ),
-                    model=model or None, timeout=timeout,
-                )
-            elif provider == "apple":
-                result = callable_for("apple", transcribe_apple)(
-                    wav_path, job_dir, language, timeout=timeout,
-                )
-        except Exception as exc:  # noqa: BLE001
-            _log_route(
-                logger, route_index, provider, model, started, False,
-                str(exc)[:300], job_id=job_id, request_id=request_id,
-            )
-            continue
-        _log_route(
-            logger, route_index, provider, model, started, bool(result),
-            "" if result else "No transcript returned.",
-            job_id=job_id, request_id=request_id,
-        )
-        if result:
-            return result
     return None
 
 

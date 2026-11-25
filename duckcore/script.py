@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from duckcore import edits
 
@@ -80,20 +78,6 @@ def _basic_rewrite(text: str, mode: str) -> str:
         value = re.sub(r"\bdo not\b", "don't", value, flags=re.IGNORECASE)
     value = value.strip()
     return (value[:1].upper() + value[1:]) if value else value
-
-
-def _array_from_text(text: str) -> list[str] | None:
-    start = str(text or "").find("[")
-    end = str(text or "").rfind("]")
-    if start < 0 or end <= start:
-        return None
-    try:
-        value = json.loads(str(text)[start:end + 1])
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        return None
-    return value
 
 
 def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -> dict:

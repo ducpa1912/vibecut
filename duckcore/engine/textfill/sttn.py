@@ -30,24 +30,6 @@ CHUNK = 50
 OVERLAP = 10
 
 
-def chunk_spans(frames: int, chunk: int = CHUNK, overlap: int = OVERLAP) -> list[tuple[int, int]]:
-    """Frame ranges [start, end) of at most ``chunk`` frames, overlapping."""
-    if frames <= 0:
-        return []
-    if frames <= chunk:
-        return [(0, frames)]
-    step = chunk - overlap
-    spans = []
-    start = 0
-    while True:
-        end = min(frames, start + chunk)
-        spans.append((max(0, end - chunk), end))
-        if end >= frames:
-            break
-        start += step
-    return spans
-
-
 def reference_ids(neighbor_ids: list[int], length: int, every: int = REFERENCE_LENGTH) -> list[int]:
     return [index for index in range(0, length, every) if index not in neighbor_ids]
 

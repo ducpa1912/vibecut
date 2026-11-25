@@ -98,13 +98,6 @@ def job_attested(job: dict | None) -> bool:
     return True
 
 
-def may_import(attested: bool | None) -> bool:
-    """Whether an import may start. Only an explicit tick passes the lock."""
-    if not lock_enabled():
-        return True
-    return normalize_attestation(attested)
-
-
 def clean_block_reason(
     kind: str,
     *,

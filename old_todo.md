@@ -465,3 +465,9 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261121-01 · Render screen: GPU engine choice saved in settings; `DUCK_FILL_GPU_ENGINE` still overrides
 - [x] REQ-20261121-01 · Core ML routes per box (fits → Core ML, else PyTorch) instead of dropping the whole span to PyTorch
 - [x] REQ-20261121-01 · after a render, say how many boxes each engine filled and the fill time
+
+## REQ-20261125-01 — done 2026-11-25
+
+- [x] REQ-20261125-01 · remove unused imports, unreachable Python functions and the unused `usage_store` module
+- [x] REQ-20261125-01 · remove unreachable functions from `static/duck/app.js`
+- [x] REQ-20261125-01 · tests green, rebuild, open the app for the founder test

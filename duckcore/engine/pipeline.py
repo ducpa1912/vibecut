@@ -18,10 +18,8 @@ from PIL import Image, ImageFilter
 
 from . import settings_store
 from . import stt
-from . import usage_store
 from . import vision
 from . import workflow_config
-from .vision import probe_image, probe_images
 
 ROOT = Path(__file__).resolve().parent
 TARGET_AR = 9 / 16
@@ -1427,36 +1425,6 @@ def transcribe_apple(
     )
 
 
-def _transcribe_workflow(
-    wav: Path,
-    job_dir: Path,
-    duration: float,
-    language: str,
-    routes: list[dict],
-    timeout: float,
-    progress: Callable[[str, float, str], None],
-    *,
-    job_id: str = "",
-    request_id: str = "",
-) -> dict | None:
-    """Deprecated route dispatcher.
-
-    Production analysis calls :func:`stt.transcribe_source`.  This shim keeps
-    the pre-v2 call signature for old callers and its compatibility tests; it
-    runs Apple and Whisper only.
-    """
-    return stt.transcribe_routes(
-        wav, job_dir, duration, language, routes, timeout, progress,
-        job_id=job_id, request_id=request_id,
-        engines={
-            "whisper": transcribe,
-            "apple": transcribe_apple,
-        },
-        logger=_pipeline_log,
-        legacy=True,
-    )
-
-
 # ---------------------------------------------------------------- scoring
 
 
@@ -1976,27 +1944,6 @@ def auto_hook(scenes: list[dict]) -> dict:
         deep = clean
     pool = [scene for scene in deep if scene["dur"] >= 0.55] or deep or scenes
     return max(pool, key=lambda s: (s["hook"], -s["start"]))
-
-
-def llm_available() -> bool:
-    """Kept for callers that ask before ranking.
-
-    DuckSuite ships no local text model and no cloud text route, so this is
-    always False and hook order stays deterministic.
-    """
-    return False
-
-
-def llm_rank_hooks(candidates: list[dict], target: int = 30) -> list[int] | None:
-    """No text route exists, so the deterministic score order always stands.
-
-    The old body called a cloud text service through a module that does not
-    ship. It is gone with the cloud speech paths: DuckSuite never asks a remote
-    model to rank a hook.
-    """
-    if not llm_available():
-        return None
-    return None
 
 
 def _window(scene: dict, wanted: float, prefer_start: bool, end_aligned: bool = False) -> tuple[float, float]:
@@ -2660,32 +2607,6 @@ def build_plan(
     }
 
 
-def arc_order(clips: list[dict], scenes: list[dict]) -> list[dict]:
-    """Reorder beats as setup → proof → payoff, hook first, payoff last."""
-    if len(clips) < 4:
-        return clips
-    by_id = {scene["id"]: scene for scene in scenes}
-    hook = [clip for clip in clips if clip.get("role") == "hook"]
-    payoff = [clip for clip in clips if clip.get("role") == "payoff"]
-    middle = [
-        clip for clip in clips
-        if clip.get("role") not in {"hook", "payoff"}
-    ]
-    if not middle:
-        return clips
-
-    def key(clip: dict):
-        scene = by_id.get(clip.get("scene")) or {}
-        motion = float(scene.get("motion_score") or 50.0)
-        text_bonus = 12.0 if (scene.get("ocr") or scene.get("speech")) else 0.0
-        face_bonus = 6.0 if (scene.get("face") or "subject" in (scene.get("tags") or [])) else 0.0
-        duration = float(clip.get("dur") or 0.0)
-        return (motion - text_bonus - face_bonus, -duration)
-
-    ordered = sorted(middle, key=key)
-    return [*(hook or [clips[0]]), *ordered, *payoff]
-
-
 def make_plans(
     scenes: list[dict],
     source_duration: float,
@@ -2782,22 +2703,6 @@ def _apply_scene_read(scene: dict, job_dir: Path, record: dict, read_text: bool)
     scene["salient"] = (record or {}).get("salient", [])
     scene["visual"] = image_features(job_dir / "thumbs" / f"{scene['id']:05d}.jpg")
     scene["deep"] = True
-
-
-def read_scene(
-    path: str,
-    scene: dict,
-    job_dir: Path,
-    read_text: bool = True,
-) -> dict:
-    """Deep-read one scene on demand, then caller re-scores the job."""
-    if scene.get("deep", True):
-        return scene
-    extract_thumbs(path, [scene], job_dir, lambda _fraction, _message: None)
-    thumb = job_dir / "thumbs" / f"{scene['id']:05d}.jpg"
-    record = probe_image(thumb) if vision.available() else {}
-    _apply_scene_read(scene, job_dir, record, read_text)
-    return scene
 
 
 def _speech_language(options: dict) -> str:

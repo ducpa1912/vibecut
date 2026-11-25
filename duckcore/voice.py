@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import wave
 from pathlib import Path
-from typing import Any
 
 from duckcore import media
 

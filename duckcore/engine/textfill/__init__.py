@@ -307,16 +307,6 @@ def follow_problem() -> str | None:
     return problem()
 
 
-def render_options(directory: Path) -> dict:
-    """What the Render step can offer on this machine."""
-    gpu = {}
-    for method in KEYED_METHODS:
-        reason = gpu_problem(method, directory)
-        gpu[method] = {"ready": reason is None, "reason": reason or ""}
-    follow = follow_problem()
-    return {"gpu": gpu, "follow": {"ready": follow is None, "reason": follow or ""}}
-
-
 def missing_model(method: str, directory: Path) -> str | None:
     """A plain message when the method's model file is absent, else None."""
     if method in CLASSIC_METHODS:
@@ -669,28 +659,6 @@ def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVIC
     return _model_stamp(model_path(method, Path(directory)))
 
 
-def model_signature(methods: Iterable[str], directory: Path | str,
-                    custom: Path | None = None) -> str:
-    """A stable signature of the model files a render will read.
-
-    The render's master cache key includes this, so replacing a checkpoint
-    never reuses a master cut with the old model's pixels.
-    """
-    directory = Path(directory)
-    parts = []
-    for method in sorted({str(item) for item in methods}):
-        if method not in METHODS:
-            continue
-        if missing_model(method, directory):
-            parts.append([method, "missing"])
-        else:
-            parts.append([method, method_stamp(method, directory, custom=custom)])
-            if method in KEYED_METHODS:
-                parts.append(["runs", LAMA_RUN_RULE])
-    payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
-    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
-
-
 def span_key(
     *,
     meta: dict,
@@ -821,15 +789,6 @@ def _learn_rate(data_root: Path | str, method: str, units: float, took: float,
 def busy() -> bool:
     """True while a fill is running on this machine."""
     return _LOCK.locked()
-
-
-def release_fillers() -> None:
-    """Drop the loaded model sessions so a finished render frees their memory."""
-    with _FILLERS_LOCK:
-        _FILLERS.clear()
-    from .torch_fill import release_gpu_memory
-
-    release_gpu_memory()
 
 
 def _check_cancel(cancelled: Callable[[], bool] | None) -> None:
@@ -1629,61 +1588,6 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
         buffer = buffer[final:]
         if eof and not buffer:
             return
-
-
-def fill_frame(
-    frame: np.ndarray,
-    rects: Iterable[masks.Rect],
-    *,
-    data_root: Path | str,
-    method: str = "lama",
-    tight_rects: Iterable[masks.Rect] = (),
-) -> np.ndarray:
-    """Fill one RGB frame in place of a sequence.
-
-    Rects also in ``tight_rects`` narrow to the text found in them, as in the
-    render, so the preview shows the same hole.
-
-    One frame is a supported input for LaMa and the OpenCV methods. STTN needs
-    neighbouring frames and is left to the full render.
-    """
-    if method == "sttn":
-        raise FillError("The single-frame fill preview uses the AI fill model.")
-    directory = models_dir(data_root)
-    problem = missing_model(method, directory)
-    if problem:
-        raise FillError(problem)
-    local_rects = [rect for rect in rects if rect[2] > rect[0] and rect[3] > rect[1]]
-    height, width = frame.shape[:2]
-    area = masks.lama_area(local_rects, width, height)
-    if area is None:
-        return frame.copy()
-    x0, y0, x1, y1 = area
-    local = _local(local_rects, x0, y0, x1, y1)
-    if not local:
-        return frame.copy()
-    work = frame[y0:y1, x0:x1]
-    tight = [rect for rect in tight_rects if rect in local_rects] if text_mask_enabled() else []
-    if tight:
-        exact = [rect for rect in local_rects if rect not in tight]
-        finder = masks.TextMasks([tight], [exact], width, height)
-        finder._measure(0, frame)
-        hole = finder.hole(0, x0, y0, x1, y1)
-        if not hole.any():
-            return frame.copy()
-    else:
-        hole = masks.rasterize(local, x1 - x0, y1 - y0)
-    # One model at a time on this Mac: a preview never loads beside a render.
-    if not _LOCK.acquire(blocking=False):
-        raise FillError("AI fill is busy with a render. Try the preview when it finishes.")
-    try:
-        filled = _filler(method, model_path(method, directory)).fill(work, hole)
-    finally:
-        release_fillers()
-        _LOCK.release()
-    out = frame.copy()
-    out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
-    return out
 
 
 def _finder_for(layers: list[dict], *, start: float, fps: float, frames: int,

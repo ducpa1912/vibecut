@@ -11,7 +11,6 @@ import json
 import secrets
 import time
 from pathlib import Path
-from typing import Any
 
 
 class EditError(ValueError):

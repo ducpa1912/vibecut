@@ -67,15 +67,6 @@ def possible() -> bool:
     )
 
 
-def package_path(directory: Path | str) -> Path:
-    return Path(directory) / PACKAGE_FILE
-
-
-def package_ready(directory: Path | str) -> bool:
-    path = package_path(directory)
-    return (path / "Manifest.json").is_file()
-
-
 def package_stamp(path: Path) -> str:
     """File metadata identity, including paths, for compiled/render caches."""
     total = newest = 0

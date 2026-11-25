@@ -7,7 +7,6 @@ into editable Clean layers: LaMa AI fill, explicit Blur, or excluded.
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 TEXT_KINDS = {"subtitle", "title", "lower_third", "credit", "screen_text"}
 RISKY_KINDS = {"handle_or_logo", "watermark"}

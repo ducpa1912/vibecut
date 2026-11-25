@@ -142,10 +142,6 @@ SCREEN_TEXT_MESSAGE = (
 )
 
 
-class CheckError(RuntimeError):
-    """The source cannot be checked."""
-
-
 # ---------------------------------------------------------------- geometry
 
 
@@ -630,7 +626,6 @@ def _screen_text_mark(text: str, box: dict) -> bool:
     return not value.isupper()
 
 
-
 def _word_pop(text: str, box: dict, corner: bool) -> bool:
     """Word-pop captions: 1-4 words, large type, centred, mid-frame.
 
@@ -1113,7 +1108,6 @@ def plan_fills(tracklets: list[dict], frames: list[dict], motion: dict | None, s
         }
 
 
-
 def edge_end_from_hits(
     hits: Iterable[float],
     end: float,
@@ -1175,7 +1169,6 @@ def refine_tracklet_edges(
     still there. It never widens a range past one frame.
     """
     from . import vision
-    from .textfill import mask as masks
     from duckcore import media
     import shutil
     import subprocess
@@ -2174,47 +2167,6 @@ def load_report(job_dir: Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
-
-
-def state_report(job: dict, state: str, *, error: str | None = None) -> dict:
-    """Return a small SourceReport-shaped envelope for queued/running work."""
-    return {
-        "schema": SCHEMA_VERSION,
-        "status": state,
-        "complete": False,
-        "job_id": (job or {}).get("id"),
-        "created": round(time.time(), 3),
-        "source": {
-            key: ((job or {}).get("source") or {}).get(key)
-            for key in ("name", "duration", "width", "height", "fps", "has_audio")
-        },
-        "text": {
-            "present": None, "confirmed": False, "sampled_fps": DEFAULT_SAMPLE_FPS,
-            "frames_read": 0, "ocr_available": False, "tracklets": 0,
-            "coverage": 0.0, "approximate": False,
-        },
-        "tracklets": [],
-        "audio": {"available": False},
-        "faces": {
-            "present": False, "count": 0, "coverage": 0.0,
-            "ranges": [], "boxes": [],
-        },
-        "quality": {},
-        "recommendation": None,
-        "recommendation_reasons": [],
-        "clean_prefill": [],
-        "policy": {
-            "clean_allowed": False,
-            "rights_attested": False,
-            "handle_or_logo_ids": [],
-            "screen_text_ids": [],
-            "requires_attestation": [],
-        },
-        "rights": {"attested": False, "source": None},
-        "warnings": [],
-        "engine": {},
-        "error": error,
-    }
 
 
 # ---------------------------------------------------------------- orchestration

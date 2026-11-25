@@ -8,11 +8,7 @@ pack is selected by feature code; a pack never runs by itself.
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import shutil
 import threading
-import time
 import urllib.request
 from pathlib import Path
 
