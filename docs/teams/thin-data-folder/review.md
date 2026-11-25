@@ -33,7 +33,16 @@ renders 0.19 GB, previews 0.08 GB, frames 0.04 GB.
 | 6 | Core ML copy → link, `:coreml-gpu` stamp unchanged | pass (test) |
 | 7 | Clip prune: old dropped, fresh and `.part` kept; limits cover every project | pass (tests) |
 | 8 | Full suite | 386 passed |
-| 9 | Founder folder after the rebuilt app starts | see "After" |
+| 9 | Founder folder after the rebuilt app starts | pass: see "After" |
+
+## After (rebuilt app opened, 2026-11-25)
+
+- **4.09 GiB → 2.60 GiB (4.4 GB → 2.8 GB).**
+- Saved fills 1.59 GB → 0.48 GB: all 1,765 converted to PNG within 30 s of the start, 0 kept as `.npy`.
+- `models/fill` 0.30 GB → 4 KB: both models are links into the app.
+- Pinned stamps equal the old copies' (big-lama.pt time = Nov 11, the Core ML package = Nov 17), so
+  every existing fill clip and saved fill keeps its key. Not proven by a render: the founder's next
+  render of an already-rendered edit should say its clips were reused.
 
 ## Found, not changed
 

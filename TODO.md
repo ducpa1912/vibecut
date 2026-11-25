@@ -16,13 +16,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
-## REQ-20261125-02 — Thin the data folder (2026-11-25)
-
-- [ ] REQ-20261125-02 · saved fills written as lossless PNG; old `.npy` still read until it ages out
-- [ ] REQ-20261125-02 · fill models in app data are links to the app, not copies; existing identical copies replaced
-- [ ] REQ-20261125-02 · fill clips unused for 14 days are pruned; the pre-re-key clips deleted once
-- [ ] REQ-20261125-02 · measure the folder before and after; rebuild and open the app
-
 ## REQ-20261121-01 — Choose Core ML or PyTorch per render (2026-11-21)
 
 - [ ] REQ-20261121-01 · founder speed test on a quiet Mac: same edit, once per engine (script in `docs/teams/render-engine-choice/review.md`)

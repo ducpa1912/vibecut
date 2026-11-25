@@ -471,3 +471,10 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261125-01 · remove unused imports, unreachable Python functions and the unused `usage_store` module
 - [x] REQ-20261125-01 · remove unreachable functions from `static/duck/app.js`
 - [x] REQ-20261125-01 · tests green, rebuild, open the app for the founder test
+
+## REQ-20261125-02 — done 2026-11-25
+
+- [x] REQ-20261125-02 · saved fills written as lossless PNG; old `.npy` still read until it ages out
+- [x] REQ-20261125-02 · fill models in app data are links to the app, not copies; existing identical copies replaced
+- [x] REQ-20261125-02 · fill clips unused for 14 days are pruned; the pre-re-key clips deleted once
+- [x] REQ-20261125-02 · measure the folder before and after; rebuild and open the app
