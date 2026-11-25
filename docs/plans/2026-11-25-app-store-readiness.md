@@ -93,27 +93,35 @@ Rules:
 
 ## F. The plan
 
-Lanes: **Codex = release and licensing** (build, signing, notices, bundle). **OpenCode = product
-completeness** (UI and engine work). **PO = briefs, reviews, merges, founder scripts, store copy.**
+Lanes (rebalanced 2026-11-26, founder: "the heavy lifting should be on codex side"):
+- **Codex** does the heavy work: release and licensing (build, signing, notices, bundle), the
+  in-app Whisper runtime, and timeline split and reorder.
+- **OpenCode** does small, bounded fixes, each with one or two files and a clear test: the
+  Settings leftovers, layout measurements and fixes, and Clean layer remove.
+- **The PO** writes briefs, reviews, merges, writes founder scripts and store copy.
+
+Codex runs one loop at a time and its queue is long, so the order below is its order.
 
 | Phase | Loop | Owner | What done looks like | Needs |
 |---|---|---|---|---|
-| 0 | S0 · separate the agents | PO | Two worktrees and branches, shared venv link, ports, `AGENTS.md` section "Three agents" | — |
-| 1 | R1 · FFmpeg back in, build fails without it | Codex | LGPL FFmpeg 7.1.1 + ffprobe + dav1d in `Contents/Helpers`, no home-path strings, build exits non-zero when one is missing, a test that the bundle has them | — |
+| 0 | S0 · separate the agents | PO | Two worktrees and branches, shared venv link, ports, `AGENTS.md` section "Three agents" | done `d3b8bdc` |
+| 1 | R1 · FFmpeg back in, build fails without it | Codex | LGPL FFmpeg 7.1.1, ffprobe and dav1d in `Contents/Helpers`; no home-path strings; the build exits non-zero when one is missing; a test that the bundle has them | — |
 | 1 | R2 · GPL out | Codex | `kokoro_onnx`, espeak-ng and pcaudio gone from the bundle; Kokoro pack hidden; a bundle scan test fails on any GPL/AGPL file | D9 |
-| 1 | R3 · notices from the bundle | Codex | `scripts/scan-bundle-licences.py` writes the notices table; test fails on an unlisted component; LaMa entry corrected | U4 finding |
 | 1 | P-A · REQ-20261118-02 leftovers | OpenCode | Workflows ladders hidden or captioned; one plain speech failure | — |
-| 2 | R4 · trim the bundle | Codex | X11 and unused codecs gone; Core ML per D4; size measured before/after | D4 |
-| 2 | R5 · release mode | Codex | No runtime `swiftc`; helpers must exist; release build flag | — |
-| 2 | P-B · in-app Whisper | OpenCode | whisper.cpp (Metal) built from source inside the app; the pack is weights only; Vietnamese Check works on the founder's clip | D3, founder's clip |
-| 2 | P-C · layout (loop 28) | OpenCode | 1024×700 and 200 % on six screens measured and fixed; story and render players opened | — |
-| 3 | R6 · Mac App Store signing (Gate A) | Codex | Signed with the team identity, every nested executable sandboxed + inherit, `xcrun` validation passes, no upload | D1, D2 |
-| 3 | P-D · timeline split + reorder | OpenCode | Per D8, with tests and a founder script | D8 |
-| 3 | P-E · Clean layer remove + box select | OpenCode | The two REQ-20261118-01 proposals, if the founder says yes | founder yes |
+| 2 | P-B · in-app Whisper | **Codex** | whisper.cpp (Metal) built from source and signed inside the app; the pack holds weights only; Vietnamese Check works on the founder's clip | D3, founder's clip |
+| 2 | R3 · notices from the bundle | Codex | `scripts/scan-bundle-licences.py` writes the notices table; a test fails on an unlisted component; LaMa entry corrected | U4 finding |
+| 2 | P-C · layout (loop 28) | OpenCode | 1024×700 and 200 % measured and fixed on six screens; story and render players opened | after P-A |
+| 3 | R4 + R5 · trim, release mode | Codex | X11 and unused codecs gone; Core ML handled per D4; size measured before and after; no runtime `swiftc` and helpers must exist | D4 |
+| 3 | P-D · timeline split + reorder | **Codex** | Done per D8, with tests and a founder script; owns `app.js` for the loop, so it starts after P-C merges | D8 |
+| 3 | P-E · Clean layer remove + box select | OpenCode | The two REQ-20261118-01 proposals, if the founder says yes; runs after P-D releases `app.js` | founder yes |
+| 4 | R6 · Mac App Store signing (Gate A) | Codex | Signed with the team identity; every nested executable sandboxed with inherit; `xcrun` validation passes; no upload | D1, D2 |
 | 4 | F1 · founder hand test, one sitting | Founder (PO writes the script) | `founder-test-all.md` plus every new loop; bugs filed | P-A…P-E merged |
 | 4 | S1 · store listing | PO | Description, screenshots list, review notes (local server, sandbox, packs are data), privacy policy text | D7 |
-| 5 | R7 · TestFlight (Gate B) | Codex + founder | Uploaded build installs on a clean Mac; mic, packs, render work | D1 |
+| 5 | R7 · TestFlight (Gate B) | Codex + founder | The uploaded build installs on a clean Mac; mic, packs and render work | D1 |
 | 5 | Submit (Gate C) | Founder | — | all above |
+
+`app.js` order: P-A (OpenCode) → P-C (OpenCode) → P-D (Codex) → P-E (OpenCode). OpenCode's
+other work between loops is review and tests on a merged branch, never `app.js`.
 
 Loop 27 (render cost) and the Native UI track stay after v1 unless the founder moves them.
 

@@ -18,7 +18,7 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## REQ-20261125-03 — App Store readiness plan (2026-11-25)
 
-Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes: Codex release/licensing, OpenCode product, PO review/merge.
+Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
 
 - [x] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`. Done 2026-11-25; briefs `docs/teams/{r1-ffmpeg-back,r2-gpl-out,pa-settings-leftovers}/BRIEF.md`
 - [ ] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex)
@@ -26,8 +26,9 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes: Codex release/licen
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
-- [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (OpenCode, needs D3)
-- [ ] REQ-20261125-03 · P-C loop 28 layout; P-D split + reorder (needs D8); P-E layer remove + box select (OpenCode)
+- [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (Codex, needs D3)
+- [ ] REQ-20261125-03 · P-C loop 28 layout (OpenCode); P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
+- REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
 - [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
 
