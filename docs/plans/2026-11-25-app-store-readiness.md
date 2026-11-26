@@ -57,7 +57,7 @@ macOS 26 floor stated, 386 tests, no telemetry or account.
 |---|---|---|
 | D1 | Lift the App Store pause in stages: Gate A (signing + validation builds, no upload), Gate B (TestFlight), Gate C (submission) | Lift Gate A now |
 | D2 | Apple Developer team, bundle id `com.ducksuite.app`, app name availability | Founder checks in App Store Connect |
-| D3 | Vietnamese speech in v1: in-app whisper.cpp, or cut it from v1 | Build whisper.cpp in-app (dub depends on it) |
+| D3 | Vietnamese speech in v1: in-app whisper.cpp, or cut it from v1 | **Decided 2026-11-26: build whisper.cpp in-app** (founder chose P-B) |
 | D4 | Core ML: ship it as a test engine or drop it (−125 MB) | Drop from v1 until its abort is fixed |
 | D5 | FFmpeg source-offer contact address | — |
 | D6 | LaMa weights licence finding | Read the researcher's page first |
