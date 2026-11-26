@@ -2396,3 +2396,10 @@ canvas.timeline-wave { display:block; width:100%; height:100%; pointer-events:no
 @container (max-width: 68px) {
   .timeline-track.sfx .timeline-block span { display: none; }
 }
+.media-card .grade-overlay { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none; }
+.media-card .grade-overlay[hidden] { display:none; }
+.grade-status { position:absolute; top:8px; left:8px; background:var(--panel); color:var(--ink); padding:3px 6px; font-size:11px; }
+.grade-grid label { grid-template-columns:75px minmax(35px,1fr) 52px; }
+.grade-grid input[type=number] { width:100%; min-width:0; height:24px; }
+#grade-lut { position:absolute; width:1px; height:1px; clip-path:inset(50%); }
+label:has(> #grade-lut:focus-visible) { outline:2px solid var(--amber); }

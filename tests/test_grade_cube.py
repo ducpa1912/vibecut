@@ -138,3 +138,27 @@ def test_routes(tmp_path):
     rgb = np.asarray(Image.open(io.BytesIO(still.content)))
     assert np.array_equal(rgb, ffmpeg_rgb(pic, grade.filter_for(path)))
     assert not np.array_equal(rgb, source)
+
+
+def test_local_file_picker_and_graded_filmstrip(tmp_path):
+    source = tmp_path / "chart.png"
+    chart(source)
+    pid = ProjectStore(tmp_path).create("Chart", source)["id"]
+    edit = edits.create_full(pid, {"meta": {"duration": 1}}, tmp_path)
+    url = f"/api/projects/{pid}/edits/{edit['id']}"
+    auth = {"Authorization": "Bearer token"}
+    cube = tmp_path / "user.cube"
+    np.savetxt(cube, grade.grid(2)[..., ::-1].reshape(-1, 3), header="LUT_3D_SIZE 2", comments="")
+    with TestClient(create_app("token", tmp_path)) as client:
+        route = "/api/grade/luts/file"
+        assert client.post(route, params={"name":cube.name}, content=b"x").status_code == 401
+        assert client.post(route, params={"name":"../bad.cube"}, headers=auth,
+                           content=cube.read_bytes()).status_code == 400
+        lut = client.post(route, params={"name":cube.name}, headers=auth, content=cube.read_bytes())
+        assert lut.status_code == 200
+        client.patch(url+"/cut", headers=auth, json={"grade":{"look":lut.json()["id"]}}).raise_for_status()
+        response = client.get(url+"/grade/still?t=token&w=96")
+        response.raise_for_status()
+        assert Image.open(io.BytesIO(response.content)).width == 96
+        assert client.get(url+"/grade/still?t=token&w=96").content == response.content
+        assert client.get(url+"/grade/still?t=token&w=9999").status_code == 400

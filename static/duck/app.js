@@ -1,3 +1,4 @@
+import { gradePainter } from './grade-preview.js';
 /* DuckSuite — Daylight Story Desk.
    One shell, six screens, no marketing page. */
 
@@ -1531,7 +1532,7 @@ function screenEditor() {
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
-                : `<video class="cut-video" style="filter:${gradeFilter()} ${sfxPreviewFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+                : `<video class="cut-video" style="filter:${sfxPreviewFilter()}" data-preview data-app-player preload="metadata" poster="${gradePicture(state.previewTime ?? scene.start)}" src="${sourceUrl()}"></video>`}
               ${state.timelineVideoHidden ? `<span class="picture-hidden">${icon('eyeOff', 14)} Picture hidden in preview only</span>` : ''}
               ${sfxOverlayMarkup()}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
@@ -1716,24 +1717,110 @@ function gradeOf() {
     contrast: Number(grade.contrast || 0),
     saturation: Number(grade.saturation || 0),
     temperature: Number(grade.temperature || 0),
+    tint: Number(grade.tint || 0),
+    look: grade.look || null,
+    look_strength: grade.look_strength ?? 100,
   };
 }
 
-function signedValue(value) {
-  const number = Math.round(Number(value) || 0);
-  return number > 0 ? `+${number}` : String(number);
+function hasGrade(g = gradeOf()) {
+  return ['exposure','contrast','saturation','temperature','tint'].some(key => g[key] !== 0)
+    || Boolean(g.look && g.look_strength);
 }
 
-function gradeFilter(grade = gradeOf()) {
-  const parts = [
-    `brightness(${(1 + Number(grade.exposure || 0) / 200).toFixed(3)})`,
-    `contrast(${(1 + Number(grade.contrast || 0) / 100).toFixed(3)})`,
-    `saturate(${(1 + Number(grade.saturation || 0) / 100).toFixed(3)})`,
-  ];
-  const temperature = Number(grade.temperature || 0);
-  if (temperature > 0) parts.push(`sepia(${(temperature / 100 * 0.45).toFixed(3)})`);
-  if (temperature < 0) parts.push(`hue-rotate(${(temperature / 100 * 18).toFixed(1)}deg)`);
-  return parts.join(' ');
+function gradePicture(time, width = 0) {
+  if (!hasGrade()) return frameUrl(time, state.project.id, width);
+  return mediaUrl(timelineApi() + '/grade/still', {time: Number(time).toFixed(3),
+    w: width || undefined, v: state.edit.updated});
+}
+
+let disposeGrade = () => {};
+let cubeCache;
+async function setupGradePreview() {
+  const video = document.querySelector('video.cut-video');
+  if (!video || !hasGrade() || state.timelineVideoHidden) return;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'cut-video grade-overlay';
+  canvas.style.filter = video.style.filter;
+  canvas.hidden = true;
+  const poster = document.createElement('img');
+  poster.className = canvas.className;
+  poster.alt = '';
+  poster.src = video.poster;
+  poster.style.filter = video.style.filter;
+  video.after(poster, canvas);
+  let painter, callback, still, label, disposed = false;
+  const syncStill = () => {
+    if (still) still.src = gradePicture(video.readyState ? video.currentTime : state.previewTime || 0);
+  };
+  function fallback() {
+    if (disposed || still) return;
+    canvas.hidden = true;
+    video.pause();
+    still = poster;
+    still.hidden = false;
+    still.alt = 'Graded preview frame';
+    still.className = canvas.className;
+    still.style.filter = video.style.filter;
+    canvas.after(still);
+    label = document.createElement('span');
+    label.className = 'grade-status';
+    label.textContent = 'Graded still · scrub to preview';
+    still.after(label);
+    still.onload = () => { label.textContent = 'Graded still · scrub to preview'; };
+    still.onerror = () => { label.textContent = 'Frame unavailable · scrub to another time'; };
+    video.addEventListener('play', pause);
+    video.addEventListener('seeked', syncStill);
+    syncStill();
+  }
+  const pause = () => video.pause();
+  const draw = () => {
+    if (disposed || still || !painter || video.readyState < 2) return;
+    try { painter.draw(video); canvas.hidden = false; poster.hidden = true; }
+    catch { fallback(); }
+  };
+  const tick = () => {
+    draw();
+    if (!disposed && !still) callback = video.requestVideoFrameCallback(tick);
+  };
+  disposeGrade = () => {
+    disposed = true;
+    if (callback !== undefined) video.cancelVideoFrameCallback(callback);
+    for (const event of ['loadeddata','seeked','timeupdate']) video.removeEventListener(event, draw);
+    video.removeEventListener('play', pause);
+    video.removeEventListener('seeked', syncStill);
+    canvas.removeEventListener('webglcontextlost', fallback);
+    painter?.release();
+  };
+  try {
+    const key = timelineApi() + JSON.stringify(gradeOf());
+    if (cubeCache?.key !== key) cubeCache = {key, promise:api(timelineApi() + '/grade/cube')};
+    const payload = await cubeCache.promise;
+    if (disposed) return;
+    painter = gradePainter(canvas,payload);
+    canvas.addEventListener('webglcontextlost', fallback);
+    for (const event of ['loadeddata','seeked']) video.addEventListener(event, draw);
+    draw();
+    if (video.requestVideoFrameCallback) callback = video.requestVideoFrameCallback(tick);
+    else video.addEventListener('timeupdate', draw);
+  } catch {
+    if (!disposed) { cubeCache = null; fallback(); }
+  }
+}
+
+let copiedGrade;
+let lookCatalog;
+async function populateLooks() {
+  const select = document.querySelector('#grade-look');
+  if (!select) return;
+  try {
+    lookCatalog ||= api('/api/grade/looks');
+    const {looks,luts} = await lookCatalog;
+    if (!select.isConnected) return;
+    for (const name of looks) select.add(new Option(name,name));
+    for (const lut of luts) select.add(new Option(lut.name,lut.id));
+    select.value = gradeOf().look || '';
+  } catch (error) { lookCatalog = null; toast(error.message,'bad'); }
 }
 
 function cutPreview() {
@@ -1808,6 +1895,7 @@ async function saveCut(patch) {
   const cut = { aspect: 'source', fit: 'fit', crop: null, ...(state.edit.cut || {}), ...patch };
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/cut`, { method: 'PATCH', body: JSON.stringify(cut) });
+    if (state.project?.id !== data.edit.project_id || state.edit?.id !== data.edit.id) return;
     state.edit = data.edit;
     state.cleanVersion += 1;
     // Every proof was drawn through the old Cut: drop them and any run.
@@ -1827,7 +1915,6 @@ function cutFocus() {
   const aspect = cut.aspect || 'source';
   const fit = cut.fit || 'fit';
   const crop = cut.crop || { x: 0, y: 0, w: 1, h: 1 };
-  const presets = [['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'B&W'], ['vivid', 'Vivid']];
   return `<div class="cut-focus">
     <div class="focus-card">
       <h3>Output</h3>
@@ -1852,16 +1939,15 @@ function cutFocus() {
     </div>
     <div class="focus-card">
       <h3>Look</h3>
-      <div class="cut-label">Grade</div>
+      <label>Look <select id="grade-look"><option value="">None</option></select></label>
+      <label class="btn small">Import .cube<input type="file" id="grade-lut" accept=".cube"></label>
       <div class="grade-grid">
-        ${[['exposure', 'Exposure'], ['contrast', 'Contrast'], ['saturation', 'Saturation'], ['temperature', 'Temperature']].map(([key, label]) => `<label><span>${label}</span><input data-grade="${key}" type="range" min="-100" max="100" step="1" value="${gradeOf()[key]}"><span data-grade-value>${signedValue(gradeOf()[key])}</span></label>`).join('')}
+        ${[['look_strength','Strength'], ['exposure','Exposure'], ['contrast','Contrast'], ['saturation','Saturation'], ['temperature','Temperature'], ['tint','Tint']].map(([key,label]) => {
+          const min = key === 'look_strength' ? 0 : -100;
+          return `<label><span>${label}</span><input aria-label="${label}" data-grade="${key}" type="range" min="${min}" max="100" value="${gradeOf()[key]}"><input aria-label="${label} value" data-grade-number="${key}" type="number" min="${min}" max="100" value="${gradeOf()[key]}"></label>`;
+        }).join('')}
       </div>
-      <div class="box-actions"><button class="btn small" type="button" data-action="grade-reset">Reset grade</button></div>
-      <p class="small muted">The player preview is approximate; the render applies these in ffmpeg.</p>
-      <div class="cut-label">Presets</div>
-      <div class="filter-presets">
-        ${presets.map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="cut-preset" data-preset="${value}">${label}</button>`).join('')}
-      </div>
+      <div class="box-actions"><button class="btn small" data-action="copy-grade">Copy grade</button><button class="btn small" data-action="paste-grade" ${copiedGrade ? '' : 'disabled'}>Paste grade</button><button class="btn small" data-action="grade-reset">Reset grade</button></div>
     </div>
     <div class="focus-card">
       <h3>Enhance</h3>
@@ -2636,7 +2722,7 @@ function filmstripMarkup(clip, start, end, total) {
     const left = ((time - Number(clip.start || 0)) / duration) * 100;
     const width = Math.max(1, Math.min(100 - left, (step / duration) * 100));
     state.filmRequests += 1;
-    return `<img class="film-tile" loading="lazy" decoding="async" alt="" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" data-film-time="${time.toFixed(3)}" src="${frameUrl(time, state.project.id, FILM_REQUEST_WIDTH)}">`;
+    return `<img class="film-tile" loading="lazy" decoding="async" alt="" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" data-film-time="${time.toFixed(3)}" src="${gradePicture(time, FILM_REQUEST_WIDTH)}">`;
   }).join('')}</span>`;
 }
 
@@ -2657,7 +2743,7 @@ function addFilmTile(film, left, width, time) {
   image.style.left = `${left.toFixed(2)}%`;
   image.style.width = `${width.toFixed(2)}%`;
   image.dataset.filmTime = time.toFixed(3);
-  image.src = frameUrl(time, state.project?.id, FILM_REQUEST_WIDTH);
+  image.src = gradePicture(time, FILM_REQUEST_WIDTH);
   state.filmRequests += 1;
   film.appendChild(image);
 }
@@ -5653,16 +5739,8 @@ document.addEventListener('click', async (event) => {
     }
     else if (action === 'cut-reset') { await saveCut({ crop: null }); }
     else if (action === 'grade-reset') { await saveCut({ grade: { exposure: 0, contrast: 0, saturation: 0, temperature: 0 } }); }
-    else if (action === 'cut-preset') {
-      const preset = target.dataset.preset || 'warm';
-      const grades = {
-        warm: { exposure: 0, contrast: 6, saturation: 8, temperature: 35 },
-        cool: { exposure: 0, contrast: 4, saturation: 4, temperature: -35 },
-        bw: { exposure: 0, contrast: 10, saturation: -100, temperature: 0 },
-        vivid: { exposure: 4, contrast: 16, saturation: 28, temperature: 4 },
-      };
-      await saveCut({ grade: grades[preset] || grades.warm });
-    }
+    else if (action === 'copy-grade') { copiedGrade = gradeOf(); render(); toast('Grade copied.'); }
+    else if (action === 'paste-grade' && copiedGrade) await saveCut({grade: copiedGrade});
     else if (action === 'timeline-zoom') {
       const steps = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
       const dir = Number(target.dataset.dir || 0);
@@ -5765,12 +5843,22 @@ document.addEventListener('change', async (event) => {
     saveCut({ enhance: { enabled, sharpen } });
     return;
   }
-  if (target.dataset && target.dataset.grade) {
-    const grade = { ...gradeOf() };
-    document.querySelectorAll('[data-grade]').forEach((input) => {
-      grade[input.dataset.grade] = Number(input.value || 0);
-    });
-    saveCut({ grade });
+  if (target.id === 'grade-look') { await saveCut({grade:{...gradeOf(),look:target.value || null}}); return; }
+  if (target.id === 'grade-lut') {
+    const file = target.files[0];
+    if (!file) return;
+    const edit = state.edit;
+    try {
+      const lut = await api('/api/grade/luts/file?name=' + encodeURIComponent(file.name), {method:'POST',body:file});
+      lookCatalog = null;
+      if (edit === state.edit) await saveCut({grade:{...gradeOf(),look:lut.id,look_strength:100}});
+    } catch (error) { toast(error.message,'bad'); }
+    return;
+  }
+  if (target.dataset.grade || target.dataset.gradeNumber) {
+    if (!target.reportValidity() || target.value === '') return;
+    const key = target.dataset.grade || target.dataset.gradeNumber;
+    await saveCut({grade:{...gradeOf(),[key]:Number(target.value)}});
     return;
   }
   if (target.id === 'translation-engine') {
@@ -5843,12 +5931,8 @@ document.addEventListener('input', (event) => {
     return;
   }
   if (event.target.dataset && event.target.dataset.grade) {
-    const key = event.target.dataset.grade;
-    const grade = { ...gradeOf(), [key]: Number(event.target.value || 0) };
-    const video = document.querySelector('.cut-video');
-    if (video) video.style.filter = gradeFilter(grade);
-    const read = event.target.closest('label')?.querySelector('[data-grade-value]');
-    if (read) read.textContent = signedValue(event.target.value);
+    const number = event.target.closest('label')?.querySelector('[data-grade-number]');
+    if (number) number.value = event.target.value;
     return;
   }
   if (event.target.id === 'sequence-scrub') {
@@ -6023,6 +6107,8 @@ function setupSceneGrid() {
 }
 
 function afterRender() {
+  setupGradePreview();
+  populateLooks();
   syncFilmstrip();
   setupSceneGrid();
   setupBrushCanvas();
@@ -6187,6 +6273,8 @@ function focusTarget(signature) {
 }
 
 function render() {
+  disposeGrade();
+  disposeGrade = () => {};
   if (!state.project && state.screen !== 'welcome') state.screen = 'welcome';
   const active = document.activeElement;
   const signature = active && app.contains(active) ? focusSignature(active) : '';
