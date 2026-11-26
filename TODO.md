@@ -31,7 +31,7 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
 - [ ] REQ-20261125-03 · P-B follow-ups: whisper.cpp JSON has no no-speech / compression / log-prob scores, so those three transcript guards never fire on Whisper (the repeated-line guard still works): measure on the founder's Vietnamese clip; replace the dev-only Vietnamese steps in `founder-test-all.md` with the GGML pack and update steps (`docs/teams/pb-whisper-in-app/review.md`)
-- [ ] REQ-20261125-03 · P-E layer remove + box select (OpenCode; founder yes 2026-11-26 "P-E after P-D"; started after P-D merged, brief `docs/teams/pe-layer-remove-select/BRIEF.md`)
+- [ ] REQ-20261125-03 · P-E founder hand test (14 steps in `docs/teams/pe-layer-remove-select/review.md`); removed layers can't be restored from the UI yet (ids kept in `removed_clean`)
 - [ ] REQ-20261125-03 · P-D founder hand test (steps in `docs/teams/pd-split-reorder-silence/review.md`); the timeline has no general undo; remove-silence keeps time where overlapping sources cancel in the mix
 - REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
@@ -43,8 +43,6 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 
 ## REQ-20261118-01 — Clean layers and the missing transcript (2026-11-18)
 
-- [ ] REQ-20261118-01 · add a real **Remove layer** action — founder yes 2026-11-26, P-E
-- [ ] REQ-20261118-01 · click a fill box on the video to select its layer — founder yes 2026-11-26, P-E
 
 ## Loop 27 — fill and check cost, no pixel change (REQ-20261115-02 P5, REQ-20261111-11)
 
