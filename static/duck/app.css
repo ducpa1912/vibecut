@@ -2245,3 +2245,154 @@ canvas.timeline-wave { display:block; width:100%; height:100%; pointer-events:no
 @container (max-width: 25px) {
   .timeline-track.scene .timeline-block span { display:none; }
 }
+
+/* T1: timeline that shows the picture (REQ-20261126-01).
+   Filmstrip behind the waveform, a name tag, track headers, and a blade
+   pointer. The header column is fixed at the left of the lanes. */
+.timeline-body { grid-template-columns: 104px minmax(0, 1fr); }
+.timeline-ruler { margin-left: 110px; }
+.timeline-track.video > .video-clip {
+  position: relative;
+  display: block;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.timeline-film { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.film-tile {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  object-fit: cover;
+  border-right: 1px solid rgba(0,0,0,.16);
+  background: #3f5f53;
+}
+.film-tile.is-full { left: 0; width: 100%; }
+.video-clip canvas.timeline-wave {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  filter: drop-shadow(0 0 1px rgba(0,0,0,.8));
+}
+.clip-name {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  z-index: 2;
+  max-width: calc(100% - 6px);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(14,17,16,.76);
+  color: #fff;
+  font: 9px/1.35 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+@container (max-width: 66px) {
+  .clip-name { display: none; }
+}
+.track-head { justify-content: flex-start; gap: 4px; min-width: 0; }
+.track-head .track-name { color: var(--ink); font-size: 10px; font-weight: 640; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-badge {
+  flex: 0 0 auto;
+  min-width: 15px;
+  height: 13px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--paper-2);
+  color: var(--muted);
+  font: 9px/1 var(--mono);
+  font-weight: 700;
+}
+.track-head .timeline-tool.icon { margin-left: auto; }
+.audio-heads { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 1px; overflow: hidden; }
+.audio-head-row { display: flex; align-items: center; gap: 2px; height: 16px; min-width: 0; }
+.audio-head-row .lane-tool { width: 13px; height: 11px; padding: 0; font-size: 7px; }
+.audio-head-db { margin-left: auto; color: var(--muted); font: 8px var(--mono); white-space: nowrap; }
+.timeline-tools { display: inline-flex; align-items: center; gap: 2px; }
+.timeline-tools .timeline-action.is-on { background: var(--amber-soft); border-color: var(--amber-2); color: var(--amber-ink); }
+.timeline.is-blade .timeline-scroll { cursor: crosshair; }
+.timeline.is-blade .timeline-track.scene .timeline-block,
+.timeline.is-blade .video-clip { cursor: col-resize; }
+
+/* Check scene grid: thumbnail, scene number, duration, transcript search. */
+.scene-view-toggle { display: inline-flex; gap: 2px; margin-left: auto; }
+.scene-view-btn {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.scene-view-btn:hover { color: var(--ink); border-color: var(--line-2); }
+.scene-view-btn.is-on { background: var(--amber-soft); border-color: var(--amber-2); color: var(--amber-ink); }
+.scene-grid-search { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-width: 0; }
+.scene-grid-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+  max-height: min(46vh, 520px);
+  overflow-y: auto;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+.scene-grid-tile { flex: none; width: 100%; min-width: 0; }
+.scene-grid-tile .thumb { aspect-ratio: 16/10; }
+.scene-number {
+  position: absolute; left: 4px; top: 4px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.68);
+  color: #fff;
+  font: 9px var(--mono);
+}
+.duration-badge {
+  position: absolute; right: 4px; bottom: 4px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.68);
+  color: #fff;
+  font: 9px var(--mono);
+}
+.scene-tile.is-hidden { display: none; }
+
+/* The V eye hides the picture in the preview only. The render keeps it. */
+.media-card.is-picture-hidden > video,
+.media-card.is-picture-hidden > img.story-media-preview { opacity: 0; }
+.picture-hidden {
+  position: absolute;
+  inset: 0 0 42px 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: var(--video);
+  color: rgba(255,255,255,.72);
+  font-size: 12px;
+  pointer-events: none;
+}
+.track-head > .timeline-tool:not(.icon) { margin-left: auto; }
+.timeline-track.sfx .timeline-block { container-type: inline-size; }
+@container (max-width: 68px) {
+  .timeline-track.sfx .timeline-block span { display: none; }
+}

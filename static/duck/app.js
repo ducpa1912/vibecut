@@ -93,6 +93,11 @@ const state = {
   transcriptSideHidden: false,
   transcriptAlpha: 100,
   timelineZoom: 1,
+  timelineTool: 'select',
+  timelineVideoHidden: false,
+  filmRequests: 0,
+  checkSceneView: 'strip',
+  sceneGridQuery: '',
   safeZone: 'off',
   safeZoneOpen: false,
   sequenceActive: false,
@@ -259,8 +264,13 @@ function icon(name, size = 18) {
     folderOpen: '<path d="M3 7.5h6l1.6 2H21l-2 9.5H4L2.5 9.5H3Z"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.2"/>',
     sun: '<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4"/>',
+    pointer: '<path d="m5 4 6.5 15.5 2.1-6.4 6.4-2.1L5 4Z"/>',
+    blade: '<path d="M3 21 21 3"/><path d="M13 3h8v8"/>',
   };
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.circle}</svg>`;
+  // One stroke style for the set (Lucide, ISC): 1.5 px at 18 px and 1.25 px at
+  // 14 px, drawn with currentColor so every control paints its own colour.
+  const stroke = size >= 16 ? 1.5 : 1.25;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.circle}</svg>`;
 }
 
 function duckMark(size = 34) {
@@ -322,6 +332,8 @@ async function openProject(id, { startCheck = false } = {}) {
   state.previewRun += 1;
   state.previewTime = 0;
   state.timelineTime = 0;
+  state.timelineTool = 'select';
+  state.timelineVideoHidden = false;
   state.autoOpened = false;
   state.editorReady = false;
   state.brushMode = false;
@@ -640,12 +652,20 @@ function renderPercent(job) {
 }
 
 function sceneStripControls(target) {
-  return `<span class="strip-arrows"><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="-1" aria-label="Scroll scenes left">‹</button><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="1" aria-label="Scroll scenes right">›</button></span>`;
+  const arrows = `<span class="strip-arrows"><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="-1" aria-label="Scroll scenes left">‹</button><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="1" aria-label="Scroll scenes right">›</button></span>`;
+  if (target !== 'check-scenes') return arrows;
+  const view = state.checkSceneView === 'grid' ? 'grid' : 'strip';
+  return `<span class="scene-view-toggle" role="group" aria-label="Scene layout">
+    <button class="scene-view-btn${view === 'strip' ? ' is-on' : ''}" type="button" data-action="check-scene-view" data-view="strip" aria-pressed="${view === 'strip'}" title="Thumbnail strip">${icon('list', 14)}</button>
+    <button class="scene-view-btn${view === 'grid' ? ' is-on' : ''}" type="button" data-action="check-scene-view" data-view="grid" aria-pressed="${view === 'grid'}" title="Scene grid">${icon('grid', 14)}</button>
+  </span>${view === 'strip' ? arrows : ''}`;
 }
 
-function frameUrl(time, projectId = state.project?.id) {
+function frameUrl(time, projectId = state.project?.id, width = 0) {
   if (!projectId) return '';
-  return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/frame`, { time: Math.max(0, Number(time) || 0).toFixed(3) });
+  const params = { time: Math.max(0, Number(time) || 0).toFixed(3) };
+  if (width) params.w = width;
+  return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/frame`, params);
 }
 
 function cleanPreviewUrl(time, mode = 'blur') {
@@ -965,7 +985,11 @@ function screenCheck() {
         <section class="panel">
           <div class="scene-strip-wrap">
             <div class="scene-strip-head"><h3>Scenes · ${scenes.length || '—'} total</h3><span class="small muted">${running ? 'Scenes ready' : done ? 'All scenes ready' : 'Waiting for scene cuts'}</span>${sceneStripControls('check-scenes')}</div>
-            ${scenes.length ? `<div class="scene-strip" id="check-scenes">${scenes.map((scene, index) => sceneTile(scene, index)).join('')}</div>` : `<div class="queue-empty">Scene cuts appear here first. The Editor opens as soon as they are ready.</div>`}
+            ${scenes.length
+              ? (state.checkSceneView === 'grid'
+                ? sceneGridMarkup(scenes)
+                : `<div class="scene-strip" id="check-scenes">${scenes.map((scene, index) => sceneTile(scene, index)).join('')}</div>`)
+              : `<div class="queue-empty">Scene cuts appear here first. The Editor opens as soon as they are ready.</div>`}
           </div>
         </section>
       </section>
@@ -1081,8 +1105,33 @@ function refreshToolbar() {
   if (header) header.outerHTML = topbar();
 }
 
-function sceneTile(scene, index) {
+function sceneTranscriptWords(scene, index = 0) {
+  const start = Number(scene?.start || 0);
+  const end = Number(scene?.end || 0);
+  const spoken = getSegments()
+    .filter((segment) => Number(segment.end || 0) > start && Number(segment.start || 0) < end)
+    .map((segment) => String(segment.text || ''))
+    .join(' ');
+  return `${spoken} ${sceneTitle(scene, index)} S${pad(index + 1)}`.toLowerCase();
+}
+
+function sceneGridMarkup(scenes) {
+  return `<div class="scene-grid-search">
+    <label class="small muted" for="scene-grid-query">Search transcript</label>
+    <input id="scene-grid-query" type="search" placeholder="Words spoken in a scene" value="${esc(state.sceneGridQuery)}">
+    <span class="small muted" data-grid-count>${scenes.length} scenes</span>
+  </div>
+  <div class="scene-grid" id="check-scenes">${scenes.map((scene, index) => sceneTile(scene, index, true)).join('')}</div>`;
+}
+
+function sceneTile(scene, index, grid = false) {
   const active = index === state.selectedScene;
+  if (grid) {
+    return `<button class="scene-tile scene-grid-tile${active ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}" data-search="${esc(sceneTranscriptWords(scene, index))}">
+      <span class="thumb"><img src="${frameUrl(sceneMid(scene))}" alt=""><span class="scene-number">S${pad(index + 1)}</span><span class="duration-badge">${fmtDuration((scene.end || 0) - (scene.start || 0))}</span></span>
+      <span class="scene-label">${esc(truncate(sceneTitle(scene, index), 30))}</span>
+    </button>`;
+  }
   return `<button class="scene-tile${active ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
     <span class="thumb"><img src="${frameUrl(sceneMid(scene))}" alt=""><span class="tc">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)}</span></span>
     <span class="scene-label">${pad(index + 1)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</span>
@@ -1477,12 +1526,13 @@ function screenEditor() {
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
           <div class="preview-row${cutView.ratio >= 1 ? ' landscape' : ' portrait'}">
-            <div class="media-card preview-large${cutView.cls}" style="${cutView.style}">
+            <div class="media-card preview-large${cutView.cls}${state.timelineVideoHidden ? ' is-picture-hidden' : ''}" style="${cutView.style}">
               ${mediaClip
                 ? mediaClip.media === 'image'
                   ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
                   : `<video class="story-media-preview" data-story-media data-app-player preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
                 : `<video class="cut-video" style="filter:${gradeFilter()} ${sfxPreviewFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+              ${state.timelineVideoHidden ? `<span class="picture-hidden">${icon('eyeOff', 14)} Picture hidden in preview only</span>` : ''}
               ${sfxOverlayMarkup()}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
               ${playerBar({ timecode: true })}
@@ -2514,6 +2564,172 @@ function timelineBlock(start, end, total, label, action = '', data = '', extraSt
   return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} ${title ? `title="${esc(title)}"` : ''} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}"><span>${esc(label)}</span></button>`;
 }
 
+/* Filmstrip. The source seconds per tile is the smallest power of two that
+   keeps a tile at least FILM_TILE_PX wide at the current zoom (Editroom's
+   rule). Frame times sit on that grid, so a zoom reuses cached frames. */
+const FILM_TILE_PX = 48;
+const FILM_REQUEST_WIDTH = 96;
+
+function timelineLanePixels() {
+  const scroller = document.querySelector('.timeline-scroll');
+  if (!scroller) return 0;
+  const zoom = Math.max(1, Number(state.timelineZoom || 1));
+  const labels = document.querySelector('.timeline-labels');
+  const labelWidth = labels ? labels.getBoundingClientRect().width : 104;
+  return Math.max(160, scroller.clientWidth * zoom - labelWidth - 6);
+}
+
+function filmSecondsPerTile(clipSeconds, clipPixels) {
+  const seconds = Math.max(0.001, Number(clipSeconds) || 0);
+  const pixels = Math.max(0, Number(clipPixels) || 0);
+  if (!pixels) return 1;
+  const needed = seconds * (FILM_TILE_PX / pixels);
+  let step = 1;
+  while (step < needed - 1e-9) step *= 2;
+  return step;
+}
+
+function filmGridTimes(start, end, step) {
+  const base = Math.max(0, Number(start) || 0);
+  const finish = Number(end) || 0;
+  const size = Math.max(0.001, Number(step) || 1);
+  const times = [];
+  for (let time = base; time < finish - 1e-6 && times.length < 500; time += size) {
+    times.push(Math.round(time * 1000) / 1000);
+  }
+  return times;
+}
+
+function timelineViewSeconds(total) {
+  const zoom = Math.max(1, Number(state.timelineZoom || 1));
+  const scroller = document.querySelector('.timeline-scroll');
+  const inner = document.querySelector('.timeline-inner');
+  if (total > 0 && scroller && inner && inner.clientWidth > 0) {
+    const from = Math.max(0, Math.min(1, scroller.scrollLeft / inner.clientWidth));
+    const to = Math.max(from, Math.min(1, (scroller.scrollLeft + scroller.clientWidth) / inner.clientWidth));
+    return { from: from * total, to: to * total };
+  }
+  // Before the first paint there is no scroller: show the window the zoom
+  // would have, centred on the playhead, instead of every tile of the project.
+  const center = total > 0 ? Math.min(1, Math.max(0, Number(state.timelineTime || 0) / total)) : 0;
+  const half = 0.5 / zoom;
+  return { from: Math.max(0, center - half) * total, to: Math.min(1, center + half) * total };
+}
+
+function filmstripMarkup(clip, start, end, total) {
+  if (!state.project) return '';
+  if (clip.kind === 'media') {
+    if (clip.media !== 'image') return '';
+    return `<span class="timeline-film" aria-hidden="true"><img class="film-tile is-full" alt="" src="${storyFileUrl(clip.file)}"></span>`;
+  }
+  const duration = Math.max(0.001, Number(end) - Number(start));
+  const lanePx = timelineLanePixels();
+  if (!lanePx) return '';
+  const clipPx = total > 0 ? lanePx * (duration / total) : 0;
+  const step = filmSecondsPerTile(duration, clipPx);
+  const view = timelineViewSeconds(total);
+  const tiles = filmGridTimes(clip.start, clip.end, step).filter((time) => {
+    const at = Number(start) + (time - Number(clip.start || 0));
+    return at + step >= view.from && at <= view.to;
+  });
+  return `<span class="timeline-film" aria-hidden="true">${tiles.map((time) => {
+    const left = ((time - Number(clip.start || 0)) / duration) * 100;
+    const width = Math.max(1, Math.min(100 - left, (step / duration) * 100));
+    state.filmRequests += 1;
+    return `<img class="film-tile" loading="lazy" decoding="async" alt="" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" data-film-time="${time.toFixed(3)}" src="${frameUrl(time, state.project.id, FILM_REQUEST_WIDTH)}">`;
+  }).join('')}</span>`;
+}
+
+function clipNameTag(clip, index) {
+  const duration = Math.max(0, Number(clip?.end || 0) - Number(clip?.start || 0));
+  const name = clip?.kind === 'media'
+    ? truncate(String(clip.label || clip.file || '').split('/').pop(), 26)
+    : storyClipLabel(clip, index);
+  return `<span class="clip-name">${esc(name)} · ${fmtDuration(duration)}</span>`;
+}
+
+function addFilmTile(film, left, width, time) {
+  const image = document.createElement('img');
+  image.className = 'film-tile';
+  image.alt = '';
+  image.loading = 'lazy';
+  image.decoding = 'async';
+  image.style.left = `${left.toFixed(2)}%`;
+  image.style.width = `${width.toFixed(2)}%`;
+  image.dataset.filmTime = time.toFixed(3);
+  image.src = frameUrl(time, state.project?.id, FILM_REQUEST_WIDTH);
+  state.filmRequests += 1;
+  film.appendChild(image);
+}
+
+function syncFilmstrip() {
+  const total = Number(document.querySelector('.timeline')?.dataset.total || 0);
+  const lane = document.querySelector('.timeline-tracks');
+  if (!state.edit || total <= 0 || !lane) return;
+  const view = timelineViewSeconds(total);
+  const lanePx = timelineLanePixels();
+  for (const element of document.querySelectorAll('.video-clip[data-clip-index]')) {
+    const row = timelineSceneRanges()[Number(element.dataset.clipIndex)];
+    let film = element.querySelector('.timeline-film');
+    if (!row || row.clip.kind === 'media') continue;
+    if (!film) {
+      film = document.createElement('span');
+      film.className = 'timeline-film';
+      film.setAttribute('aria-hidden', 'true');
+      element.prepend(film);
+    }
+    const duration = Math.max(0.001, row.end - row.start);
+    const step = filmSecondsPerTile(duration, lanePx * (duration / total));
+    const have = new Set([...film.querySelectorAll('.film-tile')].map((tile) => tile.dataset.filmTime));
+    for (const time of filmGridTimes(row.clip.start, row.clip.end, step)) {
+      const at = row.start + (time - Number(row.clip.start || 0));
+      if (at + step < view.from || at > view.to) continue;
+      const key = time.toFixed(3);
+      if (have.has(key)) continue;
+      have.add(key);
+      const left = ((time - Number(row.clip.start || 0)) / duration) * 100;
+      addFilmTile(film, left, Math.max(1, Math.min(100 - left, (step / duration) * 100)), time);
+    }
+  }
+}
+
+let filmSyncFrame = 0;
+function scheduleFilmstrip() {
+  if (filmSyncFrame) return;
+  filmSyncFrame = window.requestAnimationFrame(() => {
+    filmSyncFrame = 0;
+    syncFilmstrip();
+  });
+}
+
+function audioDbLabel(volume, muted = false) {
+  if (muted) return 'muted';
+  const level = Math.max(0, Number(volume ?? 1));
+  if (level <= 0.001) return '−∞ dB';
+  const db = 20 * Math.log10(level);
+  return `${db > -0.05 ? '0' : db.toFixed(1).replace('-', '−')} dB`;
+}
+
+function setTimelineTool(tool) {
+  state.timelineTool = tool === 'blade' ? 'blade' : 'select';
+  render();
+}
+
+async function bladeAtClip(target, event) {
+  const row = timelineSceneRanges()[Number(target.dataset.clip)];
+  if (!row || !state.edit) return;
+  const rect = target.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+  const time = row.start + fraction * (row.end - row.start);
+  if (time <= row.start + 0.08 || time >= row.end - 0.08) {
+    toast('Click inside the clip to cut it.', 'bad');
+    return;
+  }
+  state.timelineTime = time;
+  state.previewTime = timelineToSource(time);
+  await splitAtPlayhead();
+}
+
 function timelinePanel() {
   if (!state.edit) return '';
   const total = timelineDuration();
@@ -2546,8 +2762,9 @@ function timelinePanel() {
     const time = total > 0 ? total * at : 0;
     return `<span class="ruler-tick${index === tickCount - 1 ? ' is-last' : ''}" style="left:${(at * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
   }).join('');
-  return `<section class="panel timeline" data-total="${total}">
+  return `<section class="panel timeline${state.timelineTool === 'blade' ? ' is-blade' : ''}" data-total="${total}">
     <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${(state.edit.sfx || []).length} effects</span><span class="spacer"></span>
+      <span class="timeline-tools" role="group" aria-label="Timeline tool"><button class="icon-btn timeline-action${state.timelineTool === 'select' ? ' is-on' : ''}" type="button" data-action="timeline-tool" data-tool="select" aria-pressed="${state.timelineTool === 'select'}" title="Select tool (V)">${icon('pointer', 14)}</button><button class="icon-btn timeline-action${state.timelineTool === 'blade' ? ' is-on' : ''}" type="button" data-action="timeline-tool" data-tool="blade" aria-pressed="${state.timelineTool === 'blade'}" title="Blade tool (B): click a clip to split it">${icon('blade', 14)}</button></span>
       <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="icon-btn timeline-action" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}" title="Trim selected clip">${icon('scissors', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="split-at-playhead" title="Split at playhead">${icon('split', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="-0.5" title="Slip earlier">${icon('chevronLeft', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="0.5" title="Slip later">${icon('chevronRight', 14)}</button></span>
       <button class="btn small" type="button" data-action="quiet-open">Remove silence</button>
       <span class="timeline-zoom" aria-label="Timeline zoom">
@@ -2562,21 +2779,21 @@ function timelinePanel() {
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
       <div class="timeline-labels" style="grid-template-rows:${laneRows}">
-        <div class="timeline-label"><strong>Video</strong><button class="timeline-tool icon" type="button" data-action="trim-focus" title="Trim, cut or slip video">${icon('expand', 10)}</button></div>
-        <div class="timeline-label"><strong>Scene</strong><span class="timeline-tool">All</span></div>
-        <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
-        <div class="timeline-label audio-labels"><strong>Voice & Music</strong><span><button class="timeline-tool icon" type="button" data-action="voice-tab" title="Add voice-over">${icon('plus', 10)}</button><button class="timeline-tool icon" type="button" data-action="add-music" title="Add music">${icon('volume', 10)}</button></span></div>
-        <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool icon" type="button" data-action="open-focus" data-focus="sfx" title="Add special effect">${icon('plus', 10)}</button></div>
+        <div class="timeline-label track-head"><span class="track-badge">V</span><span class="track-name">Video</span><button class="timeline-tool icon" type="button" data-action="video-eye" aria-pressed="${state.timelineVideoHidden}" title="${state.timelineVideoHidden ? 'Show the picture in preview' : 'Hide the picture in preview'}. Preview only: the render keeps its picture.">${icon(state.timelineVideoHidden ? 'eyeOff' : 'eye', 14)}</button></div>
+        <div class="timeline-label track-head"><span class="track-badge">S</span><span class="track-name">Scenes</span><span class="timeline-tool">All</span></div>
+        <div class="timeline-label track-head"><span class="track-badge">T</span><span class="track-name">Script</span><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
+        <div class="timeline-label track-head audio-heads">${audioRows.length ? audioRows.map((row, at) => `<span class="audio-head-row"><span class="track-badge">A${at + 1}</span><button class="lane-tool${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="${row.muted ? 'Unmute' : 'Mute'} ${esc(row.name || row.kind)}">M</button><button class="lane-tool${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="${row.solo ? 'Unsolo' : 'Solo'} ${esc(row.name || row.kind)}">S</button><span class="audio-head-db" title="${esc(row.name || row.kind)} · ${audioDbLabel(row.volume, row.muted)}">${audioDbLabel(row.volume, row.muted)}</span></span>`).join('') : `<span class="audio-head-row"><span class="track-badge">A1</span><button class="timeline-tool icon" type="button" data-action="voice-tab" title="Add voice-over">${icon('plus', 12)}</button><button class="timeline-tool icon" type="button" data-action="add-music" title="Add music">${icon('volume', 12)}</button></span>`}</div>
+        <div class="timeline-label track-head"><span class="track-badge">FX</span><span class="track-name">Effects</span><button class="timeline-tool icon" type="button" data-action="open-focus" data-focus="sfx" title="Add special effect">${icon('plus', 12)}</button></div>
       </div>
       <div class="timeline-tracks" style="grid-template-rows:${laneRows}">
         <div class="timeline-track video">${timelineSceneRanges().map(({clip,index,start,end}) => {
           const key = clip.kind === 'media' ? 'media:' + index : 'source';
-          return `<span style="width:${(end-start)/total*100}%">${clip.media === 'image' ? '' : waveCanvas(key, clip.kind === 'media' ? (clip.offset || 0) : clip.start, end-start, start, state.edit.audio_source_muted ? 0 : clip.volume ?? 1, clip.file)}</span>`;
+          return `<span class="video-clip" data-clip-index="${index}" data-action="blade-clip" data-clip="${index}" style="width:${(end-start)/total*100}%">${filmstripMarkup(clip, start, end, total)}${clip.media === 'image' ? '' : waveCanvas(key, clip.kind === 'media' ? (clip.offset || 0) : clip.start, end-start, start, state.edit.audio_source_muted ? 0 : clip.volume ?? 1, clip.file)}${clipNameTag(clip, index)}</span>`;
         }).join('')}</div>
         <div class="timeline-track scene">${timelineSceneRanges().map(({clip,index,start,end}) =>
           timelineBlock(start, end, total, storyClipLabel(clip,index), 'select-clip',
-            `data-clip="${index}" draggable="true" aria-label="Clip ${index+1}, ${esc(storyClipLabel(clip,index))}. Alt and arrow keys move this clip." aria-pressed="${storyClipAt(state.timelineTime)?.index === index}"`,
-            '', 'Drag to move, or use Alt + Left / Right')).join('')}</div>
+            `data-clip="${index}" draggable="${state.timelineTool === 'blade' ? 'false' : 'true'}" aria-label="Clip ${index+1}, ${esc(storyClipLabel(clip,index))}. Alt and arrow keys move this clip." aria-pressed="${storyClipAt(state.timelineTime)?.index === index}"`,
+            '', state.timelineTool === 'blade' ? 'Click to split this clip' : 'Drag to move, or use Alt + Left / Right')).join('')}</div>
         <div class="timeline-track script${cues.length ? '' : ' is-empty'}">${cues.length ? cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('') : `<button class="lane-add" type="button" data-action="open-script">${icon('plus', 10)} Add a caption</button>`}</div>
         <div class="timeline-track audio-stack${audioRows.length ? '' : ' is-empty'}">${audioRows.length ? audioRows.map((row) => {
           const start = Number(row.start || 0);
@@ -2584,10 +2801,6 @@ function timelinePanel() {
           const left = total > 0 ? Math.max(0, Math.min(100, (start / total) * 100)) : 0;
           const width = total > 0 ? Math.max(0.6, Math.min(100 - left, (duration / total) * 100)) : 0;
           return `<div class="audio-lane${row.muted ? ' is-muted' : ''}${row.solo ? ' is-solo' : ''}" style="--lane-color:${audioColor(row.kind)}">
-            <span class="audio-lane-tools">
-              <button class="lane-tool${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="Mute ${esc(row.name || row.kind)}">M</button>
-              <button class="lane-tool${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="Solo ${esc(row.name || row.kind)}">S</button>
-            </span>
             <button class="timeline-block audio-block" type="button" data-action="open-focus" data-focus="audio" data-track="${esc(row.id)}" data-start="${start.toFixed(3)}" data-duration="${duration.toFixed(3)}" data-offset="${Number(row.offset || 0).toFixed(3)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${audioColor(row.kind)}b8;color:#fff;border-color:transparent">
               ${waveCanvas(row.id, row.offset || 0, duration, start, row.muted ? 0 : row.volume ?? (row.kind === 'music' ? .25 : 1), row.audio)}
 
@@ -5191,11 +5404,24 @@ async function verifyModel(modelId) {
 /* ------------------------------------------------------------------ events */
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  const row = event.target.closest?.('.sfx-row[data-action="sfx-edit"]');
-  if (!row) return;
-  event.preventDefault();
-  openSfxEditor(row.dataset.effect);
+  if (event.key === 'Enter' || event.key === ' ') {
+    const row = event.target.closest?.('.sfx-row[data-action="sfx-edit"]');
+    if (!row) return;
+    event.preventDefault();
+    openSfxEditor(row.dataset.effect);
+    return;
+  }
+  if (event.key === 'Escape' && state.timelineTool === 'blade') {
+    setTimelineTool('select');
+    return;
+  }
+  const typing = event.target.closest?.('input, textarea, select, [contenteditable="true"]');
+  if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+  const key = String(event.key || '').toLowerCase();
+  if ((key === 'v' || key === 'b') && state.screen === 'edit' && !state.focusMode) {
+    event.preventDefault();
+    setTimelineTool(key === 'b' ? 'blade' : 'select');
+  }
 });
 
 document.addEventListener('pointerdown', (event) => {
@@ -5240,6 +5466,9 @@ document.addEventListener('click', async (event) => {
     else if (action === 'open-editor') navigate(projectPath('edit'));
     else if (action === 'nav') navigate(projectPath(target.dataset.screen || 'edit'));
     else if (action === 'proof-tab') { state.proofTab = target.dataset.tab || 'scenes'; render(); }
+    else if (action === 'check-scene-view') { state.checkSceneView = target.dataset.view === 'grid' ? 'grid' : 'strip'; render(); }
+    else if (action === 'timeline-tool') setTimelineTool(target.dataset.tool || 'select');
+    else if (action === 'video-eye') { state.timelineVideoHidden = !state.timelineVideoHidden; render(); }
     else if (action === 'inspector-tab') {
       state.inspectorTab = target.dataset.tab || 'clean';
       state.scriptOpen = false;
@@ -5295,7 +5524,13 @@ document.addEventListener('click', async (event) => {
       if (strip) strip.scrollBy({ left: Number(target.dataset.dir || 1) * Math.max(180, strip.clientWidth * 0.75), behavior: 'smooth' });
     }
     else if (action === 'trim-apply') await applyTrim();
-    else if (action === 'select-clip') selectClip(Number(target.dataset.clip));
+    else if (action === 'select-clip') {
+      if (state.timelineTool === 'blade') await bladeAtClip(target, event);
+      else selectClip(Number(target.dataset.clip));
+    }
+    else if (action === 'blade-clip') {
+      if (state.timelineTool === 'blade') await bladeAtClip(target, event);
+    }
     else if (action === 'quiet-open') quietDialog();
     else if (action === 'split-at-playhead') await splitAtPlayhead();
     else if (action === 'slip-clip') await slipClip(Number(target.dataset.delta || 0));
@@ -5658,7 +5893,9 @@ function syncLayerFades() {
 
 document.addEventListener('scroll', (event) => {
   const target = event.target;
-  if (target && target.matches && target.matches('[data-layer-list], .inspector-body, .proof-list, .clean-scene-list, .scene-strip')) syncLayerFades();
+  if (!target || !target.matches) return;
+  if (target.matches('.timeline-scroll')) scheduleFilmstrip();
+  if (target.matches('[data-layer-list], .inspector-body, .proof-list, .clean-scene-list, .scene-strip')) syncLayerFades();
 }, true);
 
 function playerBar({ timecode = false } = {}) {
@@ -5741,7 +5978,53 @@ function setupPlayerBars() {
   });
 }
 
+function setupSceneGrid() {
+  const grid = document.querySelector('.scene-grid');
+  if (!grid) return;
+  const tiles = [...grid.querySelectorAll('.scene-tile')];
+  if (!tiles.length) return;
+  const columns = () => {
+    const template = getComputedStyle(grid).gridTemplateColumns || '';
+    return Math.max(1, template.split(' ').filter(Boolean).length);
+  };
+  for (const tile of tiles) {
+    tile.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      const shown = tiles.filter((item) => !item.classList.contains('is-hidden'));
+      const at = shown.indexOf(tile);
+      if (at < 0) return;
+      const step = columns();
+      const delta = event.key === 'ArrowLeft' ? -1
+        : event.key === 'ArrowRight' ? 1
+          : event.key === 'ArrowUp' ? -step : step;
+      const next = shown[Math.max(0, Math.min(shown.length - 1, at + delta))];
+      if (next) {
+        event.preventDefault();
+        next.focus();
+      }
+    });
+  }
+  const input = document.querySelector('#scene-grid-query');
+  if (!input) return;
+  const apply = () => {
+    state.sceneGridQuery = input.value;
+    const query = input.value.trim().toLowerCase();
+    let shown = 0;
+    for (const tile of tiles) {
+      const hit = !query || String(tile.dataset.search || '').includes(query);
+      tile.classList.toggle('is-hidden', !hit);
+      if (hit) shown += 1;
+    }
+    const count = grid.parentElement?.querySelector('[data-grid-count]');
+    if (count) count.textContent = query ? `${shown} of ${tiles.length} scenes` : `${tiles.length} scenes`;
+  };
+  input.addEventListener('input', apply);
+  apply();
+}
+
 function afterRender() {
+  syncFilmstrip();
+  setupSceneGrid();
   setupBrushCanvas();
   setupTimelineRuler();
   setupClipMovement();
@@ -5947,6 +6230,12 @@ function startPolls() {
 }
 
 window.duckProjectId = () => state.project?.id || '';
+
+window.duckFilmRequests = (reset = false) => {
+  const count = Number(state.filmRequests || 0);
+  if (reset) state.filmRequests = 0;
+  return count;
+};
 
 window.duckImportError = (message) => {
   state.importing = false;
