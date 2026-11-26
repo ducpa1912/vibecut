@@ -113,7 +113,7 @@ Codex runs one loop at a time and its queue is long, so the order below is its o
 | 2 | P-C · layout (loop 28) | OpenCode | 1024×700 and 200 % measured and fixed on six screens; story and render players opened | after P-A |
 | 3 | R4 + R5 · trim, release mode | Codex | X11 and unused codecs gone; Core ML handled per D4; size measured before and after; no runtime `swiftc` and helpers must exist | D4 |
 | 3 | P-D · timeline split + reorder | **Codex** | Done per D8, with tests and a founder script; owns `app.js` for the loop, so it starts after P-C merges | D8 |
-| 3 | P-E · Clean layer remove + box select | OpenCode | The two REQ-20261118-01 proposals, if the founder says yes; runs after P-D releases `app.js` | founder yes |
+| 3 | P-E · Clean layer remove + box select | OpenCode | The two REQ-20261118-01 proposals (founder yes 2026-11-26); runs after P-D releases `app.js` | after P-D |
 | 4 | R6 · Mac App Store signing (Gate A) | Codex | Signed with the team identity; every nested executable sandboxed with inherit; `xcrun` validation passes; no upload | D1, D2 |
 | 4 | F1 · founder hand test, one sitting | Founder (PO writes the script) | `founder-test-all.md` plus every new loop; bugs filed | P-A…P-E merged |
 | 4 | S1 · store listing | PO | Description, screenshots list, review notes (local server, sandbox, packs are data), privacy policy text | D7 |

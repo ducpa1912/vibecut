@@ -22,7 +22,7 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
 - [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (Codex, D3 decided 2026-11-26; brief `docs/teams/pb-whisper-in-app/BRIEF.md`)
-- [ ] REQ-20261125-03 · P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
+- [ ] REQ-20261125-03 · P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode; founder yes 2026-11-26 "P-E after P-D"; queued after P-D merges, brief `docs/teams/pe-layer-remove-select/BRIEF.md`)
 - REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
 - [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
@@ -33,8 +33,8 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 
 ## REQ-20261118-01 — Clean layers and the missing transcript (2026-11-18)
 
-- [ ] proposal · add a real **Remove layer** action (today only Off, kept and greyed) — founder decision
-- [ ] proposal · click a fill box on the video to select its layer — founder decision
+- [ ] REQ-20261118-01 · add a real **Remove layer** action — founder yes 2026-11-26, P-E
+- [ ] REQ-20261118-01 · click a fill box on the video to select its layer — founder yes 2026-11-26, P-E
 
 ## Loop 27 — fill and check cost, no pixel change (REQ-20261115-02 P5, REQ-20261111-11)
 
