@@ -311,6 +311,16 @@ def test_voiceover_script_has_no_character_cap():
     assert "no length limit" in page
 
 
+def test_takes_can_be_downloaded_as_wav():
+    takes = (ROOT / "static" / "voice" / "takes.js").read_text(encoding="utf-8")
+    page = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
+    assert "export async function downloadTake" in takes
+    assert "Download WAV" in takes
+    assert "takeFilename" in takes
+    assert "downloadTake" in page
+    assert "Download WAV" in page
+
+
 def test_partial_take_is_shown_in_the_takes_list():
     next_js = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
     takes_js = (ROOT / "static" / "voice" / "takes.js").read_text(encoding="utf-8")

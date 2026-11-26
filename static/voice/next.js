@@ -13,7 +13,7 @@ import { createClipFinder } from "./clipfinder.js";
 import { createComparePanel } from "./compare.js";
 import { createRecentPanel, recentKey, recordRecent } from "./recent.js";
 import { createVoiceSetup } from "./setup.js";
-import { checkFlags, createTakesPanel, playTakeAudio } from "./takes.js";
+import { checkFlags, createTakesPanel, downloadTake, playTakeAudio } from "./takes.js";
 import {
   cancelVoiceTask,
   createMyVoicePanel,
@@ -1052,7 +1052,17 @@ function paintVoiceover() {
         class: "vg-take-action", type: "button", text: "Play this take",
         on: { click: () => playTake(take) },
       });
-      result.append(el("div", { class: "vg-take-actions" }, [play]));
+      const download = el("button", {
+        class: "vg-take-action", type: "button", text: "Download WAV",
+        on: {
+          click: () => {
+            void downloadTake(take).catch((cause) => {
+              setNotice(cause?.message || "Could not download that take.", "bad");
+            });
+          },
+        },
+      });
+      result.append(el("div", { class: "vg-take-actions" }, [play, download]));
     }
   }
 }

@@ -16,7 +16,7 @@
  *   POST   /api/voices/takes/{id}/save-voice
  */
 
-import { request, syncTokenCookie } from "./api.js";
+import { errorDetail, request, syncTokenCookie, tokenValue } from "./api.js";
 import { el } from "./ui.js";
 import { relativeTime } from "./recent.js";
 
@@ -46,6 +46,46 @@ export function saveTakeAsVoice(takeId, name) {
   return request(`/api/voices/takes/${encodeURIComponent(takeId)}/save-voice`, {
     method: "POST", body: { name },
   });
+}
+
+export function takeFilename(take) {
+  const base = String(take?.label || "voice-take")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "voice-take";
+  const stamp = new Date(Number(take?.created || Date.now()) * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  const day = `${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}`;
+  return `${base}-${day}.wav`;
+}
+
+/** Download one take as a WAV, with a readable filename. */
+export async function downloadTake(take) {
+  syncTokenCookie();
+  const headers = { Accept: "audio/wav" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response;
+  try {
+    response = await fetch(take.audio_url, {
+      headers, credentials: "same-origin", cache: "no-store",
+    });
+  } catch (_) {
+    throw new Error("Cannot reach VibeCut. Is the server running? Then download the take again.");
+  }
+  if (!response.ok) {
+    let payload = null;
+    try { payload = JSON.parse(await response.text()); } catch (_) { payload = null; }
+    throw new Error(errorDetail(payload) || "Could not download that take. It may have been cleaned up.");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = el("a", { href: url, download: takeFilename(take) });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function cleanupTakes(confirm = false, days = 30) {
@@ -328,7 +368,18 @@ export function createTakesPanel({
       class: "vg-take-action is-danger", type: "button", text: "Delete",
       on: { click: () => { void remove(take); } },
     });
-    const actions = [play, load, save];
+    const download = el("button", {
+      class: "vg-take-action", type: "button", text: "Download WAV",
+      title: "Save this take as a WAV file",
+      on: {
+        click: () => {
+          void downloadTake(take).catch((cause) => {
+            onNotice(cause?.message || "Could not download that take.", "bad");
+          });
+        },
+      },
+    });
+    const actions = [play, download, load, save];
     if (onKeepTake && take.clone_voice) {
       actions.push(el("button", {
         class: "vg-take-action", type: "button", text: "Keep take",
