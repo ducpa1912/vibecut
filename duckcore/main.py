@@ -134,7 +134,22 @@ class ClipPatch(BaseModel):
 
 
 class SplitClipBody(BaseModel):
+    updated: float | None = None
     time: float = Field(ge=0.0)
+
+
+class TimelineMove(BaseModel):
+    index: int = Field(ge=0)
+    target: int = Field(ge=0)
+    updated: float
+
+
+class SilenceRequest(BaseModel):
+    threshold: float = Field(default=-40, ge=-90, le=0)
+    minimum: float = Field(default=0.6, ge=0.05, le=120)
+    padding: float = Field(default=0.12, ge=0, le=5)
+    selected: list[int] | None = None
+    preview_id: str = ""
 
 
 class SlipClipBody(BaseModel):
@@ -1252,9 +1267,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         old_end = float(clip.get("end") or 0.0)
         start = float(body.start) if body.start is not None else old_start
         end = float(body.end) if body.end is not None else old_end
-        lower = float(clips[clip_index - 1].get("end") or 0.0) if clip_index else 0.0
         duration = float((edit.get("source") or {}).get("duration") or end)
-        upper = float(clips[clip_index + 1].get("start") or duration) if clip_index + 1 < len(clips) else duration
+        lower, upper = edits.clip_bounds(clips, clip_index, duration)
         start = max(lower, min(start, upper - 0.1))
         end = min(upper, max(end, start + 0.1))
         if end - start < 0.1:
@@ -1263,7 +1277,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         clip["end"] = round(end, 3)
         clip["dur"] = round(end - start, 3)
         edit["start"] = round(float(clips[0].get("start") or 0.0), 3)
-        edit["end"] = round(float(clips[-1].get("end") or 0.0), 3)
+        edit["end"] = round(edit["start"] + edits._story_end(clips), 3)
         edits.save_edit(edit, data_root)
         return {"edit": edit}
 
@@ -1288,12 +1302,89 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     ) -> dict:
         try:
             edit = edits.get_edit(data_root, project_id, edit_id)
+            if body.updated is not None and body.updated != edit.get("updated"):
+                raise edits.EditConflict("The timeline changed. Reload the edit.")
             edit = edits.split_at(edit, data_root, body.time)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
         except edits.EditError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clips/move")
+    def timeline_move(project_id: str, edit_id: str, body: TimelineMove,
+                      _: None = Depends(require_token)) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            if edit.get("updated") != body.updated:
+                raise HTTPException(409, "The timeline changed. Reload the edit.")
+            return {"edit": edits.move_clip(edit, data_root, body.index, body.target)}
+        except KeyError as exc:
+            raise HTTPException(404, "Edit not found.") from exc
+        except edits.EditConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except edits.EditError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/levels")
+    def timeline_levels(project_id: str, edit_id: str, track: str = "source",
+                        _: None = Depends(require_token)) -> dict:
+        from duckcore import levels
+
+        project = data_root / "projects" / project_id
+        try:
+            source = Path(store.get(project_id)["source_path"])
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            if track.startswith("media:"):
+                clip = edit["clips"][int(track.split(":")[1])]
+                source = levels.asset(project, clip["file"])
+            elif track != "source":
+                legacy = not edit.get("audio_tracks")
+                rows = edits.ensure_audio_tracks(edit) + (edit.get("sfx") or [])
+                row = next(r for r in rows if r.get("id") == track or
+                           (legacy and track == "legacy-" + str(r.get("kind"))))
+                source = levels.asset(project, row.get("audio") or row["file"])
+            return {"rate": levels.RATE, "values": [round(v, 6) for v in levels.read(source, project).tolist()]}
+        except (IndexError, KeyError, StopIteration) as exc:
+            raise HTTPException(404, "Audio track not found.") from exc
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise HTTPException(400, "Could not read this audio track.") from exc
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clips/silence")
+    def timeline_silence(project_id: str, edit_id: str, body: SilenceRequest,
+                         _: None = Depends(require_token)) -> dict:
+        from duckcore import silence
+        from duckcore.engine import stt
+
+        try:
+            source = Path(store.get(project_id)["source_path"])
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            project = data_root / "projects" / project_id
+            transcript = stt.load_latest_transcript(project) or {}
+            words = transcript.get("words") or transcript.get("segments") or []
+            if not words and (project / "check.json").is_file():
+                checked = json.loads((project / "check.json").read_text()).get("transcript") or {}
+                words = checked.get("words") or checked.get("segments") or []
+            spans = silence.preview(edit, project, source, words, body.threshold, body.minimum, body.padding)
+            key = hashlib.sha256(json.dumps([edit["updated"], spans, body.threshold, body.minimum,
+                                     body.padding]).encode()).hexdigest()
+            if body.selected is None:
+                return {"spans": spans, "total": round(sum(b-a for a,b in spans), 3), "preview_id": key}
+            if body.preview_id != key:
+                raise HTTPException(409, "The edit changed. Find quiet spans again.")
+            if not body.selected or any(i < 0 or i >= len(spans) for i in body.selected):
+                raise HTTPException(400, "Select one or more previewed spans.")
+            cuts = [spans[i] for i in sorted(set(body.selected))]
+            return {"edit": edits.cut_spans(edit, data_root, cuts),
+                    "removed": round(sum(b-a for a,b in cuts), 3)}
+        except KeyError as exc:
+            raise HTTPException(404, "Edit not found.") from exc
+        except edits.EditConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/clean/manual")
     def create_manual_layer(

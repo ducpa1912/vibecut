@@ -1337,6 +1337,26 @@ def _apply_visual_effects(
     temporary.replace(output)
 
 
+def _audio_fragment(row: dict, duration: float, level: float) -> str:
+    """Position the samples on their original fade envelope before mixing."""
+    offset = max(0.0, float(row.get("offset") or 0))
+    phase = max(0.0, float(row.get("fade_offset") or 0))
+    total = float(row.get("fade_duration") or duration)
+    chain = f"atrim=start={offset:.3f}:duration={duration:.3f},asetpts=PTS-STARTPTS"
+    if phase:
+        chain += f"+{phase:.3f}/TB"
+    chain += f",volume={level:.3f}"
+    fade_in = min(total / 2, float(row.get("fade_in") or 0))
+    fade_out = min(total / 2, float(row.get("fade_out") or 0))
+    if fade_in > 0:
+        chain += f",afade=t=in:st=0:d={fade_in:.3f}"
+    if fade_out > 0:
+        chain += f",afade=t=out:st={total - fade_out:.3f}:d={fade_out:.3f}"
+    if phase:
+        chain += ",asetpts=PTS-STARTPTS"
+    return chain
+
+
 def _mix_sfx_audio(
     ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None,
 ) -> None:
@@ -1356,15 +1376,7 @@ def _mix_sfx_audio(
         delay = max(0, int(float(item.get("start") or 0.0) * 1000))
         raw_volume = item.get("volume")
         level = max(0.0, min(1.5, float(0.9 if raw_volume is None else raw_volume)))
-        duration = max(0.2, float(item.get("end") or 0.0) - float(item.get("start") or 0.0))
-        offset = max(0.0, float(item.get("offset") or 0.0))
-        fade_in = max(0.0, min(duration / 2, float(item.get("fade_in") or 0.0)))
-        fade_out = max(0.0, min(duration / 2, float(item.get("fade_out") or 0.0)))
-        chain = f"atrim=start={offset:.3f}:duration={duration:.3f},asetpts=PTS-STARTPTS,volume={level:.3f}"
-        if fade_in:
-            chain += f",afade=t=in:st=0:d={fade_in:.3f}"
-        if fade_out:
-            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}"
+        chain = _audio_fragment(item, float(item["end"]) - float(item["start"]), level)
         label = f"[sfx{input_index}]"
         filters.append(f"[{input_index}:a]{chain},adelay={delay}|{delay}{label}")
         labels.append(label)
@@ -1446,15 +1458,7 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
         default_volume = 0.25 if row.get("kind") == "music" else 1.0
         level = max(0.0, min(1.5, float(default_volume if raw_volume is None else raw_volume)))
         delay = max(0, int(float(row.get("start") or 0.0) * 1000))
-        duration = max(0.2, float(row.get("duration") or 0.2))
-        offset = max(0.0, float(row.get("offset") or 0.0))
-        fade_in = max(0.0, min(duration / 2, float(row.get("fade_in") or 0.0)))
-        fade_out = max(0.0, min(duration / 2, float(row.get("fade_out") or 0.0)))
-        chain = f"atrim=start={offset:.3f}:duration={duration:.3f},asetpts=PTS-STARTPTS,volume={level:.3f}"
-        if fade_in:
-            chain += f",afade=t=in:st=0:d={fade_in:.3f}"
-        if fade_out:
-            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}"
+        chain = _audio_fragment(row, float(row.get("duration") or 0.2), level)
         label = f"[a{index}]"
         filters.append(
             f"[{index}:a]{chain},adelay={delay}|{delay}{label}"

@@ -11,10 +11,18 @@ import json
 import secrets
 import time
 from pathlib import Path
+from threading import Lock
+
+
+_save_lock = Lock()
 
 
 class EditError(ValueError):
     pass
+
+
+class EditConflict(EditError):
+    """A timeline change was prepared against an older edit."""
 
 
 def edits_dir(data_root: Path, project_id: str) -> Path:
@@ -402,21 +410,115 @@ def split_at(edit: dict, data_root: Path, output_time: float) -> dict:
         start = float(clip.get("start") or 0.0)
         end = float(clip.get("end") or 0.0)
         duration = max(0.0, end - start)
-        if time_value < cursor + duration - 0.02:
-            offset = max(0.02, time_value - cursor)
-            split = start + offset
-            if split <= start + 0.02 or split >= end - 0.02:
+        if time_value < cursor + duration:
+            split = round(start + time_value - cursor, 3)
+            if min(split - start, end - split) < 0.04 - 1e-8:
                 raise EditError("Move the playhead inside a clip to split it.")
-            first = _clip({"id": clip.get("scene")}, start, split, str(clip.get("role") or "body"))
-            second = _clip({"id": clip.get("scene")}, split, end, str(clip.get("role") or "body"))
+            first = _slice_clip(clip, 0, split - start)
+            second = _slice_clip(clip, split - start, duration)
             clips[index:index + 1] = [first, second]
-            edit["clips"] = clips
-            if edit.get("kind") != "story":
-                edit["end"] = max(float(edit.get("end") or 0.0), end)
-            save_edit(edit, data_root)
-            return edit
+            _refresh_story(edit, clips)
+            return save_edit(edit, data_root, expected_updated=edit.get("updated"))
         cursor += duration
     raise EditError("Move the playhead inside a clip to split it.")
+
+
+def _slice_clip(clip, lo, hi):
+    part = copy.deepcopy(clip)
+    part.update(start=round(clip["start"] + lo, 3), end=round(clip["start"] + hi, 3),
+                dur=round(hi - lo, 3))
+    if clip.get("kind") == "media":
+        part["offset"] = round(clip.get("offset", 0) + lo, 3)
+    return part
+
+
+def _remap_rows(rows, windows, audio=False):
+    result = []
+    seen = set()
+    for lo, hi, dest in windows:
+        for row in rows:
+            start = float(row.get("start", 0))
+            duration = float(row.get("duration", 0)) if audio else float(row["end"]) - start
+            a, b = max(start, lo), min(start + duration, hi)
+            if b <= a + 1e-8:
+                continue
+            part = copy.deepcopy(row)
+            if row.get("id") in seen:
+                part["id"] = f"{row['id']}_{secrets.token_hex(4)}"
+            if row.get("id"):
+                seen.add(row["id"])
+            part["start"] = round(dest + a - lo, 3)
+            if audio:
+                part["duration"] = round(b - a, 3)
+            else:
+                part["end"] = round(dest + b - lo, 3)
+            if audio or row.get("kind") == "sound":
+                part["offset"] = round(row.get("offset", 0) + a - start, 3)
+                part["fade_offset"] = round(row.get("fade_offset", 0) + a - start, 3)
+                part["fade_duration"] = row.get("fade_duration", duration)
+            result.append(part)
+    return result
+
+
+def _apply_pieces(edit, root, pieces):
+    """Map old output intervals to new output intervals by clip occurrence."""
+    clips = edit["clips"]
+    starts = []
+    cursor = 0
+    for clip in clips:
+        starts.append(cursor)
+        cursor += clip["end"] - clip["start"]
+    windows, new = [], []
+    cursor = 0
+    for index, lo, hi in pieces:
+        new.append(_slice_clip(clips[index], lo, hi))
+        a, b = starts[index] + lo, starts[index] + hi
+        if windows and abs(windows[-1][1] - a) < 1e-8:
+            windows[-1][1] = b
+        else:
+            windows.append([a, b, cursor])
+        cursor += hi - lo
+    if not new:
+        raise EditError("Keep at least one part of the video.")
+    if edit.get("captions"):
+        track = edit["captions"]
+        track["cues"] = _remap_rows(track.get("cues", []), windows)
+    edit["audio_tracks"] = _remap_rows(ensure_audio_tracks(edit), windows, audio=True)
+    for kind in ("voice", "dub", "music"):
+        if edit.get(kind):
+            first = next((r for r in edit["audio_tracks"] if r.get("kind") == kind), None)
+            edit[kind] = {**edit[kind], **first} if first else None
+    edit["sfx"] = _remap_rows(edit.get("sfx", []), windows)
+    # Clean ranges already reference absolute source time.
+    _refresh_story(edit, new)
+    return save_edit(edit, root, expected_updated=edit.get("updated"))
+
+
+def move_clip(edit, root, index, target):
+    clips = edit["clips"]
+    if not (0 <= index < len(clips) and 0 <= target < len(clips)):
+        raise EditError("Choose a clip on the timeline.")
+    order = list(range(len(clips)))
+    order.insert(target, order.pop(index))
+    return _apply_pieces(edit, root, [(i, 0, clips[i]["end"] - clips[i]["start"]) for i in order])
+
+
+def cut_spans(edit, root, spans):
+    pieces = []
+    cursor = 0
+    for i, clip in enumerate(edit["clips"]):
+        end = cursor + clip["end"] - clip["start"]
+        keep = cursor
+        for a, b in spans:
+            if a >= end or b <= cursor:
+                continue
+            if a > keep:
+                pieces.append((i, keep - cursor, min(a, end) - cursor))
+            keep = max(keep, b)
+        if keep < end - 1e-8:
+            pieces.append((i, keep - cursor, end - cursor))
+        cursor = end
+    return _apply_pieces(edit, root, pieces)
 
 
 def ensure_audio_tracks(edit: dict) -> list[dict]:
@@ -495,6 +597,17 @@ def remove_audio_track(edit: dict, track_id: str) -> list[dict]:
     return remaining
 
 
+def clip_bounds(clips, index, duration):
+    """Constrain adjacent cuts only when the neighbours are in source order."""
+    clip = clips[index]
+    lower, upper = 0, duration
+    if index and clips[index - 1]["end"] <= clip["start"]:
+        lower = clips[index - 1]["end"]
+    if index + 1 < len(clips) and clips[index + 1]["start"] >= clip["end"]:
+        upper = clips[index + 1]["start"]
+    return lower, upper
+
+
 def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dict:
     clips = [clip for clip in edit.get("clips") or [] if isinstance(clip, dict)]
     if clip_index < 0 or clip_index >= len(clips):
@@ -506,8 +619,7 @@ def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dic
     if duration <= 0:
         raise EditError("This clip has no duration.")
     source_duration = float((edit.get("source") or {}).get("duration") or end)
-    lower = float(clips[clip_index - 1].get("end") or 0.0) if clip_index else 0.0
-    upper = float(clips[clip_index + 1].get("start") or source_duration) if clip_index + 1 < len(clips) else source_duration
+    lower, upper = clip_bounds(clips, clip_index, source_duration)
     new_start = max(lower, min(upper - duration, start + float(delta)))
     if abs(new_start - start) < 0.001:
         raise EditError("The clip is already at its slip limit.")
@@ -579,16 +691,19 @@ def set_cut(
     return edit
 
 
-def save_edit(edit: dict, data_root: Path) -> dict:
+def save_edit(edit: dict, data_root: Path, *, expected_updated: float | None = None) -> dict:
     from duckcore.render import output_fps
 
     source = edit.setdefault("source", {})
     source["output_fps"] = output_fps(source)
-    edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(edit, indent=2, sort_keys=True), encoding="utf-8")
-    temporary.replace(path)
+    with _save_lock:
+        if expected_updated is not None and json.loads(path.read_text())["updated"] != expected_updated:
+            raise EditConflict("The timeline changed. Reload the edit.")
+        edit["updated"] = time.time()
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(edit, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
     return edit
 
 
