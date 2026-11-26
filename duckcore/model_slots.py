@@ -9,7 +9,7 @@ from pathlib import Path
 
 from duckcore.providers import local_base_url
 
-FILES = {'transcription': ('config.json',), 'voice': ('kokoro-v1.0.onnx', 'voices-v1.0.bin')}
+FILES = {'transcription': (), 'voice': ('kokoro-v1.0.onnx', 'voices-v1.0.bin')}
 VOICE_FRONTEND = 'tokenizer.onnx'
 VOICE_FRONTEND_MESSAGE = 'This voice folder needs a local text-to-phoneme model (tokenizer.onnx). Choose a compatible folder or a macOS voice.'
 DIRS = {'transcription': 'stt-user', 'voice': 'voice-user'}
@@ -80,15 +80,23 @@ def model_id(base):
     return rows[0]['id']
 
 
+def speech_weights(folder):
+    candidates = [p for p in Path(folder).glob('*.bin') if p.is_file() and not p.is_symlink()]
+    if len(candidates) != 1:
+        raise ValueError('Choose a folder containing one GGML speech weights file (.bin).')
+    with candidates[0].open('rb') as stream:
+        if stream.read(4) != b'lmgg':
+            raise ValueError('This file is not GGML speech weights.')
+    return candidates[0]
+
+
 def validate(task, folder):
     root = Path(folder)
     for name in FILES[task]:
         if not (root / name).is_file() or not (root / name).stat().st_size:
             raise ValueError(f'That folder needs {name}.')
     if task == 'transcription':
-        json.loads((root / 'config.json').read_text())
-        if not (root / 'weights.npz').is_file() and not list(root.glob('*.safetensors')):
-            raise ValueError('That folder needs weights.npz or *.safetensors.')
+        speech_weights(root)
     if task == 'voice':
         import numpy as np
         try:

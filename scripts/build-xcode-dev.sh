@@ -28,6 +28,14 @@ DEVELOPER_DIR="$DEVELOPER" xcodebuild \
 BUILT="$ROOT/build/xcode-derived/Build/Products/Release/DuckSuite.app"
 rm -rf "$APP_OUT"
 cp -R "$BUILT" "$APP_OUT"
+# The Xcode resources phase copies the dev bundle's Helpers folder, including whisper-cli.
+if [[ -x "$APP_OUT/Contents/Resources/Helpers/whisper-cli" ]]; then
+  cp "$ROOT/build/whisper-cpp/LICENSE" "$APP_OUT/Contents/Resources/Licenses/whisper.cpp-MIT.txt"
+elif [[ "${DUCK_ALLOW_NO_WHISPER:-0}" != 1 ]]; then
+  echo 'error: Xcode did not copy whisper-cli into Resources/Helpers' >&2
+  exit 1
+fi
+"$ROOT/scripts/check-bundle-helpers.sh" "$APP_OUT"
 # Local ad-hoc signature; App Store needs a real identity.
 "$ROOT/scripts/sign-local-app.sh" "$APP_OUT"
 
