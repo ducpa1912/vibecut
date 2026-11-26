@@ -18,7 +18,8 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) → P-E → G1 → T1.
 
-- [ ] REQ-20261126-01 · G1 one baked grade cube for preview and render (fixes preview ≠ render), `lut3d`, user .cube LUTs, 8 ported looks with MIT notice, tint (Codex)
+- [ ] REQ-20261126-01 · G1 core: one baked grade cube, `lut3d` render, user .cube LUTs, 8 ported looks with MIT notice, tint, cube/still routes (Codex, started 2026-11-26, brief `docs/teams/g1-grade-cube-core/BRIEF.md`)
+- [ ] REQ-20261126-01 · G1 preview: WebGL pass with the same cube, still-frame fallback, look menu and LUT picker in the inspector (after P-E releases `app.js`)
 - [ ] REQ-20261126-01 · T1 filmstrip per clip, clip names, track headers, blade tool, scene bin grid (OpenCode, after P-E)
 - [ ] REQ-20261126-01 · icon style pass: one stroke weight, icon per inspector row, fade-curve icons (with T1)
 
