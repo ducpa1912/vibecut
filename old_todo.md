@@ -488,3 +488,5 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] Frame timecode beside the time on the Edit bar (today a tooltip only, `98e1edf`). — done 2026-11-26 (P-C, `6e22b72`).
 - [x] REQ-20261125-03 · R2 GPL out (Codex `88bbb37`, merged `d7e7f07` 2026-11-26): Kokoro, phonemizer, espeak-ng, pcaudio gone; `scripts/scan-bundle-gpl.sh` before signing; NumPy GCC-exception notice allowed only without GCC runtime files (founder "Yes, allow it").
 - [x] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it. Moot for v1 once R2 lands (D9: Kokoro dropped). Closed 2026-11-26: Kokoro removed (R2).
+
+- [x] REQ-20261125-03 · R2 follow-ups (OpenCode, `docs/teams/r2-followups/BRIEF.md`): show the voice fallback message in `app.js` (generate and preview, ~4740/4761); the dub title at `main.py` ~1604 names the requested voice, not the one used; `AppModel.swift` ~167 prechecks only the old two voice files; drop the retired package from `requirements-duck.txt` line 7 — merged `6b0cab2` 2026-11-26 (OpenCode, review `docs/teams/r2-followups/review.md`)
