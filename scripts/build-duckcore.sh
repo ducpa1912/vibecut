@@ -26,8 +26,9 @@ mkdir -p "$ROOT/build/pyinstaller-spec"
   --specpath "$ROOT/build/pyinstaller-spec" \
   --paths "$ROOT" \
   --collect-submodules uvicorn \
-  --collect-submodules kokoro_onnx \
-  --collect-data kokoro_onnx \
+  --exclude-module kokoro_onnx \
+  --exclude-module phonemizer \
+  --exclude-module espeakng_loader \
   --collect-all torch \
   --collect-all coremltools \
   --collect-submodules ctranslate2 \

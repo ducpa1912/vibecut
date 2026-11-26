@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import subprocess
+from tempfile import TemporaryDirectory
 import wave
 from pathlib import Path
 
@@ -28,30 +29,13 @@ NOVELTY_VOICES = {
 }
 
 
-KOKORO_VOICES = (
-    ("af_heart", "en_US", "Kokoro · Heart"),
-    ("af_bella", "en_US", "Kokoro · Bella"),
-    ("af_nicole", "en_US", "Kokoro · Nicole"),
-    ("am_michael", "en_US", "Kokoro · Michael"),
-    ("am_adam", "en_US", "Kokoro · Adam"),
-    ("bf_emma", "en_GB", "Kokoro · Emma"),
-    ("bm_george", "en_GB", "Kokoro · George"),
-    ("jf_alpha", "ja_JP", "Kokoro · Alpha"),
-    ("jm_kumo", "ja_JP", "Kokoro · Kumo"),
-    ("zf_xiaoxiao", "zh_CN", "Kokoro · Xiaoxiao"),
-    ("zm_yunjian", "zh_CN", "Kokoro · Yunjian"),
-)
-KOKORO_LANGS = {
-    "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja",
-    "p": "pt-br", "z": "cmn",
-}
+DEFAULT_VOICE = "macOS default"
 
 
-def _kokoro_pack(data_root: Path | None) -> Path | None:
-    if not data_root:
-        return None
-    from duckcore import packs
-    return packs.installed_path(Path(data_root), "tts-kokoro")
+def _resolve_voice(name):
+    if name.lower() in {"kokoro", "tts-kokoro", "kokoro-onnx"} or name.lower().startswith("kokoro:"):
+        return DEFAULT_VOICE, {"message": "The saved voice pack was retired. Using the default macOS voice."}
+    return name, {}
 
 
 def list_voices(data_root: Path | None = None) -> list[dict[str, str]]:
@@ -73,15 +57,10 @@ def list_voices(data_root: Path | None = None) -> list[dict[str, str]]:
             "sample": (match.group("sample") or "").strip(),
         })
     voices.sort(key=lambda item: (not item["locale"].startswith("en_US"), item["locale"], item["name"]))
-    if _kokoro_pack(data_root) is not None:
-        voices = [
-            {"name": f"kokoro:{voice_id}", "locale": locale, "sample": label, "label": label}
-            for voice_id, locale, label in KOKORO_VOICES
-        ] + voices
     if data_root:
         from duckcore import model_slots
         folder = model_slots.selected(data_root, 'voice')
-        if folder:
+        if folder and (Path(folder) / model_slots.VOICE_FRONTEND).is_file():
             import numpy as np
             with np.load(Path(folder) / 'voices-v1.0.bin', allow_pickle=False) as archive:
                 voices += [{'name': 'user:' + name, 'locale': '', 'sample': 'Your voice · ' + name,
@@ -111,64 +90,61 @@ def _duration(path: Path) -> float:
 from duckcore.providers import local_step
 
 
-@local_step('voice.pack', ('kokoro-v1.0.onnx', 'voices-v1.0.bin'))
-def _synthesize_kokoro(text: str, voice: str, output: Path, data_root: Path) -> None:
-    from duckcore import model_slots
-    user = voice.startswith('user:')
-    pack = Path(model_slots.selected(data_root, 'voice')) if user and model_slots.selected(data_root, 'voice') else _kokoro_pack(data_root)
-    if user:
-        if not model_slots.selected(data_root, 'voice'):
-            raise RuntimeError('Choose your voice model again.')
-        voice = voice.split(':', 1)[1]
-    if pack is None:
-        raise RuntimeError("Kokoro voice pack is not installed.")
-    try:
-        from kokoro_onnx import EspeakConfig, Kokoro
-    except ImportError as exc:
-        raise RuntimeError("Kokoro runtime is not available.") from exc
-    model = pack / "kokoro-v1.0.onnx"
-    voices = pack / "voices-v1.0.bin"
-    engine = None
-    try:
-        engine = Kokoro(str(model), str(voices))
-    except Exception:  # noqa: BLE001
-        for library, data in (
-            ("/opt/homebrew/lib/libespeak-ng.dylib", "/opt/homebrew/share/espeak-ng-data"),
-            ("/usr/lib/libespeak-ng.so", "/usr/share/espeak-ng-data"),
-        ):
-            if Path(library).is_file() and Path(data).is_dir():
-                engine = Kokoro(
-                    str(model), str(voices),
-                    espeak_config=EspeakConfig(lib_path=library, data_path=data),
-                )
-                break
-    if engine is None:
-        raise RuntimeError("Kokoro could not load its voice runtime.")
-    prefix = (voice or "")[:1]
-    language = KOKORO_LANGS.get(prefix, "en-us")
-    try:
-        samples, sample_rate = engine.create(
-            text, voice=voice, speed=1.0, lang=language,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Kokoro voice failed: {str(exc)[:200]}") from exc
+@local_step('voice.user', ('kokoro-v1.0.onnx', 'voices-v1.0.bin', 'tokenizer.onnx'))
+def _synthesize_user(text, name, output, data_root):
+    import numpy as np
+    import onnxruntime as ort
     import soundfile as sf
+    from duckcore import model_slots
 
-    sf.write(str(output), samples, sample_rate)
+    selected = model_slots.selected(data_root, "voice") if data_root else ""
+    if not selected:
+        raise ValueError("Choose your voice model again.")
+    folder = Path(selected)
+    tokenizer = folder / model_slots.VOICE_FRONTEND
+    if not tokenizer.is_file():
+        raise ValueError(model_slots.VOICE_FRONTEND_MESSAGE)
+    # The folder supplies the language-specific text frontend as model data.
+    # Its first output contains unpadded phoneme IDs in the voice graph's vocabulary.
+    frontend = ort.InferenceSession(str(tokenizer), providers=["CPUExecutionProvider"])
+    inputs = frontend.get_inputs()
+    if len(inputs) != 1 or inputs[0].type != "tensor(string)":
+        raise ValueError("The voice tokenizer must accept one text input.")
+    raw = frontend.run(None, {inputs[0].name: np.array([text], dtype=object)})[0]
+    ids = np.asarray(raw)
+    if ids.ndim == 2 and ids.shape[0] == 1:
+        ids = ids[0]
+    if ids.ndim != 1 or ids.dtype.kind not in "iu" or not ids.size or (ids <= 0).any():
+        raise ValueError("The voice tokenizer returned invalid phoneme IDs.")
+    model = ort.InferenceSession(str(folder / "kokoro-v1.0.onnx"), providers=["CPUExecutionProvider"])
+    inputs = {arg.name: arg.type for arg in model.get_inputs()}
+    tokens_key = "input_ids" if "input_ids" in inputs else "tokens"
+    types = {"tensor(int64)": np.int64, "tensor(int32)": np.int32, "tensor(float)": np.float32}
+    with np.load(folder / "voices-v1.0.bin", allow_pickle=False) as voices:
+        if name not in voices:
+            raise ValueError("Choose a voice in your current model folder.")
+        styles = voices[name]
+    audio = []
+    for offset in range(0, len(ids), 510):
+        chunk = ids[offset:offset + 510]
+        feed = {
+            tokens_key: np.asarray([[0, *chunk, 0]], dtype=types[inputs[tokens_key]]),
+            "style": styles[min(len(chunk), len(styles)) - 1].reshape(1, -1).astype(np.float32),
+            "speed": np.ones(1, dtype=types[inputs["speed"]]),
+        }
+        audio.append(model.run(None, feed)[0].ravel())
+    sf.write(str(output), np.concatenate(audio), 24000)
 
 
 @local_step('voice')
 def _synthesize(text: str, voice: str, aiff: Path, data_root: Path | None = None) -> None:
-    if str(voice).startswith('user:'):
-        _synthesize_kokoro(text, voice, aiff, data_root)
+    if voice.startswith('user:'):
+        _synthesize_user(text, voice.split(':', 1)[1], aiff, data_root)
         return
-    if str(voice).startswith("kokoro:"):
-        if data_root is None:
-            raise RuntimeError("Kokoro voice pack is not available.")
-        _synthesize_kokoro(text, str(voice).split(":", 1)[1], aiff, data_root)
-        return
+    voice, _ = _resolve_voice(voice)
+    options = [] if voice == DEFAULT_VOICE else ["-v", voice]
     result = subprocess.run(
-        [_which_say(), "-v", voice, "-o", str(aiff), text],
+        [_which_say(), *options, "-o", str(aiff), "--", text],
         capture_output=True, text=True, timeout=120,
     )
     if result.returncode != 0 or not aiff.is_file():
@@ -225,51 +201,53 @@ def build_track(
         raise ValueError("Generate captions first; they are the script.")
     if not voice_name:
         raise ValueError("Choose a local voice.")
+    from duckcore import model_slots
+    voice_name, notice = _resolve_voice(voice_name)
+    identity = model_slots.selected(data_root, 'voice') if voice_name.startswith('user:') else ''
     mode = "voice_only" if mode == "voice_only" else "voice_over"
     job_dir = Path(data_root) / "projects" / project_id / "voice"
     job_dir.mkdir(parents=True, exist_ok=True)
     token = hashlib.sha1(
-        f"{voice_name}|{mode}|{[(c.get('start'), c.get('end'), c.get('text')) for c in cues]}".encode()
+        f"{voice_name}{identity}|{mode}|{[(c.get('start'), c.get('end'), c.get('text')) for c in cues]}".encode()
     ).hexdigest()[:12]
     output = job_dir / f"voice_{token}.wav"
     if not output.is_file():
-        with wave.open(str(output), "wb") as writer:
-            writer.setnchannels(CHANNELS)
-            writer.setsampwidth(SAMPLE_WIDTH)
-            writer.setframerate(SAMPLE_RATE)
-            cursor = 0
-            for index, cue in enumerate(sorted(cues, key=lambda item: float(item.get("start") or 0.0))):
-                start = max(0.0, float(cue.get("start") or 0.0))
-                end = max(start + 0.05, float(cue.get("end") or 0.0))
-                start_frame = int(round(start * SAMPLE_RATE))
-                if start_frame > cursor:
-                    writer.writeframes(_silence(start_frame - cursor))
-                    cursor = start_frame
-                aiff = job_dir / f".cue_{index}.aiff"
-                wav = job_dir / f".cue_{index}.wav"
-                fitted = job_dir / f".cue_{index}.fit.wav"
-                if str(voice_name).startswith('user:'):
-                    _synthesize(str(cue.get('text') or ''), voice_name, aiff, data_root)
-                elif str(voice_name).startswith("kokoro:"):
-                    _synthesize_kokoro(
-                        str(cue.get("text") or ""), str(voice_name).split(":", 1)[1],
-                        aiff, data_root,
-                    )
-                else:
-                    _synthesize(str(cue.get("text") or ""), voice_name, aiff)
-                _to_wave(aiff, wav)
-                _fit(wav, fitted, end - start)
-                with wave.open(str(fitted), "rb") as reader:
-                    frames = reader.readframes(reader.getnframes())
-                writer.writeframes(frames)
-                cursor += len(frames) // (SAMPLE_WIDTH * CHANNELS)
-                for path in (aiff, wav, fitted):
-                    path.unlink(missing_ok=True)
-            total = int(round(float(total_duration or 0.0) * SAMPLE_RATE))
-            if total > cursor:
-                writer.writeframes(_silence(total - cursor))
+        with TemporaryDirectory(dir=job_dir) as work:
+            temp = Path(work)
+            with wave.open(str(temp / "track.wav"), "wb") as writer:
+                writer.setnchannels(CHANNELS)
+                writer.setsampwidth(SAMPLE_WIDTH)
+                writer.setframerate(SAMPLE_RATE)
+                cursor = 0
+                for index, cue in enumerate(sorted(cues, key=lambda item: float(item.get("start") or 0.0))):
+                    start = max(0.0, float(cue.get("start") or 0.0))
+                    end = max(start + 0.05, float(cue.get("end") or 0.0))
+                    start_frame = int(round(start * SAMPLE_RATE))
+                    if start_frame > cursor:
+                        writer.writeframes(_silence(start_frame - cursor))
+                        cursor = start_frame
+                    aiff = temp / f".cue_{index}.aiff"
+                    wav = temp / f".cue_{index}.wav"
+                    fitted = temp / f".cue_{index}.fit.wav"
+                    if str(voice_name).startswith('user:'):
+                        _synthesize(str(cue.get('text') or ''), voice_name, aiff, data_root)
+                    else:
+                        _synthesize(str(cue.get("text") or ""), voice_name, aiff)
+                    _to_wave(aiff, wav)
+                    _fit(wav, fitted, end - start)
+                    with wave.open(str(fitted), "rb") as reader:
+                        frames = reader.readframes(reader.getnframes())
+                    writer.writeframes(frames)
+                    cursor += len(frames) // (SAMPLE_WIDTH * CHANNELS)
+                    for path in (aiff, wav, fitted):
+                        path.unlink(missing_ok=True)
+                total = int(round(float(total_duration or 0.0) * SAMPLE_RATE))
+                if total > cursor:
+                    writer.writeframes(_silence(total - cursor))
+            (temp / "track.wav").replace(output)
     return {
-        "engine": "kokoro-onnx" if str(voice_name).startswith("kokoro:") else "say",
+        **notice,
+        "engine": "user-onnx" if voice_name.startswith("user:") else "say",
         "voice": voice_name,
         "mode": mode,
         "audio": str(output.relative_to(Path(data_root) / "projects" / project_id)),
@@ -316,6 +294,7 @@ def preview_line(text: str, voice_name: str, project_id: str, data_root: Path) -
     job_dir = Path(data_root) / "projects" / project_id / "voice" / "previews"
     job_dir.mkdir(parents=True, exist_ok=True)
     from duckcore import model_slots
+    voice_name, notice = _resolve_voice(voice_name)
     identity = model_slots.selected(data_root, 'voice') if str(voice_name).startswith('user:') else ''
     token = hashlib.sha1(f"{voice_name}|{identity}|{text}".encode()).hexdigest()[:16]
     output = job_dir / f"{token}.wav"
@@ -323,12 +302,8 @@ def preview_line(text: str, voice_name: str, project_id: str, data_root: Path) -
         aiff = job_dir / f".{token}.aiff"
         if str(voice_name).startswith('user:'):
             _synthesize(text, voice_name, aiff, data_root)
-        elif str(voice_name).startswith("kokoro:"):
-            _synthesize_kokoro(
-                text, str(voice_name).split(":", 1)[1], aiff, data_root,
-            )
         else:
             _synthesize(text, voice_name, aiff)
         _to_wave(aiff, output)
         aiff.unlink(missing_ok=True)
-    return {"audio": str(output.relative_to(Path(data_root) / "projects" / project_id)), "duration": _duration(output)}
+    return {**notice, "audio": str(output.relative_to(Path(data_root) / "projects" / project_id)), "duration": _duration(output)}
