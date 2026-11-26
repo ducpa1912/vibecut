@@ -62,7 +62,7 @@ macOS 26 floor stated, 386 tests, no telemetry or account.
 | D5 | FFmpeg source-offer contact address | — |
 | D6 | LaMa weights licence finding | Read the researcher's page first |
 | D7 | Privacy policy and support pages (host) | A plain static page |
-| D8 | v1 scope: are split/reorder/remove-silence required | Split + reorder yes; remove-silence later |
+| D8 | v1 scope: are split/reorder/remove-silence required | **Decided 2026-11-26: all three in v1** (founder: "Include remove-silence") |
 | D9 | Kokoro: drop for v1 or rebuild without espeak | Drop for v1 |
 
 ## E. How the three agents work without stepping on each other
