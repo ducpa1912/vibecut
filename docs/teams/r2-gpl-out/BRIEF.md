@@ -1,7 +1,7 @@
 # R2 · No GPL code in the app (REQ-20261125-03)
 
-Owner: **Codex**, after R1. Folder `drop_eval/ducksuite-codex`, branch `cx/r2-gpl-out`.
-**Blocked on founder decision D9 (drop Kokoro for v1).** Start only when the PO says D9 is decided.
+Owner: **Codex**, after R1 (merged `f994af4`). Folder `drop_eval/ducksuite-codex`, branch `cx/r2-gpl-out`.
+**D9 decided 2026-11-26: Kokoro is dropped from v1** (founder: "Codex R2"). Start now.
 Plan: `docs/plans/2026-11-25-app-store-readiness.md` (B1).
 
 ## Why
@@ -18,7 +18,7 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md` (B1).
 `static/duck/app.js` is **not** yours in this loop. If a Kokoro control must go from the UI, list
 it in the review and the PO will route it.
 
-## Done looks like (if D9 = drop for v1)
+## Done looks like
 1. `kokoro_onnx`, `phonemizer`/espeak-ng and pcaudio are gone from the PyInstaller build.
    `find <app> -iname '*espeak*' -o -iname '*pcaudio*'` finds nothing.
 2. Voice still works with macOS voices and the user's own ONNX voice folder. The Kokoro pack is
@@ -30,3 +30,11 @@ it in the review and the PO will route it.
 4. `tests/test_no_gpl.py` covers the voice fallback and the scan on a fake bundle.
 5. Full suite and `node --check` pass. The bundle size before and after is in the review.
    **Do not open the app.**
+
+## Notes
+- Base: `ducksuite` at `b5c7041` or later. R1's `scripts/check-bundle-helpers.sh` already runs in
+  `build-duck-dev.sh`. Run the GPL scan next to it, and don't change the FFmpeg block.
+- Your `build/ffmpeg-lgpl` from R1 is still in your folder, so the build passes the FFmpeg check.
+- `PRODUCT.md` still lists the Kokoro pack. Don't edit it: list the lines in your review and the
+  PO will update it.
+- Commit on `cx/r2-gpl-out` with `git -c commit.gpgsign=false commit`. Don't push. Don't open the app.

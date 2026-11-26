@@ -18,12 +18,12 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
 
-- [ ] REQ-20261125-03 · R2 GPL out: kokoro_onnx, espeak-ng, pcaudio; bundle scan test (Codex, needs D9)
+- [ ] REQ-20261125-03 · R2 GPL out: kokoro_onnx, espeak-ng, pcaudio; bundle scan test (Codex; D9 decided 2026-11-26: drop Kokoro for v1; sent)
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
 - [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (Codex, needs D3)
-- [ ] REQ-20261125-03 · P-C loop 28 layout (OpenCode); P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
+- [ ] REQ-20261125-03 · P-C loop 28 layout (OpenCode, sent 2026-11-26, brief `docs/teams/pc-layout-small/BRIEF.md`); P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
 - REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
 - [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
@@ -80,7 +80,7 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 - [ ] Fill `<contact address>` in `duckcore/licenses.py` and `Licenses/FFmpeg-SOURCE.txt`.
 - [ ] Whisper pack (1.61 GB, required for `vi`): a short Vietnamese clip the founder owns, to compare
   today's pack with turbo-4bit (0.46 GB) before any switch.
-- [ ] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it.
+- [ ] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it. Moot for v1 once R2 lands (D9: Kokoro dropped).
 - [ ] Manual microphone test on a clean Mac (step in `founder-test-all.md`).
 - [ ] The stored transcript of `prj_e95348a97316` holds three made-up cues: the founder runs Check
   again; it can move clean-layer ranges.
