@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Measure the six screens at two sizes with headless Chrome, and capture them.
+// Measure reachable screens at several sizes with headless Chrome, and capture them.
 //
 // Usage:
 //   node scripts/measure-layout.mjs --base "http://127.0.0.1:8797/?t=token" \
 //     --project prj_... --out docs/teams/loop-10-layout-balance --phase before
+//
+// Default sizes: 1440x900, 1280x800, 1024x700 and 512x350 (the CSS viewport a
+// 1024x700 window gives at 200 % zoom). Pass --sizes "1440x900,1280x800" to
+// narrow it. Project screens are skipped without --project.
 //
 // Prints one JSON line per screen and size: content bottom %, overlaps, scroll
 // lists with count/fade, horizontal overflow, clipped labels, portrait width.
@@ -15,22 +19,33 @@ import path from "node:path";
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) args.set(process.argv[i].replace(/^--/, ""), process.argv[i + 1]);
 const base = args.get("base");
-const project = args.get("project");
+const project = args.get("project") || "";
 const out = path.resolve(args.get("out") || "docs/teams/loop-10-layout-balance");
 const phase = args.get("phase") || "after";
 const chrome = args.get("chrome") || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const port = Number(args.get("port") || 9411);
-if (!base || !project) { console.error("need --base and --project"); process.exit(2); }
+if (!base) { console.error("need --base"); process.exit(2); }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const SIZES = [[1440, 900], [1280, 800]];
+const SIZES = (args.get("sizes") || "1440x900,1280x800,1024x700,512x350")
+  .split(",")
+  .map((pair) => pair.trim().split("x").map(Number))
+  .filter(([w, h]) => w > 0 && h > 0);
 const ROUTES = [
   ["welcome", "welcome"],
-  ["check", `project/${project}/check`],
-  ["edit", `project/${project}/edit`],
-  ["clean-focus", `project/${project}/clean`],
-  ["preview", `project/${project}/preview`],
-  ["render", `project/${project}/render`],
+  ...(project ? [
+    ["check", `project/${project}/check`],
+    ["edit", `project/${project}/edit`],
+    ["clean-focus", `project/${project}/clean`],
+    ["preview", `project/${project}/preview`],
+    ["render", `project/${project}/render`],
+  ] : []),
+];
+// Modals reachable without footage: Settings (Local engine / Models) and the
+// project Import dialog. Each opens from a known button after a route loads.
+const MODALS = [
+  ["settings", "welcome", '[data-action="settings"]'],
+  ...(project ? [["import", `project/${project}/edit`, '[data-action="import"]']] : []),
 ];
 
 async function waitForEndpoint() {
@@ -76,12 +91,13 @@ async function evaluate(cdp, expression) {
   const result = await cdp.send("Runtime.evaluate", {
     expression, returnByValue: true, awaitPromise: true,
   });
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
   return result.result.value;
 }
 
-const MEASURE = String.raw`(() => {
+const MEASURE = String.raw`(rootSelector) => {
   const vw = innerWidth, vh = innerHeight;
+  const root = rootSelector ? (document.querySelector(rootSelector) || document.body) : document.body;
   const clippedByScroll = (el, r) => {
     let node = el.parentElement;
     while (node) {
@@ -104,7 +120,7 @@ const MEASURE = String.raw`(() => {
   };
   // Chips, timecodes and scene labels sit on media by design: not layout overlaps.
   const designed = (el) => Boolean(el.closest('.tc, .duration, .media-badge, .split-tag, .media-overlay, .proof-box'));
-  const screen = document.querySelector('main.screen') || document.body;
+  const screen = rootSelector ? root : (document.querySelector('main.screen') || document.body);
   let bottom = 0, who = '';
   const visibleBottom = (el, r) => {
     let bottom = r.bottom;
@@ -125,18 +141,20 @@ const MEASURE = String.raw`(() => {
     if (b > bottom) { bottom = b; who = (el.className && String(el.className).split(' ')[0]) || el.tagName; }
   }
   const boxes = [];
-  for (const el of document.body.querySelectorAll('*')) {
+  for (const el of root.querySelectorAll('*')) {
     const r = seen(el);
     if (!r) continue;
     const tag = el.tagName.toLowerCase();
     if (['script','style','path','svg','i','br'].includes(tag)) continue;
     const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
     const img = tag === 'img' || tag === 'video';
-    const button = tag === 'button' && !el.querySelector('*');
-    const text = own.length >= 2 && !el.querySelector('img, video');
+    // A control with an icon is still a control: its own children hide its box.
+    const button = tag === 'button' || el.classList.contains('btn');
+    const text = !button && own.length >= 2 && !el.querySelector('img, video');
     if (!img && !button && !text) continue;
     if (text && el.closest('button, a, label') && el.querySelector('*')) continue;
-    boxes.push({ r, kind: img ? 'img' : button ? 'button' : 'text', text: (own || el.getAttribute('alt') || el.textContent || '').trim().slice(0, 22), el });
+    if (!button && el.closest('button, .btn')) continue;
+    boxes.push({ r, kind: img ? 'img' : button ? 'button' : 'text', text: (own || el.getAttribute('aria-label') || el.getAttribute('alt') || el.textContent || '').trim().slice(0, 22), el });
   }
   const overlaps = [];
   for (let i = 0; i < boxes.length; i++) {
@@ -174,7 +192,7 @@ const MEASURE = String.raw`(() => {
     }
   }
   const scrolls = [];
-  for (const el of document.querySelectorAll('*')) {
+  for (const el of root.querySelectorAll('*')) {
     const s = getComputedStyle(el);
     if (!['auto', 'scroll'].includes(s.overflowY)) continue;
     if (el.scrollHeight <= el.clientHeight + 4) continue;
@@ -196,11 +214,37 @@ const MEASURE = String.raw`(() => {
   }
   const doc = document.documentElement;
   const clipped = [];
-  for (const el of document.querySelectorAll('button, .btn')) {
+  for (const el of root.querySelectorAll('button, .btn')) {
     const s = getComputedStyle(el);
     if (s.display === 'none' || s.visibility === 'hidden') continue;
-    if (el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 8 && !el.closest('.path, .small')) {
+    if (el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 8 && !el.closest('.path')) {
       clipped.push({ cls: String(el.className || el.tagName).split(' ')[0], text: (el.textContent || '').trim().slice(0, 24) });
+    }
+  }
+  // A control past the right or left viewport edge is cut off even when
+  // overflow-x: hidden keeps documentElement.scrollWidth quiet.
+  const offscreen = [];
+  for (const el of root.querySelectorAll('button, input, select, .btn, h1, h2, h3, .toolbar-tabs')) {
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) continue;
+    if (r.right > vw + 1 || r.left < -1) {
+      offscreen.push({
+        cls: String(el.className || el.tagName).split(' ')[0],
+        text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24),
+        left: Math.round(r.left), right: Math.round(r.right),
+      });
+    }
+  }
+  // Labels that clip their own text (nowrap + overflow hidden).
+  const cutLabels = [];
+  for (const el of root.querySelectorAll('h1, h2, h3, .small, .meta, .kv span, .kv strong, label, .chip, .toolbar-tab')) {
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden') continue;
+    if (!['hidden', 'clip'].includes(s.overflowX) && s.whiteSpace !== 'nowrap') continue;
+    if (el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 8) {
+      cutLabels.push({ cls: String(el.className || el.tagName).split(' ')[0], text: (el.textContent || '').trim().slice(0, 30) });
     }
   }
   let media = null;
@@ -247,7 +291,7 @@ const MEASURE = String.raw`(() => {
     };
   }
   const cut = [];
-  for (const el of document.body.querySelectorAll('*')) {
+  for (const el of root.querySelectorAll('*')) {
     const s = getComputedStyle(el);
     if (!['auto', 'scroll'].includes(s.overflowY)) continue;
     const fade = el.classList.contains('has-more') || s.maskImage !== 'none' || s.webkitMaskImage !== 'none';
@@ -404,18 +448,67 @@ const MEASURE = String.raw`(() => {
   const stage = document.querySelector('.preview-stage');
   const mainCol = document.querySelector('.preview-main');
   const portrait = stage && stage.classList.contains('portrait-stage');
+  // The Edit bar carries the frame timecode next to the clock. With no footage
+  // there is no real bar, so mount the same markup in a 340 px host: that is
+  // the tightest Edit column at 1024x700.
+  const timecode = (() => {
+    const read = (bar) => {
+      const time = bar.querySelector('.player-time');
+      const tc = bar.querySelector('.player-tc');
+      const bench = bar.querySelector('.player-play');
+      const box = bar.getBoundingClientRect();
+      const inside = (el) => {
+        const r = el?.getBoundingClientRect();
+        return Boolean(r && r.right <= box.right + 1 && r.left >= box.left - 1);
+      };
+      const sameLine = (a, b) => {
+        const ra = a?.getBoundingClientRect(), rb = b?.getBoundingClientRect();
+        return Boolean(ra && rb && Math.abs(ra.top - rb.top) < Math.max(ra.height, rb.height) / 2);
+      };
+      return {
+        text: tc ? tc.textContent.trim() : '',
+        barFits: bar.scrollWidth <= bar.clientWidth + 1,
+        timeLines: time ? time.getClientRects().length : 0,
+        tcLines: tc ? tc.getClientRects().length : 0,
+        sameLine: sameLine(time, tc),
+        tcInside: inside(tc),
+        benchVisible: inside(bench),
+        barWidth: Math.round(box.width),
+        contentWidth: bar.scrollWidth,
+      };
+    };
+    const probeAt = (width) => {
+      const card = document.createElement('div');
+      card.className = 'media-card preview-large';
+      card.style.cssText = 'position:fixed;left:-9999px;top:0;width:' + width + 'px;height:120px;--media-ratio:1.7778';
+      card.innerHTML = '<div class="player-bar" data-player-bar><button class="player-play" type="button">p</button><span class="player-time">59:59 / 59:59</span><span class="player-tc">59:59:29</span><input class="player-scrub" type="range" min="0" max="1000" value="0" aria-label="Seek"><button class="player-mute" type="button">m</button><input class="player-volume" type="range" min="0" max="1" value="1" aria-label="Volume"><button class="player-full" type="button">f</button></div>';
+      document.body.appendChild(card);
+      const result = read(card.firstElementChild);
+      card.remove();
+      return result;
+    };
+    const real = document.querySelector('[data-player-bar] [data-player-tc]')?.closest('[data-player-bar]') || null;
+    return {
+      real: real ? read(real) : null,
+      probe340: probeAt(340),
+      probe132: probeAt(132),
+    };
+  })();
   return {
     vw, vh,
     bottom: Math.round(bottom), bottomPct: Math.round((bottom / vh) * 1000) / 10, bottomWho: who,
     overlaps: overlaps.slice(0, 40), overlapCount: overlaps.length,
     layoutOverlaps: overlaps.filter((item) => !item.intended), layoutOverlapCount: overlaps.filter((item) => !item.intended).length,
-    scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12),
+    scrolls, hScroll: doc.scrollWidth > doc.clientWidth + 1, clipped: clipped.slice(0, 12), offscreen: offscreen.slice(0, 20), cutLabels: cutLabels.slice(0, 12),
     picture, pictureShare, stageBlack, controls, cutText: cut.length, cut, filterInsets,
-    nativeControls, controlOverlaps, transcript, listEdges, videoBars, stepOverlaps, transcriptHit,
+    nativeControls, controlOverlaps, transcript, listEdges, videoBars, stepOverlaps, transcriptHit, timecode,
     renderCols: left && right ? {
-      left: Math.round(left.getBoundingClientRect().height),
-      right: Math.round(right.getBoundingClientRect().height),
+      left: Math.round(left.getBoundingClientRect().width),
+      right: Math.round(right.getBoundingClientRect().width),
+      leftHeight: Math.round(left.getBoundingClientRect().height),
       leftBottomPct: Math.round((left.getBoundingClientRect().bottom / vh) * 1000) / 10,
+      workspace: Math.round((left.parentElement?.getBoundingClientRect().width) || 0),
+      workspaceScroll: left.parentElement?.scrollWidth || 0,
     } : null,
     preview: stage && mainCol ? {
       portrait: Boolean(portrait),
@@ -424,7 +517,7 @@ const MEASURE = String.raw`(() => {
       pct: Math.round((stage.getBoundingClientRect().width / Math.max(1, mainCol.getBoundingClientRect().width)) * 1000) / 10,
     } : null,
   };
-})()`;
+}`;
 
 await mkdir(out, { recursive: true });
 const chromeProcess = spawn(chrome, [
@@ -441,25 +534,45 @@ try {
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   const report = {};
+  const waitScreen = async () => {
+    for (let i = 0; i < 60; i += 1) {
+      const ready = await evaluate(cdp, `Boolean(document.querySelector('main.screen'))`).catch(() => false);
+      if (ready) break;
+      await sleep(250);
+    }
+  };
   for (const [width, height] of SIZES) {
     await cdp.send("Emulation.setDeviceMetricsOverride", {
       width, height, deviceScaleFactor: 1, mobile: false,
     });
+    const size = `${width}x${height}`;
     for (const [name, route] of ROUTES) {
+      await evaluate(cdp, `(() => { const r = document.querySelector('#modal-root'); if (r) r.innerHTML = ''; return true; })()`).catch(() => false);
       await cdp.send("Page.navigate", { url: `${base}#/${route}` });
-      for (let i = 0; i < 60; i += 1) {
-        const ready = await evaluate(cdp, `Boolean(document.querySelector('main.screen'))`).catch(() => false);
-        if (ready) break;
-        await sleep(250);
-      }
+      await waitScreen();
       await sleep(2600);
-      const size = `${width}x${height}`;
       let data;
-      try { data = await evaluate(cdp, MEASURE); } catch (error) { data = { error: String(error) }; }
+      try { data = await evaluate(cdp, `(${MEASURE})('')`); } catch (error) { data = { error: String(error) }; }
       if (name === "edit") {
         const count = await evaluate(cdp, `document.querySelectorAll('.layer-row').length`).catch(() => 0);
         data.layerRows = count;
       }
+      report[`${name}-${size}`] = data;
+      const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 82, captureBeyondViewport: false });
+      await writeFile(path.join(out, `${phase}-${name}-${size}.jpg`), Buffer.from(shot.data, "base64"));
+    }
+    for (const [name, route, opener] of MODALS) {
+      await evaluate(cdp, `(() => { const r = document.querySelector('#modal-root'); if (r) r.innerHTML = ''; return true; })()`).catch(() => false);
+      await cdp.send("Page.navigate", { url: `${base}#/${route}` });
+      await waitScreen();
+      await sleep(1400);
+      const opened = await evaluate(cdp, `(() => { const b = document.querySelector(${JSON.stringify(opener)}); if (!b) return false; b.click(); return true; })()`).catch(() => false);
+      await sleep(900);
+      const modal = await evaluate(cdp, `Boolean(document.querySelector('.modal'))`).catch(() => false);
+      let data;
+      try { data = await evaluate(cdp, `(${MEASURE})('.modal')`); } catch (error) { data = { error: String(error) }; }
+      data.opened = Boolean(opened);
+      data.modal = Boolean(modal);
       report[`${name}-${size}`] = data;
       const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 82, captureBeyondViewport: false });
       await writeFile(path.join(out, `${phase}-${name}-${size}.jpg`), Buffer.from(shot.data, "base64"));
