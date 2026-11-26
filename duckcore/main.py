@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from duckcore import import_errors, append, app_settings, captions, clean, edits, effects, media, packs, preview, render, script, voice
+from duckcore import import_errors, append, app_settings, captions, clean, edits, effects, grade, media, packs, preview, render, script, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -106,6 +106,10 @@ class StorySceneBody(BaseModel):
 class StoryMoveBody(BaseModel):
     index: int
     delta: int = Field(ge=-500, le=500)
+
+
+class LutImport(BaseModel):
+    path: str
 
 
 class CutBody(BaseModel):
@@ -315,7 +319,7 @@ def _proof_scope(edit: dict, when: float) -> tuple[list[dict], dict]:
 
 
 def _proof_cache_key(
-    project: dict, edit: dict, active: list[dict], clip_scope: dict, mode: str,
+    project: dict, edit: dict, active: list[dict], clip_scope: dict, mode: str, cube=None,
 ) -> str:
     """The proof cache key: layers, clip, mode, Cut and the source generation."""
     try:
@@ -327,6 +331,8 @@ def _proof_cache_key(
         "clean": active, "clip": clip_scope, "mode": mode,
         "cut": edit.get("cut") or {}, "source": source_key,
     }
+    if cube is not None:
+        payload["grade_cube"] = cube.stem
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
@@ -1490,7 +1496,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         from duckcore.preview import proof_layers
 
         active = proof_layers(active, mode)
-        clean_hash = _proof_cache_key(project, edit, active, clip_scope, mode)
+        cube = grade.bake((edit.get("cut") or {}).get("grade"), data_root)
+        clean_hash = _proof_cache_key(project, edit, active, clip_scope, mode, cube)
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():
             return FileResponse(output, media_type="image/jpeg")
@@ -2162,6 +2169,51 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Render file is missing.")
         return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+    @app.get("/api/grade/looks")
+    def grade_looks(_: None = Depends(require_token)) -> dict:
+        return {"looks": grade.LOOKS, "luts": grade.list_luts(data_root)}
+
+    @app.post("/api/grade/luts")
+    def import_grade_lut(body: LutImport, _: None = Depends(require_token)) -> dict:
+        try:
+            return grade.import_lut(body.path, data_root)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    def edit_cube(project_id: str, edit_id: str):
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            return grade.bake((edit.get("cut") or {}).get("grade"), data_root)
+        except KeyError as exc:
+            raise HTTPException(404, "Edit not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/grade/cube")
+    def grade_cube(project_id: str, edit_id: str, _: None = Depends(require_token)) -> dict:
+        return grade.payload(edit_cube(project_id, edit_id))
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/grade/still")
+    def grade_frame(project_id: str, edit_id: str, request: Request, time: float = 0,
+                    t: str | None = None) -> Response:
+        require_media(request, t)
+        if not 0 <= time < float("inf"):
+            raise HTTPException(400, "Choose a finite source time at or after zero.")
+        try:
+            project = store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+        cube = edit_cube(project_id, edit_id)
+        command = [media.ffmpeg(), "-nostdin", "-v", "error", "-ss", str(time),
+                   "-i", str(project["source_path"]), "-map", "0:v:0", "-frames:v", "1"]
+        if cube is not None:
+            command += ["-vf", grade.filter_for(cube)]
+        result = subprocess.run(command + ["-pix_fmt", "rgb24", "-c:v", "png", "-f", "image2pipe", "-"],
+                                capture_output=True)
+        if result.returncode or not result.stdout:
+            raise HTTPException(400, "Could not read a frame at this source time.")
+        return Response(result.stdout, media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/cut")
     def patch_cut(

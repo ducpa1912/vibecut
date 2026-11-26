@@ -55,7 +55,8 @@ def test_cut_route_saves(tmp_path: Path) -> None:
         assert saved.status_code == 200
         assert saved.json()["edit"]["cut"] == {
             "aspect": "4:5", "fit": "fill", "crop": None,
-            "grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0},
+            "grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0,
+                      "tint": 0, "look": None, "look_strength": 100},
             "enhance": {"enabled": False, "sharpen": 0},
         }
         bad = client.patch(
@@ -77,7 +78,7 @@ def test_no_cut_keeps_the_old_source_chain() -> None:
 def test_grade_clamps_and_survives_the_route(tmp_path: Path) -> None:
     edit = {"id": "ed_grade"}
     out = edits.set_cut(edit, grade={"exposure": 250, "contrast": -140, "saturation": 40, "temperature": -20})
-    assert out["cut"]["grade"] == {"exposure": 100, "contrast": -100, "saturation": 40, "temperature": -20}
+    assert out["cut"]["grade"] == {"exposure": 100, "contrast": -100, "saturation": 40, "temperature": -20, "tint": 0, "look": None, "look_strength": 100}
     edit_dir = tmp_path / "projects" / "prj_grade" / "edits"
     edit_dir.mkdir(parents=True)
     (edit_dir / "ed_grade.json").write_text(json.dumps({"id": "ed_grade", "project_id": "prj_grade"}), encoding="utf-8")
@@ -95,9 +96,8 @@ def test_grade_clamps_and_survives_the_route(tmp_path: Path) -> None:
 
 def test_grade_turns_into_ffmpeg_filters() -> None:
     _, _, chain = _scale_filter(META, 30, {"cut": {"grade": {"exposure": 100, "contrast": 50, "saturation": -50, "temperature": 100}}})
-    assert "exposure=exposure=2.000" in chain
-    assert "eq=contrast=1.500:saturation=0.500" in chain
-    assert "colorbalance=rs=0.150:gs=0:bs=-0.150" in chain
+    assert "lut3d=file=" in chain and ":interp=tetrahedral" in chain
+    assert all(old not in chain for old in ("exposure=", "eq=", "colorbalance="))
     _, _, plain = _scale_filter(META, 30, {"cut": {"grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0}}})
     assert "exposure=" not in plain and "colorbalance=" not in plain and "eq=" not in plain
 
@@ -131,7 +131,7 @@ def test_the_check_view_is_the_render_chain_without_the_frame_rate() -> None:
     view = check_view(meta, edit)
     _w, _h, chain = _scale_filter(meta, 30, edit)
     assert chain == f"{view.chain},fps=30"
-    assert "crop=540:960:270:480" in view.chain and "eq=contrast=0.600" in view.chain
+    assert "crop=540:960:270:480" in view.chain and "lut3d=file=" in view.chain
     assert (view.width, view.height) == (1920, 1080)
     # The crop's corner lands on the left edge of the picture, inside the pad.
     x, y = view.point(270, 480)
@@ -177,8 +177,7 @@ def test_the_grade_runs_before_the_letterbox_so_the_bars_stay_black() -> None:
     _w, _h, chain = _scale_filter(meta, 30, edit)
     parts = chain.split(",")
     pad = next(i for i, part in enumerate(parts) if part.startswith("pad="))
-    assert pad > next(i for i, part in enumerate(parts) if part.startswith("eq="))
-    assert pad > next(i for i, part in enumerate(parts) if part.startswith("colorbalance="))
+    assert pad > next(i for i, part in enumerate(parts) if part.startswith("lut3d="))
 
 
 def test_letterbox_bars_are_black_in_a_graded_render(tmp_path) -> None:
