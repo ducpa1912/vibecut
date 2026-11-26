@@ -47,6 +47,24 @@ if not STATIC.is_dir():
 APP_VERSION = "1.0.0"
 PROOF_VERSION = 11
 MAX_IMPORT_BYTES = 8 * 1024**3
+# Timeline filmstrip thumbnails snap to one of these widths, so the cache keeps
+# a small, stable set beside the full-size frames. The full-size route is
+# unchanged when no width is asked for.
+FRAME_THUMB_WIDTHS = (96, 160, 240, 320)
+FRAME_THUMB_MIN = 64
+FRAME_THUMB_MAX = 320
+
+
+def frame_thumb_width(value: int | None) -> int | None:
+    """Snap an optional thumbnail width to the fixed set, or reject it."""
+    if value is None:
+        return None
+    if value < FRAME_THUMB_MIN or value > FRAME_THUMB_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Thumbnail width must be {FRAME_THUMB_MIN}–{FRAME_THUMB_MAX} px.",
+        )
+    return min(FRAME_THUMB_WIDTHS, key=lambda size: (abs(size - value), size))
 
 
 class ProjectCreate(BaseModel):
@@ -808,20 +826,29 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         request: Request,
         time: float = 0.0,
         t: str | None = None,
+        w: int | None = None,
     ) -> FileResponse:
         require_media(request, t)
+        width = frame_thumb_width(w)
         try:
             project = store.get(project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
         when = max(0.0, float(time))
-        cache = data_root / "projects" / project_id / "frames" / f"frame_{int(when * 1000)}.jpg"
+        name = f"frame_{int(when * 1000)}.jpg"
+        if width:
+            cache = data_root / "projects" / project_id / "frames" / f"w{width}" / name
+        else:
+            cache = data_root / "projects" / project_id / "frames" / name
         if not cache.is_file():
             cache.parent.mkdir(parents=True, exist_ok=True)
             try:
                 image = media.extract_frame(project["source_path"], when)
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=500, detail=str(exc)[:300]) from exc
+            if width and image.width > width:
+                height = max(1, round(image.height * width / image.width))
+                image = image.resize((width, height))
             image.save(cache, format="JPEG", quality=88)
         return FileResponse(cache, media_type="image/jpeg")
 
