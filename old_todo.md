@@ -478,3 +478,8 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261125-02 · fill models in app data are links to the app, not copies; existing identical copies replaced
 - [x] REQ-20261125-02 · fill clips unused for 14 days are pruned; the pre-re-key clips deleted once
 - [x] REQ-20261125-02 · measure the folder before and after; rebuild and open the app
+
+- [x] REQ-20261118-02 · Settings → Workflows lists empty text/music/script ladders and does not explain why; decide whether to hide them or caption them as local-only. — closed 2026-11-26 as moot: the ladders went with the admin console; a new section was built and withdrawn at PO review (P-A, `758b242`).
+- [x] REQ-20261118-02 · `duckcore/engine/detect.py:1868` prefixes the plain failure with `Engine:`; trim it so the report reads `Speech was not read.` once. — done 2026-11-26 (P-A, OpenCode, `758b242`); detail goes to the log.
+- [x] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`. Done 2026-11-25; briefs `docs/teams/{r1-ffmpeg-back,r2-gpl-out,pa-settings-leftovers}/BRIEF.md`
+- [x] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex) — done 2026-11-26 (Codex `5a08f98`, merged `f994af4`); FFmpeg 7.1.1 LGPL, dav1d via @loader_path, `scripts/check-bundle-helpers.sh`.

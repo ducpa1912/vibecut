@@ -6,8 +6,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 ## Now
 
-- [ ] REQ-20261118-02 · Settings → Workflows lists empty text/music/script ladders and does not explain why; decide whether to hide them or caption them as local-only.
-- [ ] REQ-20261118-02 · `duckcore/engine/detect.py:1868` prefixes the plain failure with `Engine:`; trim it so the report reads `Speech was not read.` once.
 
 - Historical media outputs and scratch footage/projects were removed at the founder's request; retain analysis and recreate authorized scratch data for future measurements (`docs/MEDIA-CLEANUP.md`).
 
@@ -20,8 +18,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
 
-- [x] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`. Done 2026-11-25; briefs `docs/teams/{r1-ffmpeg-back,r2-gpl-out,pa-settings-leftovers}/BRIEF.md`
-- [ ] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex)
 - [ ] REQ-20261125-03 · R2 GPL out: kokoro_onnx, espeak-ng, pcaudio; bundle scan test (Codex, needs D9)
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
