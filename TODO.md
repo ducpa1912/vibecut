@@ -18,7 +18,7 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
 
-- [ ] REQ-20261125-03 · R2 follow-ups: show the voice fallback message in `app.js` (generate and preview, ~4740/4761); the dub title at `main.py` ~1604 names the requested voice, not the one used; `AppModel.swift` ~167 prechecks only the old two voice files; drop the retired package from `requirements-duck.txt` line 7
+- [ ] REQ-20261125-03 · R2 follow-ups (OpenCode, `docs/teams/r2-followups/BRIEF.md`): show the voice fallback message in `app.js` (generate and preview, ~4740/4761); the dub title at `main.py` ~1604 names the requested voice, not the one used; `AppModel.swift` ~167 prechecks only the old two voice files; drop the retired package from `requirements-duck.txt` line 7
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
