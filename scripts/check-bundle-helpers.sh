@@ -3,7 +3,9 @@ set -euo pipefail
 
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ $# == 1 ]] || fail 'usage: check-bundle-helpers.sh <app>'
+# The dev bundle keeps helpers in Contents/Helpers; the Xcode app in Contents/Resources/Helpers.
 helpers="$1/Contents/Helpers"
+[[ -d "$helpers" ]] || helpers="$1/Contents/Resources/Helpers"
 lib=libdav1d.7.dylib
 for name in ffmpeg ffprobe "$lib"; do
   file="$helpers/$name"
