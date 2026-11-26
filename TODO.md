@@ -18,7 +18,6 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) → P-E → G1 → T1.
 
-- [ ] REQ-20261126-01 · W1 core RMS levels per source, one canvas waveform, the same levels feed remove-silence (in P-D, founder "Yes, fold W1 in" 2026-11-26)
 - [ ] REQ-20261126-01 · G1 one baked grade cube for preview and render (fixes preview ≠ render), `lut3d`, user .cube LUTs, 8 ported looks with MIT notice, tint (Codex)
 - [ ] REQ-20261126-01 · T1 filmstrip per clip, clip names, track headers, blade tool, scene bin grid (OpenCode, after P-E)
 - [ ] REQ-20261126-01 · icon style pass: one stroke weight, icon per inspector row, fade-curve icons (with T1)
@@ -31,7 +30,8 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
 - [ ] REQ-20261125-03 · P-B follow-ups: whisper.cpp JSON has no no-speech / compression / log-prob scores, so those three transcript guards never fire on Whisper (the repeated-line guard still works): measure on the founder's Vietnamese clip; replace the dev-only Vietnamese steps in `founder-test-all.md` with the GGML pack and update steps (`docs/teams/pb-whisper-in-app/review.md`)
-- [ ] REQ-20261125-03 · P-D split + reorder + remove-silence (Codex after P-B; D8 decided 2026-11-26, all three in v1; brief `docs/teams/pd-split-reorder-silence/BRIEF.md`); P-E layer remove + box select (OpenCode; founder yes 2026-11-26 "P-E after P-D"; queued after P-D merges, brief `docs/teams/pe-layer-remove-select/BRIEF.md`)
+- [ ] REQ-20261125-03 · P-E layer remove + box select (OpenCode; founder yes 2026-11-26 "P-E after P-D"; started after P-D merged, brief `docs/teams/pe-layer-remove-select/BRIEF.md`)
+- [ ] REQ-20261125-03 · P-D founder hand test (steps in `docs/teams/pd-split-reorder-silence/review.md`); the timeline has no general undo; remove-silence keeps time where overlapping sources cancel in the mix
 - REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
 - [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
@@ -124,7 +124,6 @@ tap its own app instance (recommended), or frames and screenshots only. Plan: `P
   exact end for a first-frame-only reading.
 - [ ] Short flashes after the first frame: a title under 250 ms at a later cut can fall between
   4 fps samples. Measure before fixing.
-- [ ] Timeline split and reorder; remove-silence. Trim works, the rest does not. → in v1 as P-D (D8).
 - [ ] Auto-frame remains a deliberate v1 cut.
 
 ## Paused by decision

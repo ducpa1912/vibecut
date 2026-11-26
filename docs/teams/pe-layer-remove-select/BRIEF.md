@@ -3,9 +3,9 @@
 Owner: **OpenCode**. Folder `drop_eval/ducksuite-opencode`, branch `oc/pe-layer-remove-select`.
 Founder, 2026-11-26: "P-E after P-D". This is the yes to both REQ-20261118-01 proposals.
 
-**Queued.** Start only after the PO merges Codex's P-D (split + reorder). P-D owns
-`static/duck/app.js` until then. Base on `ducksuite` at the P-D merge or later. The PO will
-send the start.
+**Started 2026-11-26.** P-D merged (`0830277`) and released `static/duck/app.js` to you. Base:
+`ducksuite` at the P-D docs commit or later. P-D added split, reorder and remove-silence on the
+Edit timeline: stay out of the timeline code.
 
 ## Why
 - In Clean, a layer can only be turned **Off** today. It stays in the list, greyed. There is no
