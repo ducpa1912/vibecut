@@ -486,3 +486,5 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261125-03 · P-C loop 28 layout (OpenCode) — merged `6e22b72` 2026-11-26; footage checks moved to F1.
 - [x] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll. — done 2026-11-26 (P-C, OpenCode, merged `6e22b72`): 8 screens at 4 sizes, 0 overlaps, 0 clipped buttons, no sideways scroll.
 - [x] Frame timecode beside the time on the Edit bar (today a tooltip only, `98e1edf`). — done 2026-11-26 (P-C, `6e22b72`).
+- [x] REQ-20261125-03 · R2 GPL out (Codex `88bbb37`, merged `d7e7f07` 2026-11-26): Kokoro, phonemizer, espeak-ng, pcaudio gone; `scripts/scan-bundle-gpl.sh` before signing; NumPy GCC-exception notice allowed only without GCC runtime files (founder "Yes, allow it").
+- [x] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it. Moot for v1 once R2 lands (D9: Kokoro dropped). Closed 2026-11-26: Kokoro removed (R2).
