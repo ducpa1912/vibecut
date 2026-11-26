@@ -30,8 +30,7 @@ def test_every_pack_file_has_an_exact_size_and_a_publisher_digest_or_none():
                 unhashed.append(item["filename"])
             if "huggingface.co" in item["url"]:
                 assert "/resolve/main/" not in item["url"], "pin Hugging Face files to a revision"
-    # The two Kokoro files have no publisher hash (stated in the review).
-    assert sorted(unhashed) == ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+    assert unhashed == []
 
 
 def _fake_pack(monkeypatch, payload: bytes, **item):

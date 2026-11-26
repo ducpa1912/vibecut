@@ -10,6 +10,8 @@ from pathlib import Path
 from duckcore.providers import local_base_url
 
 FILES = {'transcription': ('config.json',), 'voice': ('kokoro-v1.0.onnx', 'voices-v1.0.bin')}
+VOICE_FRONTEND = 'tokenizer.onnx'
+VOICE_FRONTEND_MESSAGE = 'This voice folder needs a local text-to-phoneme model (tokenizer.onnx). Choose a compatible folder or a macOS voice.'
 DIRS = {'transcription': 'stt-user', 'voice': 'voice-user'}
 _status_cache = {}
 _status_pending = {}
@@ -152,6 +154,8 @@ def status(root, task):
             result['file'] = path
         else:
             validate(task, path)
+            if task == 'voice' and not (Path(path) / VOICE_FRONTEND).is_file():
+                raise ValueError(VOICE_FRONTEND_MESSAGE)
             result['file'] = 'Local files'
         result['ready'] = True
     except Exception as exc:

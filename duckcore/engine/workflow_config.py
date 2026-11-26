@@ -15,7 +15,7 @@ MAX_ROUTES = 6
 REASONING_VALUES = ("none", "low", "medium", "high", "max")
 # Text: no local text provider ships, so the rewrite ladder is empty.
 TEXT_PROVIDERS: tuple[str, ...] = ()
-# Voice: the two on-device engines, the Kokoro pack and macOS ``say``.
+# Voice: the on-device system voice, macOS ``say``.
 TTS_PROVIDERS = ("local",)
 # Music: no local music generator ships, so the ladder is empty.
 MUSIC_PROVIDERS: tuple[str, ...] = ()
@@ -24,18 +24,19 @@ STT_PROVIDERS = ("apple", "whisper")
 
 #: Engines removed from the product, mapped to the nearest kept local engine.
 TTS_ENGINE_MIGRATIONS = {
-    "piper": "kokoro",
-    "openai": "kokoro",
-    "groq": "kokoro",
-    "deepgram": "kokoro",
-    "cartesia": "kokoro",
+    "kokoro": "say",
+    "piper": "say",
+    "openai": "say",
+    "groq": "say",
+    "deepgram": "say",
+    "cartesia": "say",
 }
 #: Providers that no longer exist in a workflow.
 REMOVED_TEXT_PROVIDERS = ("local-mlx", "ollama")
 REMOVED_TTS_PROVIDERS = ("openai", "groq", "deepgram", "cartesia")
 REMOVED_STT_PROVIDERS = ("auto", "openai")
 #: Local TTS model ids that are no longer offered.
-REMOVED_TTS_MODELS = ("piper",)
+REMOVED_TTS_MODELS = ("piper", "kokoro")
 #: STT model ids replaced by the Speech Pack.
 STT_MODEL_MIGRATIONS = {
     "mlx-community/whisper-small-mlx": "mlx-community/whisper-large-v3-turbo",
@@ -111,7 +112,6 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
     },
     "tts": {
         "routes": [
-            {"provider": "local", "model": "kokoro"},
             {"provider": "local", "model": "say"},
         ],
         "reasoning": "",
@@ -150,6 +150,8 @@ def _normalize_route(workflow: str, raw: Any) -> dict[str, str] | None:
     allowed = WORKFLOW_PROVIDERS.get(workflow, ())
     provider = str(raw.get("provider") or "").strip().lower()
     model = str(raw.get("model") or "").strip()
+    if workflow == "tts" and model.lower() in REMOVED_TTS_MODELS:
+        model = "say"
     if provider not in allowed:
         return None
     if not model or len(model) > 240:
@@ -174,7 +176,7 @@ def normalize_workflow(workflow: str, raw: Any) -> dict[str, Any]:
     routes = []
     for item in routes_raw[:MAX_ROUTES]:
         route = _normalize_route(workflow, item)
-        if route:
+        if route and (workflow != "tts" or route not in routes):
             routes.append(route)
     # A kind with a local default keeps that ladder. Removed providers and
     # stale model ids must never leave a local workflow with zero routes; a kind

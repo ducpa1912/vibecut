@@ -14,26 +14,6 @@ from pathlib import Path
 
 PACKS = (
     {
-        "id": "tts-kokoro",
-        "name": "Extra voice pack",
-        "purpose": "voice",
-        "detail": "Higher-quality local voices for voice-over and dub.",
-        "size_bytes": 325_532_387,
-        "license": "Apache-2.0",
-        "filename": "kokoro-v1.0.onnx",
-        # The publisher gives no hash for this release (GitHub asset digest is
-        # empty, the release notes list none; checked 2026-11-16). Exact size
-        # only; never a digest made from our own download.
-        "sha256": "",
-        "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
-        "extra_files": [{
-            "filename": "voices-v1.0.bin",
-            "size_bytes": 28_214_398,
-            "sha256": "",
-            "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
-        }],
-    },
-    {
         "id": "fill-lama-cpu",
         "name": "CPU fill engine",
         "purpose": "fill",

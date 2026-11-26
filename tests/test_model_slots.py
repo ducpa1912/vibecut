@@ -11,6 +11,7 @@ def test_folder_valid_invalid_and_clear(tmp_path,task,files):
     root=tmp_path/'root'
     for name,value in files.items(): (source/name).write_text(value)
     if task=='voice':
+        (source/model_slots.VOICE_FRONTEND).touch()
         import numpy as np
         with (source/'voices-v1.0.bin').open('wb') as handle:
             np.savez(handle, af_test=np.ones((2,3)))
@@ -72,17 +73,32 @@ def test_voice_listing_and_synthesis_use_slot(tmp_path,monkeypatch):
     from duckcore import voice
     folder=tmp_path/'user';folder.mkdir();(folder/'kokoro-v1.0.onnx').write_bytes(b'model')
     with (folder/'voices-v1.0.bin').open('wb') as handle: np.savez(handle, af_example=np.ones((2,3)))
+    (folder/model_slots.VOICE_FRONTEND).touch()
     model_slots.configure(tmp_path,'voice',str(folder))
     monkeypatch.setattr(voice.subprocess,'run',lambda *a,**k:types.SimpleNamespace(stdout=''))
-    monkeypatch.setattr(voice,'_kokoro_pack',lambda *a:None)
     assert voice.list_voices(tmp_path)[0]['label']=='Your voice · af_example'
-    calls=[]
-    class Engine:
-        def __init__(self,*args,**kwargs): calls.append(args)
-        def create(self,*args,**kwargs): return np.zeros(16),24000
-    monkeypatch.setitem(sys.modules,'kokoro_onnx',types.SimpleNamespace(Kokoro=Engine,EspeakConfig=object))
+    calls = []
+    class Session:
+        def __init__(self, path, providers):
+            self.file = Path(path)
+            assert self.file.parent == Path(model_slots.selected(tmp_path, 'voice'))
+        def get_inputs(self):
+            fields = [('text','string')] if self.file.name == 'tokenizer.onnx' else [
+                ('input_ids','int64'), ('speed','float'), ('style','float')]
+            return [types.SimpleNamespace(name=n, type=f'tensor({t})') for n,t in fields]
+        def run(self, outputs, inputs):
+            calls.append(inputs)
+            if 'text' in inputs:
+                return [np.array([[5, 7]])]
+            return [np.zeros(16)]
+    monkeypatch.setitem(sys.modules,'onnxruntime',types.SimpleNamespace(InferenceSession=Session))
+    written = []
+    monkeypatch.setitem(sys.modules,'soundfile',types.SimpleNamespace(write=lambda *args: written.append(args)))
     voice._synthesize('Text','user:af_example',tmp_path/'result.wav',tmp_path)
-    assert calls[0][0].startswith(model_slots.selected(tmp_path,'voice'))
+    assert calls[0]['text'].tolist() == ['Text']
+    assert calls[1]['input_ids'].tolist() == [[0, 5, 7, 0]]
+    assert calls[1]['style'].shape == (1,3)
+    assert written[0][2] == 24000
     model_slots.configure(tmp_path,'voice','')
     assert voice.list_voices(tmp_path)==[]
 

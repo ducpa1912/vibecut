@@ -120,6 +120,8 @@ if [[ "$missing" == 0 ]]; then
   "$ROOT/scripts/check-bundle-helpers.sh" "$APP"
 fi
 
+"$ROOT/scripts/scan-bundle-gpl.sh" "$APP"
+
 # Local ad-hoc signature; App Store needs a real identity (see the script).
 "$ROOT/scripts/sign-local-app.sh" "$APP"
 
