@@ -4737,7 +4737,13 @@ async function generateVoice() {
     if (data.edit) state.edit = data.edit;
     else state.edit.voice = data.voice;
     render();
-    toast(`Voice-over ready: ${data.voice.voice}.`);
+    const used = data.voice?.voice || state.voiceName;
+    if (data.voice?.message) {
+      toast(data.voice.message);
+      window.setTimeout(() => toast(`Voice-over ready: ${used}.`), 4400);
+    } else {
+      toast(`Voice-over ready: ${used}.`);
+    }
   } catch (error) {
     toast(`Voice failed: ${error.message}`, 'bad');
   }
@@ -4760,6 +4766,7 @@ async function previewLine(cueId) {
     });
     state.voicePreview = mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/voice/preview/${encodeURIComponent((data.preview?.audio || '').split('/').pop())}`);
     render();
+    if (data.preview?.message) toast(data.preview.message);
   } catch (error) {
     toast(`Preview failed: ${error.message}`, 'bad');
   }
@@ -4846,7 +4853,7 @@ async function buildDub() {
     if (data.edit) state.edit = data.edit;
     else state.edit.dub = data.dub;
     render();
-    toast('Dub built. Original audio will be muted on render.');
+    toast(data.dub?.message || 'Dub built. Original audio will be muted on render.');
   } catch (error) {
     toast(`Dub failed: ${error.message}`, 'bad');
   }
