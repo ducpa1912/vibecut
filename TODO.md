@@ -23,7 +23,7 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)
 - [ ] REQ-20261125-03 · R6 Mac App Store signing and validation, no upload (Codex, needs D1 Gate A, D2)
 - [ ] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (Codex, needs D3)
-- [ ] REQ-20261125-03 · P-C loop 28 layout (OpenCode, sent 2026-11-26, brief `docs/teams/pc-layout-small/BRIEF.md`); P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
+- [ ] REQ-20261125-03 · P-D split + reorder (Codex, needs D8); P-E layer remove + box select (OpenCode)
 - REQ-20261125-03 · 2026-11-26 founder: "the heavy lifting should be on codex side". Lanes rebalanced: P-B and P-D move to Codex; OpenCode keeps small bounded fixes (P-A, P-C, P-E)
 - [ ] REQ-20261125-03 · S1 store listing and review notes (PO); F1 founder hand test; R7 TestFlight (Gate B)
 - [ ] REQ-20261125-03 · founder decisions D1–D9 (plan section D)
@@ -70,10 +70,8 @@ Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex 
 
 ## Loop 28 — layout odds (REQ-20261115-02 P2)
 
-- [ ] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll.
-- [ ] Open and capture the story media player and the render playback window (never opened yet).
-- [ ] Frame timecode beside the time on the Edit bar (today a tooltip only, `98e1edf`).
-- [ ] Copy text in the transcript menu checked against the real clipboard.
+- [ ] Open and capture the story media player and the render playback window (never opened yet). Needs footage: moved to the founder hand test (steps in `docs/teams/pc-layout-small/review.md`).
+- [ ] Copy text in the transcript menu checked against the real clipboard. Needs footage: founder hand test.
 
 ## Waiting on the founder (REQ-20261111-02, `docs/teams/loop-26-ready-29/review.md`)
 

@@ -483,3 +483,6 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261118-02 · `duckcore/engine/detect.py:1868` prefixes the plain failure with `Engine:`; trim it so the report reads `Speech was not read.` once. — done 2026-11-26 (P-A, OpenCode, `758b242`); detail goes to the log.
 - [x] REQ-20261125-03 · S0 separate the agents: worktrees `ducksuite-opencode` (`oc/*`) and `ducksuite-codex` (`cx/*`), rules in `AGENTS.md`. Done 2026-11-25; briefs `docs/teams/{r1-ffmpeg-back,r2-gpl-out,pa-settings-leftovers}/BRIEF.md`
 - [x] REQ-20261125-03 · R1 LGPL FFmpeg + ffprobe + dav1d back in the bundle; build fails without them (Codex) — done 2026-11-26 (Codex `5a08f98`, merged `f994af4`); FFmpeg 7.1.1 LGPL, dav1d via @loader_path, `scripts/check-bundle-helpers.sh`.
+- [x] REQ-20261125-03 · P-C loop 28 layout (OpenCode) — merged `6e22b72` 2026-11-26; footage checks moved to F1.
+- [x] 1024×700 and 200 % zoom measured on the six screens: overlaps, clipped buttons, horizontal scroll. — done 2026-11-26 (P-C, OpenCode, merged `6e22b72`): 8 screens at 4 sizes, 0 overlaps, 0 clipped buttons, no sideways scroll.
+- [x] Frame timecode beside the time on the Edit bar (today a tooltip only, `98e1edf`). — done 2026-11-26 (P-C, `6e22b72`).
