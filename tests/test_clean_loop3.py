@@ -25,6 +25,27 @@ def test_blur_filter_generates_gblur() -> None:
     assert "scale=" in value
 
 
+def _blur_edit(*ranges):
+    return {"clean": [{
+        "id": "cl_blur", "kind": "blur", "enabled": True,
+        "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1},
+        "ranges": [{"start": lo, "end": hi} for lo, hi in ranges],
+    }]}
+
+
+def test_blur_range_behind_the_clip_does_not_touch_its_first_frame() -> None:
+    value = _blur_filter(_blur_edit((1.0, 2.0)), META, clip_start=8.0, target_fps=24)
+    assert "gblur" not in value
+    assert "between(t,0.000,0.000)" not in value
+    assert _blur_filter(_blur_edit((1.0, 2.0)), META, clip_start=8.0, target_fps=24, at=8.0) == value
+
+
+def test_blur_keeps_only_ranges_that_reach_the_clip() -> None:
+    value = _blur_filter(_blur_edit((1.0, 2.0), (7.0, 9.0)), META, clip_start=8.0, target_fps=24)
+    assert "between(t,0.000,1.000)" in value
+    assert value.count("between(") == 1
+
+
 def test_blur_filter_skips_fill_only() -> None:
     edit = {
         "clean": [

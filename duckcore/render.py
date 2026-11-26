@@ -132,12 +132,17 @@ def _blur_filter(
         x0, y0, x1, y1 = rect
         if x1 <= x0 or y1 <= y0:
             continue
+        timed = [item for item in layer.get("ranges") or [] if item.get("end") is not None]
+        # A range that ended before this clip starts must not clamp to 0-0: that blurs
+        # the clip's first frame. A layer whose every range is behind the clip is off.
         ranges = [
             (max(0.0, float(item.get("start") or 0.0) - clip_start),
-             max(0.0, float(item.get("end") or 0.0) - clip_start))
-            for item in layer.get("ranges") or []
-            if item.get("end") is not None
+             float(item.get("end") or 0.0) - clip_start)
+            for item in timed
         ]
+        ranges = [(lo, hi) for lo, hi in ranges if hi > lo]
+        if timed and not ranges:
+            continue
         if at is not None:
             active = not ranges or any(lo <= at - clip_start <= hi for lo, hi in ranges)
             if not active:
