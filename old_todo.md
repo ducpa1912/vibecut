@@ -497,3 +497,4 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261125-03 · P-E layer remove + box select (OpenCode; founder yes 2026-11-26 "P-E after P-D"; started after P-D merged, brief `docs/teams/pe-layer-remove-select/BRIEF.md`) — P-E merged `a4da6a1` 2026-11-26 (OpenCode `f942b6d`); 455 tests
 - [x] REQ-20261118-01 · add a real **Remove layer** action — founder yes 2026-11-26, P-E — P-E merged `a4da6a1` 2026-11-26 (OpenCode `f942b6d`); 455 tests
 - [x] REQ-20261118-01 · click a fill box on the video to select its layer — founder yes 2026-11-26, P-E — P-E merged `a4da6a1` 2026-11-26 (OpenCode `f942b6d`); 455 tests
+- [x] REQ-20261126-01 · T1 filmstrip per clip, clip names, track headers, blade tool, scene grid + search, icon style (OpenCode, started 2026-11-26, brief `docs/teams/t1-timeline-picture/BRIEF.md`) — T1 merged `b821a9a` 2026-11-26 (OpenCode `9118ea6`); 459 tests
