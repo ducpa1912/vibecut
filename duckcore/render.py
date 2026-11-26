@@ -9,16 +9,21 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
+from functools import lru_cache
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from duckcore import caption_burn, captions, edits, effects, media
+from duckcore import caption_burn, captions, edits, effects, grade, media
 from duckcore.store import ProjectStore
 
 LOGGER = logging.getLogger(__name__)
+
+
+_AUTO_CUBE = object()
 
 
 class RenderError(RuntimeError):
@@ -79,7 +84,7 @@ def _fill_layers_in_view(edit: dict, meta: dict) -> list[dict]:
     leaves this line out of the frame". No second rule.
     """
     layers = _fill_layers(edit)
-    view = check_view(meta, edit)
+    view = check_view(meta, edit, cube=None)  # Only geometry affects visibility.
     if view is None or not layers:
         return layers
     from duckcore import inkcheck
@@ -115,10 +120,11 @@ def _blur_filter(
     clip_start: float,
     target_fps: float,
     at: float | None = None,
+    cube=_AUTO_CUBE,
 ) -> str:
     from duckcore.engine.textfill import mask as textmask
 
-    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit, cube=cube)
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
     layers = _blur_layers(edit)
@@ -195,7 +201,13 @@ def _even_offset(value: float) -> int:
     return max(0, int(round(value)) // 2 * 2)
 
 
-def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
+@lru_cache(maxsize=1)
+def _standalone_grade_root():
+    """Private cache for standalone filter builders without an app data root."""
+    return tempfile.TemporaryDirectory(prefix="duck-grade-")
+
+
+def _picture_plan(meta: dict, edit: dict | None = None, *, cube=_AUTO_CUBE) -> dict:
     """The render's picture filters, and where a source pixel lands in the output.
 
     One plan feeds the render's chain and the leftover check's
@@ -243,21 +255,11 @@ def _picture_plan(meta: dict, edit: dict | None = None) -> dict:
         sharpen = 0.0
     if sharpen > 0:
         parts.append(f"unsharp=5:5:{sharpen / 100 * 1.5:.3f}:5:5")
-    grade = cut.get("grade") if isinstance(cut.get("grade"), dict) else {}
-    try:
-        exposure = max(-2.0, min(2.0, float(grade.get("exposure") or 0) / 50.0))
-        contrast = max(0.0, min(2.0, 1.0 + float(grade.get("contrast") or 0) / 100.0))
-        saturation = max(0.0, min(3.0, 1.0 + float(grade.get("saturation") or 0) / 100.0))
-        temperature = max(-1.0, min(1.0, float(grade.get("temperature") or 0) / 100.0))
-    except (TypeError, ValueError):
-        exposure = temperature = 0.0
-        contrast = saturation = 1.0
-    if abs(exposure) > 0.001:
-        parts.append(f"exposure=exposure={exposure:.3f}")
-    if abs(contrast - 1.0) > 0.001 or abs(saturation - 1.0) > 0.001:
-        parts.append(f"eq=contrast={contrast:.3f}:saturation={saturation:.3f}")
-    if abs(temperature) > 0.001:
-        parts.append(f"colorbalance=rs={0.15 * temperature:.3f}:gs=0:bs={-0.15 * temperature:.3f}")
+    if cube is _AUTO_CUBE:
+        settings = cut.get("grade")
+        cube = grade.bake(settings, _standalone_grade_root().name) if settings else None
+    if cube is not None:
+        parts.append(grade.filter_for(cube))
     if not fill:
         # The bars go on after the grade and the sharpen: they stay black.
         parts.append(f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black")
@@ -278,13 +280,13 @@ def output_fps(meta: dict) -> int:
     return 24 if abs(float(meta.get("fps") or 0.0) - 24.0) < 0.6 else 30
 
 
-def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None) -> tuple[int, int, str]:
-    plan = _picture_plan(meta, edit)
+def _scale_filter(meta: dict, target_fps: float, edit: dict | None = None, *, cube=_AUTO_CUBE) -> tuple[int, int, str]:
+    plan = _picture_plan(meta, edit, cube=cube)
     parts = [*plan["parts"], "setsar=1", f"fps={target_fps}"]
     return plan["width"], plan["height"], ",".join(parts)
 
 
-def check_view(meta: dict, edit: dict | None = None):
+def check_view(meta: dict, edit: dict | None = None, *, cube=_AUTO_CUBE):
     """The leftover check's view of the output, or None when it is the source.
 
     The Cut's crop, aspect, fit, enhance and grade all change the output's
@@ -293,7 +295,7 @@ def check_view(meta: dict, edit: dict | None = None):
     """
     from duckcore import ink
 
-    plan = _picture_plan(meta, edit)
+    plan = _picture_plan(meta, edit, cube=cube)
     if plan["identity"]:
         return None
     return ink.View(
@@ -468,6 +470,7 @@ def render_frame(
     source = str(project["source_path"])
     meta = pipeline.probe(source)
     target_fps = output_fps(meta)
+    cube = grade.bake((edit.get("cut") or {}).get("grade"), data_root)
     clips = [
         clip for clip in edit.get("clips") or []
         if float(clip.get("end") or 0) > float(clip.get("start") or 0)
@@ -513,9 +516,9 @@ def render_frame(
         )
     input_path = Path(filled["path"]) if filled else Path(source)
     offset = requested - proof_start if filled else requested
-    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit, cube=cube)
     video_filter = _blur_filter(
-        edit, meta, clip_start=start, target_fps=target_fps, at=requested,
+        edit, meta, clip_start=start, target_fps=target_fps, at=requested, cube=cube,
     )
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1025,7 +1028,8 @@ def render_edit(
     source = str(project["source_path"])
     meta = pipeline.probe(source)
     target_fps = output_fps(meta)
-    out_w, out_h, scale = _scale_filter(meta, target_fps, edit)
+    cube = grade.bake((edit.get("cut") or {}).get("grade"), data_root)
+    out_w, out_h, scale = _scale_filter(meta, target_fps, edit, cube=cube)
     # A refill pass counts from the first pass: the rate learns what the user waited.
     started = _started if _started is not None else time.monotonic()
     project_id = str(project["id"])
@@ -1054,6 +1058,7 @@ def render_edit(
             progress(0.0, "Reading the text strokes")
         inks = inkcheck.build_inks(edit, meta, source=source, data_root=data_root)
         layers, strokes = _inked_layers(layers, inks, meta)
+    segment_key = edit["id"] if cube is None else f"{edit['id']}_{cube.stem}"
     segments: list[Path] = []
     ffmpeg = media.ffmpeg()
     try:
@@ -1063,7 +1068,7 @@ def render_edit(
             duration = max(0.04, float(clip.get("end") or 0.0) - start)
             if progress:
                 progress(index / max(1, len(clips)), f"Rendering clip {index + 1}/{len(clips)}")
-            kept = output_dir / f".{edit['id']}_{index:04d}.mp4"
+            kept = output_dir / f".{segment_key}_{index:04d}.mp4"
             if index in _reuse and kept.is_file():
                 # The refill does not touch this clip: its first pass stands.
                 segments.append(kept)
@@ -1072,7 +1077,7 @@ def render_edit(
                 media_path = job_dir / str(clip.get("file") or "")
                 if not media_path.is_file():
                     raise RenderError("A story beat file is missing.")
-                segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
+                segment = output_dir / f".{segment_key}_{index:04d}.mp4"
                 offset = max(0.0, float(clip.get("offset") or 0.0))
                 if str(clip.get("media")) == "image":
                     command = [
@@ -1139,9 +1144,9 @@ def render_edit(
                         fill_summary["gpu_areas"] += int(filled.get("gpu_areas") or 0)
                         fill_summary["fill_seconds"] = round(
                             fill_summary["fill_seconds"] + float(filled.get("fill_seconds") or 0.0), 1)
-            segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
+            segment = output_dir / f".{segment_key}_{index:04d}.mp4"
             video_filter = _blur_filter(
-                edit, meta, clip_start=start, target_fps=target_fps,
+                edit, meta, clip_start=start, target_fps=target_fps, cube=cube,
             )
             if filled:
                 command = [
@@ -1216,7 +1221,7 @@ def render_edit(
                 progress(0.97, "Checking every cleaned line for leftover text")
             report = _check_output(
                 output, edit, meta, source=source, inks=inks,
-                fps=float(target_fps), data_root=Path(data_root), size=check_view(meta, edit),
+                fps=float(target_fps), data_root=Path(data_root), size=check_view(meta, edit, cube=cube),
             )
             sidecar = output.with_suffix(".check.json")
             if report.get("hits") and _retry:

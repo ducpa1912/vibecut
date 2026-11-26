@@ -632,7 +632,9 @@ def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dic
 
 
 CUT_ASPECTS = ("source", "9:16", "1:1", "4:5", "16:9")
-GRADE_KEYS = ("exposure", "contrast", "saturation", "temperature")
+from duckcore import grade as grading
+
+GRADE_KEYS = grading.SLIDERS
 ENHANCE_KEYS = ("enabled", "sharpen")
 
 
@@ -664,16 +666,10 @@ def set_cut(
         x = max(0.0, min(1.0 - w, x))
         y = max(0.0, min(1.0 - h, y))
         clean_crop = {"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
-    clean_grade = {key: 0 for key in GRADE_KEYS}
-    if grade:
-        for key in GRADE_KEYS:
-            try:
-                value = float(grade.get(key, 0) or 0)
-            except (TypeError, ValueError) as exc:
-                raise EditError("Grade values must be numbers.") from exc
-            if value != value:
-                raise EditError("Grade values must be numbers.")
-            clean_grade[key] = int(round(max(-100.0, min(100.0, value))))
+    try:
+        clean_grade = grading.normalize(grade)
+    except ValueError as exc:
+        raise EditError(str(exc)) from exc
     clean_enhance = {"enabled": False, "sharpen": 0}
     if enhance:
         clean_enhance["enabled"] = bool(enhance.get("enabled"))
