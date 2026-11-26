@@ -11,15 +11,14 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 
 - [ ] REQ-20261116-02 · resolve native Core ML MPSGraph abort and exact-bucket drift (max 19/255); coarse padding max 169/255 is refused; do not promote default until reviewed. 3C review: VERSION back to 17, fallback clips deleted, unknown engine falls to PyTorch; promotion still fails.
 
-- [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
+- [ ] Founder, by hand: `docs/teams/founder-test-2026-11-26.md` (P-B, P-D, P-E, T1, G1 render; 24 steps), then `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
 ## REQ-20261126-01 — Adopt from Editroom (2026-11-26)
 
 Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) → P-E → G1 → T1.
 
-- [ ] REQ-20261126-01 · G1 core: one baked grade cube, `lut3d` render, user .cube LUTs, 8 ported looks with MIT notice, tint, cube/still routes (Codex, started 2026-11-26, brief `docs/teams/g1-grade-cube-core/BRIEF.md`)
-- [ ] REQ-20261126-01 · G1 preview: WebGL pass with the same cube, still-frame fallback, look menu and LUT picker in the inspector (after T1 releases `app.js`)
+- [ ] REQ-20261126-01 · G1 preview: WebGL pass with the same cube, still-frame fallback, look menu and LUT picker in the inspector (G1 core merged `5ad3458`; next loop; also swap the filmstrip to the graded still)
 - [ ] REQ-20261126-01 · T1 founder hand test (8 steps in `docs/teams/t1-timeline-picture/review.md`); story video beats get no filmstrip (`/frame` reads the project source only); no track lock model
 
 ## REQ-20261125-03 — App Store readiness plan (2026-11-25)

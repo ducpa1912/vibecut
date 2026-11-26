@@ -498,3 +498,4 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] REQ-20261118-01 · add a real **Remove layer** action — founder yes 2026-11-26, P-E — P-E merged `a4da6a1` 2026-11-26 (OpenCode `f942b6d`); 455 tests
 - [x] REQ-20261118-01 · click a fill box on the video to select its layer — founder yes 2026-11-26, P-E — P-E merged `a4da6a1` 2026-11-26 (OpenCode `f942b6d`); 455 tests
 - [x] REQ-20261126-01 · T1 filmstrip per clip, clip names, track headers, blade tool, scene grid + search, icon style (OpenCode, started 2026-11-26, brief `docs/teams/t1-timeline-picture/BRIEF.md`) — T1 merged `b821a9a` 2026-11-26 (OpenCode `9118ea6`); 459 tests
+- [x] REQ-20261126-01 · G1 core: one baked grade cube, `lut3d` render, user .cube LUTs, 8 ported looks with MIT notice, tint, cube/still routes (Codex, started 2026-11-26, brief `docs/teams/g1-grade-cube-core/BRIEF.md`) — G1 core merged `5ad3458` 2026-11-26 (Codex `cc911eb`); FFmpeg vs NumPy ≤1/255 on 4,913 patches; 477 tests
