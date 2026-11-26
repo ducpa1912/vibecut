@@ -1483,7 +1483,7 @@ function screenEditor() {
                 : `<video class="cut-video" style="filter:${gradeFilter()} ${sfxPreviewFilter()}" data-preview data-app-player preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
               ${sfxOverlayMarkup()}
               <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : outputSizeLabel()}</span>
-              ${playerBar()}
+              ${playerBar({ timecode: true })}
             </div>
             ${mediaClip || tab === 'cut' || ['script', 'audio', 'sfx'].includes(state.focusMode) ? '' : `<aside class="transcript-side${state.transcriptSideHidden ? ' is-hidden' : ''}" style="--ta:${(Number(state.transcriptAlpha || 100) / 100).toFixed(2)}" aria-label="Transcript">
               <div class="transcript-side-head"><strong>Transcript</strong><span>${overlayCues.length ? `${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene` : 'No transcript'}</span><button class="transcript-hide" type="button" data-action="toggle-transcript-side" aria-pressed="${state.transcriptSideHidden ? 'true' : 'false'}">${state.transcriptSideHidden ? 'Show' : 'Hide'}</button></div>
@@ -5497,10 +5497,11 @@ document.addEventListener('scroll', (event) => {
   if (target && target.matches && target.matches('[data-layer-list], .inspector-body, .proof-list, .clean-scene-list, .scene-strip')) syncLayerFades();
 }, true);
 
-function playerBar() {
+function playerBar({ timecode = false } = {}) {
   return `<div class="player-bar" data-player-bar>
     <button class="player-play" type="button" data-action="player-play" aria-label="Play or pause">${icon('play', 13)}</button>
     <span class="player-time" data-player-time>00:00 / 00:00</span>
+    ${timecode ? '<span class="player-tc" data-player-tc title="Frame timecode">00:00:00</span>' : ''}
     <input class="player-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
     <button class="player-mute" type="button" aria-label="Mute" aria-pressed="false">${icon('volume', 13)}</button>
     <input class="player-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
@@ -5528,15 +5529,15 @@ function setupPlayerBars() {
     video.dataset.barWired = '1';
     const play = bar.querySelector('.player-play');
     const time = bar.querySelector('[data-player-time]');
+    const tc = bar.querySelector('[data-player-tc]');
     const scrub = bar.querySelector('.player-scrub');
     const mute = bar.querySelector('.player-mute');
     const volume = bar.querySelector('.player-volume');
     const full = bar.querySelector('.player-full');
     const paint = () => {
-      if (time) {
-        time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
-        time.title = frameTimecode(video.currentTime, Number(state.edit?.source?.fps || 30));
-      }
+      const fps = Number(state.edit?.source?.fps || state.check?.result?.meta?.fps || 30);
+      if (time) time.textContent = `${clockText(video.currentTime)} / ${clockText(video.duration)}`;
+      if (tc) tc.textContent = frameTimecode(video.currentTime, fps);
       if (scrub && Number.isFinite(video.duration) && video.duration > 0) {
         scrub.value = String(Math.round((video.currentTime / video.duration) * 1000));
       }
