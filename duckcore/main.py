@@ -453,15 +453,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
     @app.get("/api/engine")
     def engine_status(_: None = Depends(require_token)) -> dict:
-        if engine_cache["value"] is not None and time.monotonic() - engine_cache["at"] < 30:
-            return engine_cache["value"]
         from duckcore.engine import stt, textfill, vision
 
+        whisper_problem = stt.whisper_problem(data_root)
+        whisper = not whisper_problem
+        if engine_cache["value"] is not None and time.monotonic() - engine_cache["at"] < 30:
+            cached = engine_cache["value"]
+            if cached["speech"]["whisper_problem"] == whisper_problem:
+                return cached
         model_dir = textfill.models_dir(data_root)
         model = model_dir / "lama_fp32.onnx"
         vision_ready = vision.available()
         apple_speech = stt._apple_transcribe_helper()
-        whisper = stt._whisper_command()
         fill_cpu_problem = textfill.method_problem("lama", model_dir)
         fill_gpu_problem = textfill.gpu_problem("lama", model_dir)
         coreml_problem = textfill.coreml_problem("lama", model_dir)
@@ -485,7 +488,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             "speech": {
                 "apple": bool(apple_speech),
                 "apple_helper": str(apple_speech) if apple_speech else "",
-                "whisper": bool(whisper),
+                "whisper": whisper,
+                "whisper_problem": whisper_problem,
                 "default": "apple" if apple_speech else ("whisper" if whisper else ""),
             },
             "fill": {

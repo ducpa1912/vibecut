@@ -6,7 +6,7 @@ used to live in ``pipeline.py`` and adds the Transcript v2 contract from
 
 * Apple SpeechAnalyzer is the default local engine and emits word timings from
   each attributed run's ``audioTimeRange``.
-* Whisper runs through ``mlx_whisper`` with ``--word-timestamps True`` and
+* Whisper runs through the bundled whisper-cli with full token timing JSON and
   ``large-v3-turbo`` as the default model.
 * Long sources are cut into 10 minute chunks with 5 s overlap.  Each finished
   chunk is cached by ``audio_hash + engine + model + chunk index`` so a crash
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import difflib
 import hashlib
-import importlib.util
 import inspect
 import json
 import locale
@@ -40,7 +39,7 @@ import wave
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from . import packs
+from duckcore import media, model_slots, packs as model_packs
 from . import settings_store
 from . import vision
 
@@ -63,15 +62,11 @@ WHISPER_MODELS = (
         "name": "Best · accurate",
         "size_mb": 1600,
     },
-    {
-        "id": "mlx-community/whisper-large-v3-turbo-q4",
-        "name": "Balanced · smaller",
-        "size_mb": 900,
-    },
 )
 LEGACY_WHISPER_MODELS = {
     "mlx-community/whisper-small-mlx": DEFAULT_WHISPER_MODEL,
     "mlx-community/whisper-medium-mlx-q4": DEFAULT_WHISPER_MODEL,
+    "mlx-community/whisper-large-v3-turbo-q4": DEFAULT_WHISPER_MODEL,
     "whisper-1": DEFAULT_WHISPER_MODEL,
     "whisper-large-v3": DEFAULT_WHISPER_MODEL,
 }
@@ -100,10 +95,10 @@ def _which(name: str) -> str | None:
 
 
 def _ffmpeg() -> str:
-    path = _which("ffmpeg")
-    if not path:
-        raise SttError("ffmpeg is not installed or not on PATH.")
-    return path
+    try:
+        return media.ffmpeg()
+    except media.MediaError as exc:
+        raise SttError(str(exc)) from exc
 
 
 def _run(cmd: list[str], timeout: int | float | None = None) -> subprocess.CompletedProcess:
@@ -193,7 +188,6 @@ def normalize_whisper_model(model: str | None) -> str:
 
 def whisper_models() -> list[dict]:
     """Model rows for Setup, with the turbo pack as the default."""
-    hub = Path.home() / ".cache" / "huggingface" / "hub"
     configured = (
         os.environ.get("VIBECUT_WHISPER_MODEL")
         or (settings_store.load_settings().get("stt") or {}).get("model")
@@ -203,15 +197,12 @@ def whisper_models() -> list[dict]:
     pack_ready = False
     data_root = os.environ.get("DUCK_DATA_ROOT")
     if data_root:
-        from duckcore import packs as model_packs
         pack_ready = model_packs.installed_path(
             Path(data_root), "speech-whisper",
         ) is not None
     rows = []
     for item in WHISPER_MODELS:
-        cached = (hub / ("models--" + item["id"].replace("/", "--"))).is_dir()
-        if item["id"] == DEFAULT_WHISPER_MODEL and pack_ready:
-            cached = True
+        cached = pack_ready and item["id"] == DEFAULT_WHISPER_MODEL
         rows.append({**item, "cached": cached, "current": item["id"] == current})
     return rows
 
@@ -302,43 +293,31 @@ def _child_run(
                     pass
 
 
-def _local_whisper_pack(job_dir: Path, model: str | None) -> str | None:
-    """Use the DuckSuite data pack before any Hugging Face cache."""
-    if normalize_whisper_model(model) != DEFAULT_WHISPER_MODEL:
-        return None
-    from duckcore import packs as model_packs
-    roots: list[Path] = []
-    data_root = os.environ.get("DUCK_DATA_ROOT")
-    if data_root:
-        roots.append(Path(data_root).expanduser())
-    roots.extend([Path(job_dir), *Path(job_dir).parents])
-    seen: set[Path] = set()
-    for root in roots:
-        root = root.resolve()
-        if root in seen:
-            continue
-        seen.add(root)
-        found = model_packs.installed_path(root, "speech-whisper")
-        if found is not None:
-            return str(found)
-    return None
+def _speech_root(job_dir: Path) -> Path:
+    for directory in (job_dir, *job_dir.parents):
+        if directory.name == "projects":
+            return directory.parent
+    return Path(os.environ.get("DUCK_DATA_ROOT", job_dir))
 
 
-def _whisper_env(model: str) -> dict[str, str]:
-    """Child environment for Whisper. A cached model never touches the hub.
+def _weights(root: Path) -> Path | None:
+    selected = model_slots.selected(root, "transcription")
+    if selected:
+        return model_slots.speech_weights(selected)
+    folder = model_packs.installed_path(root, "speech-whisper")
+    return folder / model_packs.SPEECH_WEIGHTS if folder else None
 
-    Without these the Hugging Face client still opens an HTTPS connection to
-    check for updates during a "local" read, and a slow or hung lookup
-    stalls the read. Downloads belong to the Setup / packs flow.
-    """
-    env = dict(os.environ)
-    # DuckSuite never reaches the hub from a speech pass, cached or not: an
-    # uncached model fails the read instead of downloading weights behind the
-    # user's back. Downloads belong to the Setup / packs flow.
-    env["HF_HUB_OFFLINE"] = "1"
-    env["TRANSFORMERS_OFFLINE"] = "1"
-    env["HF_HUB_DISABLE_TELEMETRY"] = "1"
-    return env
+
+def whisper_problem(root: Path) -> str:
+    missing = []
+    if not _whisper_binary(root):
+        missing.append("speech helper")
+    try:
+        if not _weights(root):
+            missing.append("speech weights")
+    except (OSError, ValueError) as exc:
+        return str(exc) if not missing else f"Missing speech helper. {exc}"
+    return "Missing " + " and ".join(missing) + "." if missing else ""
 
 
 WHISPER_TIMEOUT_MAX_S = 7200.0
@@ -404,26 +383,46 @@ def has_speech_energy(path: Path, *, floor_dbfs: float = SPEECH_FLOOR_DBFS) -> b
         return None
 
 
-def _whisper_binary() -> str | None:
-    """Whisper CLI: installed Speech Pack first, then today's PATH lookup."""
-    packed = packs.find_command("speech", "mlx_whisper", root=os.environ.get(packs.ROOT_ENV) or None)
-    if packed is not None:
-        return str(packed)
-    return _which("mlx_whisper")
+def _whisper_binary(data_root: Path | None = None) -> str | None:
+    forbidden = [Path(p).resolve() for p in (data_root, os.getenv("DUCK_DATA_ROOT"),
+                                             os.getenv("DUCK_PACKS_ROOT")) if p]
+    helpers = os.environ.get("DUCK_HELPER_DIR")
+    frozen = getattr(sys, "frozen", False)
+    if frozen:
+        app = next((p for p in Path(sys.executable).resolve().parents if p.suffix == ".app"), None)
+        if app is None:
+            return None
+        candidates = [app / path / "whisper-cli" for path in ("Contents/Helpers", "Contents/Resources/Helpers")]
+    else:
+        candidates = [Path(helpers or ROOT / "bin") / "whisper-cli"]
+    if not helpers and not frozen:
+        found = _which("whisper-cli")
+        if found:
+            candidates.append(Path(found))
+    for candidate in candidates:
+        if frozen and not candidate.resolve().is_relative_to(app):
+            continue
+        if any(candidate.absolute().is_relative_to(p) or candidate.resolve().is_relative_to(p)
+               for p in forbidden):
+            continue
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
+    return None
 
 
 def _whisper_command() -> list[str] | None:
-    """Command prefix for Whisper: pack binary, PATH binary, then module."""
     binary = _whisper_binary()
-    if binary:
-        return [binary]
-    try:
-        available = importlib.util.find_spec("mlx_whisper") is not None
-    except (ImportError, ValueError):
-        available = False
-    if available:
-        return [sys.executable, "-m", "mlx_whisper"]
-    return None
+    return [binary] if binary else None
+
+
+def _whisper_args(binary, source, weights, output_prefix, language, vocabulary):
+    language = _base_language(language) if language and language.lower() != "auto" else "auto"
+    cmd = [binary, "-m", str(weights), "-f", str(source), "-l", language,
+           "-ojf", "-of", str(output_prefix)]
+    prompt = ", ".join(str(term).strip() for term in vocabulary or [] if str(term).strip())
+    if prompt:
+        cmd.extend(["--prompt", prompt[:800]])
+    return cmd
 
 
 def _apple_transcribe_helper() -> Path | None:
@@ -850,6 +849,41 @@ def _hallucinated(
     return counts.get(key, 0) >= _REPEATED_ONLY_MIN
 
 
+def _cpp_payload(data: Mapping[str, Any]) -> dict:
+    segments = []
+    for row in data.get("transcription", []):
+        bounds = row["offsets"]
+        words = []
+        scores = []
+        for token in row.get("tokens", []):
+            piece = token["text"]
+            if not piece.strip() or (piece.startswith("[_") and piece.endswith("]")):
+                continue
+            timing = token.get("offsets") or {}
+            # Scripts without spaces retain timed token boundaries. Byte fragments
+            # stay with the preceding token until they form a complete character.
+            begins = piece[0].isspace() or not words or bool(re.match(r"[ぁ-ヿ㐀-鿿]", piece))
+            if begins:
+                words.append({"word": "", "start": timing.get("from", bounds["from"]) / 1000,
+                              "end": timing.get("to", bounds["to"]) / 1000, "scores": []})
+            word = words[-1]
+            word["word"] += piece.strip()
+            if "to" in timing:
+                word["end"] = timing["to"] / 1000
+            prob = _confidence(token.get("p"))
+            word["scores"].append(prob)
+            scores.append(math.log(max(prob, 1e-10)))
+        for word in words:
+            # UTF-8 BPE tokens can split a Vietnamese character across JSON strings.
+            word["word"] = word["word"].encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+            probabilities = word.pop("scores")
+            word["probability"] = sum(probabilities) / len(probabilities)
+        segments.append({"text": row["text"], "start": bounds["from"] / 1000,
+                         "end": bounds["to"] / 1000, "words": words,
+                         "avg_logprob": sum(scores) / len(scores) if scores else 0})
+    return _whisper_payload({"language": data["result"]["language"], "segments": segments})
+
+
 def _whisper_payload(data: Mapping[str, Any]) -> dict:
     segments: list[dict] = []
     words: list[dict] = []
@@ -1235,33 +1269,19 @@ def transcribe(
     source = Path(wav_path) if wav_path else None
     if not source or not source.exists():
         return None
-    command = _whisper_command()
-    if not command:
+    root = _speech_root(Path(job_dir))
+    binary = _whisper_binary(root)
+    # The chunk dispatcher pins one weights path for the entire read.
+    chosen_model = Path(model) if model and Path(model).is_absolute() else _weights(root)
+    if not binary or chosen_model is None or not chosen_model.is_file():
         return None
+    model_name = normalize_whisper_model(model)
     out_dir = Path(job_dir) / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
-    model_name = normalize_whisper_model(model)
-    chosen_model = _local_whisper_pack(job_dir, model_name) or model_name
     log_path = out_dir / "whisper.log"
     json_path = out_dir / "transcript.json"
-    try:
-        json_path.unlink()
-    except OSError:
-        pass
-    cmd = [
-        *command, str(source),
-        "--model", chosen_model,
-        "--output-format", "json",
-        "--output-name", "transcript",
-        "--output-dir", str(out_dir),
-        "--word-timestamps", "True",
-        "--verbose", "False",
-    ]
-    if language and str(language).lower() != "auto":
-        cmd.extend(["--language", _base_language(language)])
-    terms = [str(term) for term in (vocabulary or []) if str(term).strip()]
-    if terms:
-        cmd.extend(["--initial-prompt", ", ".join(terms)[:800]])
+    json_path.unlink(missing_ok=True)
+    cmd = _whisper_args(binary, source, chosen_model, json_path.with_suffix(""), language, vocabulary)
     progress(0.08, "Transcribing speech · local Whisper")
     budget = whisper_timeout(duration, timeout)
 
@@ -1279,7 +1299,6 @@ def transcribe(
             result = _child_run(
                 cmd, stdout=log, stderr=log,
                 timeout=budget,
-                env=_whisper_env(chosen_model),
                 tick=heartbeat,
             )
         except subprocess.TimeoutExpired as exc:
@@ -1294,10 +1313,10 @@ def transcribe(
         return None
     progress(0.82, "Reading transcript")
     try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
+        data = json.loads(json_path.read_text(encoding="utf-8", errors="surrogateescape"), strict=False)
     except (OSError, json.JSONDecodeError):
         return None
-    payload = _whisper_payload(data)
+    payload = _cpp_payload(data)
     if not payload["segments"]:
         return None
     return {
@@ -1307,7 +1326,7 @@ def transcribe(
         "words": payload["words"],
         "provider": "whisper",
         "model": model_name,
-        "model_path": chosen_model if chosen_model != model_name else "",
+        "model_path": str(chosen_model),
     }
 
 
@@ -1549,8 +1568,12 @@ def _chunked_run(
     if not ranges:
         return None
     results: list[dict] = []
+    cache_model = model
+    if engine == "whisper":
+        vocabulary = tuple(vocabulary or ())
+        cache_model = _hash_json(["whisper.cpp-v1.8.2", model, language, vocabulary])
     for chunk in ranges:
-        key = chunk_cache_key(audio_hash, engine, model, int(chunk["index"]))
+        key = chunk_cache_key(audio_hash, engine, cache_model, int(chunk["index"]))
         cache_path = _chunk_cache_path(job_dir, key)
         record = None
         if cache_path.is_file():
@@ -1712,29 +1735,15 @@ def transcribe_source(
 ) -> dict | None:
     """Chunk, transcribe, merge and persist one Transcript v2 for a job.
 
-    An empty ``language`` means auto: Whisper omits its language field and
+    An empty ``language`` means auto: Whisper detects the language and
     reports what it detected.  Apple Speech cannot detect a language, so it is
     skipped unless the caller selected it explicitly or supplied a language;
     otherwise a Chinese source would be forced through an English locale and
     return nothing.
     """
     requested_language = str(language or "").strip().lower()
-    from duckcore import model_slots
-    root = Path(job_dir).parent.parent
+    root = _speech_root(Path(job_dir))
     user_path = model_slots.selected(root, 'transcription')
-    if user_path:
-        import mlx_whisper
-        model_slots.validate('transcription', user_path)
-        result = mlx_whisper.transcribe(str(wav_path), path_or_hf_repo=user_path,
-                                       language=None if requested_language in {'', 'auto'} else requested_language,
-                                       word_timestamps=True)
-        transcript = build_transcript(engine='whisper', model=user_path,
-                                      language=result.get('language') or requested_language,
-                                      segments=result.get('segments') or [],
-                                      words=[word for segment in result.get('segments') or [] for word in segment.get('words') or []],
-                                      audio_duration=float(duration), source_hash=source_hash)
-        path = save_transcript(Path(job_dir), transcript)
-        return {**transcript, 'provider': 'user-local', 'path': str(path)}
     if requested_language in {"auto", "none", "und"}:
         requested_language = ""
     if errors is None:
@@ -1765,12 +1774,15 @@ def transcribe_source(
         prepared_hash = audio_hash or _sha256_file(prepared_path)
     model = str(model or "")
     plan = resolve_routes(routes, engine=engine, model=model)
+    if user_path:
+        plan = [{"provider": "whisper", "model": user_path}]
     if not plan:
         fail("stt", "", "No speech engine is configured.")
         return None
     terms = list(vocabulary or [])
     ready_routes = {
-        index: _engine_ready(str(route["provider"]), str(route["model"]))
+        index: (_engine_ready(str(route["provider"]), str(route["model"]))
+                and (route["provider"] != "whisper" or not whisper_problem(root)))
         for index, route in enumerate(plan)
     }
     ready_auto = any(
@@ -1793,7 +1805,7 @@ def transcribe_source(
             fail("apple", route_model, "Apple speech needs a known language.")
             continue
         if not ready_routes[route_index]:
-            fail(provider, route_model, "Speech engine is not available.")
+            fail(provider, route_model, (whisper_problem(root) if provider == "whisper" else "") or "Speech engine is not available.")
             continue
         route_language = requested_language
         if provider == "apple" and not route_language:
@@ -1805,10 +1817,17 @@ def transcribe_source(
             # Said before the first chunk, or the previous stage's text stays up.
             progress(0.0, f"Transcribing speech · {ENGINE_LABELS.get(provider, provider)}")
         try:
+            run_model = route_model
+            if provider == "whisper":
+                weights = _weights(root)
+                if weights is None:
+                    fail(provider, route_model, "Missing speech weights.")
+                    continue
+                run_model = str(weights.resolve())
             merged = _chunked_run(
                 prepared_path, Path(job_dir), float(duration),
                 audio_hash=prepared_hash,
-                engine=provider, model=route_model,
+                engine=provider, model=run_model,
                 language=route_language, vocabulary=terms,
                 timeout=timeout, progress=progress, helper=helper,
             )
@@ -1854,7 +1873,7 @@ def transcribe_source(
         )
         return {
             **transcript,
-            "provider": provider,
+            "provider": "user-local" if user_path else provider,
             "path": str(path),
         }
     return None

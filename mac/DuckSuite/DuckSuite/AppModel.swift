@@ -165,7 +165,7 @@ final class AppModel: ObservableObject {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let required = task == "voice" ? ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
-            : task == "transcription" ? ["config.json"] : ["model.bin", "config.json", "sentencepiece.bpe.model"]
+            : task == "transcription" ? [] : ["model.bin", "config.json", "sentencepiece.bpe.model"]
         let missing = required.filter {
             !FileManager.default.fileExists(
                 atPath: source.appendingPathComponent($0).path
@@ -173,6 +173,19 @@ final class AppModel: ObservableObject {
         }
         guard missing.isEmpty else {
             return (nil, "Missing \(missing.joined(separator: ", ")).")
+        }
+        if task == "transcription" {
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: source, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            let weights = files?.filter { file in
+                guard file.pathExtension == "bin",
+                      let info = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                else { return false }
+                return info.isRegularFile == true && info.isSymbolicLink != true
+            }
+            guard weights?.count == 1 else {
+                return (nil, "Choose a folder containing one GGML speech weights file (.bin).")
+            }
         }
         let name = source.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder = name.isEmpty ? "custom" : name

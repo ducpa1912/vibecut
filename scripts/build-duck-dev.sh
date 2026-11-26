@@ -92,14 +92,12 @@ fi
 FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpeg}}"
 FFPROBE_SRC="${DUCK_FFPROBE:-$(dirname "$FFMPEG_SRC")/ffprobe}"
 DAV1D="${DUCK_DAV1D:-$ROOT/build/ffmpeg-lgpl/lib/libdav1d.7.dylib}"
-missing=0
 missing_helper() {
   if [[ "${DUCK_ALLOW_NO_FFMPEG:-0}" != 1 ]]; then
     printf 'error: %s; run scripts/build-ffmpeg-lgpl.sh\n' "$1" >&2
     exit 1
   fi
   printf 'warning: %s\n' "$1" >&2
-  missing=1
 }
 if [[ -x "$FFMPEG_SRC" && -f "$FFMPEG_SRC" ]]; then
   cp "$FFMPEG_SRC" "$APP/Contents/Helpers/ffmpeg"
@@ -116,9 +114,17 @@ if [[ -f "$DAV1D" ]]; then
 else
   missing_helper 'libdav1d not copied; AV1 input will not decode'
 fi
-if [[ "$missing" == 0 ]]; then
-  "$ROOT/scripts/check-bundle-helpers.sh" "$APP"
+whisper="$ROOT/build/whisper-cpp/whisper-cli"
+if [[ -x "$whisper" ]]; then
+  cp "$whisper" "$APP/Contents/Helpers/whisper-cli"
+  cp "$ROOT/build/whisper-cpp/LICENSE" "$APP/Contents/Resources/Licenses/whisper.cpp-MIT.txt"
+elif [[ "${DUCK_ALLOW_NO_WHISPER:-0}" != 1 ]]; then
+  echo 'error: missing whisper-cli; run scripts/build-whisper-cpp.sh' >&2
+  exit 1
+else
+  echo 'warning: speech pack helper omitted' >&2
 fi
+"$ROOT/scripts/check-bundle-helpers.sh" "$APP"
 
 "$ROOT/scripts/scan-bundle-gpl.sh" "$APP"
 

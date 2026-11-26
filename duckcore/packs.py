@@ -12,6 +12,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
+SPEECH_WEIGHTS = "ggml-large-v3-turbo.bin"
+
 PACKS = (
     {
         "id": "fill-lama-cpu",
@@ -30,18 +32,11 @@ PACKS = (
         "name": "Speech pack · non-Apple languages",
         "purpose": "speech",
         "detail": "Local speech model for languages Apple Speech does not cover.",
-        "size_bytes": 1_613_977_612,
+        "size_bytes": 1_624_555_275,
         "license": "MIT",
-        "filename": "weights.safetensors",
-        "sha256": "951ed3fc1203e6a62467abb2144a96ce7eafca8fa77e3704fdb8635ff3e7f8a6",
-        "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb/weights.safetensors",
-        "extra_files": [{
-            "filename": "config.json",
-            "size_bytes": 268,
-            # Not an LFS file: Hugging Face publishes its git blob SHA-1 only.
-            "git_sha1": "6ac9a52a28f70a2e5681c250a470eca6e9c8cc3e",
-            "url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/resolve/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb/config.json",
-        }],
+        "filename": SPEECH_WEIGHTS,
+        "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
     },
 )
 
@@ -114,10 +109,15 @@ def status(data_root: Path) -> list[dict]:
             for item in files
             if _path(data_root, pack, item["filename"]).is_file()
         )
+        installed = installed_path(data_root, pack["id"]) is not None
+        legacy = (pack["id"] == "speech-whisper" and not installed
+                  and (_folder(data_root, pack) / "weights.safetensors").is_file())
         rows.append({
             **{key: pack[key] for key in ("id", "name", "purpose", "detail", "size_bytes", "license")},
             "size_bytes": total,
-            "installed": installed_path(data_root, pack["id"]) is not None,
+            "installed": installed,
+            "needs_update": legacy,
+            "detail": "Speech pack needs an update. Download the new weights in Settings." if legacy else pack["detail"],
             "downloaded_bytes": downloaded or int(progress.get("bytes") or 0),
             "downloading": bool(progress.get("running")),
             "error": str(progress.get("error") or ""),

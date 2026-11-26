@@ -4,7 +4,7 @@ import pytest
 from duckcore import model_slots, app_settings
 
 
-@pytest.mark.parametrize('task,files', [('transcription',{'config.json':'{}','weights.npz':'weights'}),
+@pytest.mark.parametrize('task,files', [('transcription',{'weights.bin':'lmgg-test'}),
                                       ('voice',{'kokoro-v1.0.onnx':'model','voices-v1.0.bin':'voices'})])
 def test_folder_valid_invalid_and_clear(tmp_path,task,files):
     source=tmp_path/'source';source.mkdir()
@@ -43,19 +43,24 @@ def test_writing_endpoint_and_unreachable(tmp_path,monkeypatch):
 
 
 def test_transcription_uses_user_files(tmp_path,monkeypatch):
-    import sys, types
     from duckcore.engine import stt
-    source=tmp_path/'user';source.mkdir();(source/'config.json').write_text('{}');(source/'weights.npz').write_bytes(b'x')
-    model_slots.configure(tmp_path,'transcription',str(source))
-    job=tmp_path/'projects/prj_test';job.mkdir(parents=True)
-    calls=[]
-    def transcribe(path,**kwargs):
-        calls.append(kwargs)
-        return {'language':'vi','segments':[{'start':0,'end':1,'text':'Hello'}]}
-    monkeypatch.setitem(sys.modules,'mlx_whisper',types.SimpleNamespace(transcribe=transcribe))
-    result=stt.transcribe_source(job/'unused.wav',job,1,language='vi')
-    assert result['provider']=='user-local'
-    assert calls[0]['path_or_hf_repo']==model_slots.selected(tmp_path,'transcription')
+    source = tmp_path / 'user'
+    source.mkdir()
+    (source / 'weights.bin').write_bytes(b'lmgg-test')
+    model_slots.configure(tmp_path, 'transcription', str(source))
+    job = tmp_path / 'projects/prj_test'
+    job.mkdir(parents=True)
+    wav = job / 'input'
+    wav.touch()
+    monkeypatch.setattr(stt, 'has_speech_energy', lambda _: True)
+    monkeypatch.setattr(stt, '_whisper_binary', lambda *args: '/test/whisper-cli')
+    def chunked(_, work, duration, *, model, **kwargs):
+        assert Path(model) == Path(model_slots.selected(tmp_path, 'transcription')) / 'weights.bin'
+        return {'language':'vi','segments':[{'start':0,'end':1,'text':'Hello'}],'words':[]}
+    monkeypatch.setattr(stt, '_chunked_run', chunked)
+    result = stt.transcribe_source(wav, job, 1, language='vi', prepared=wav, audio_hash='test')
+    assert result['provider'] == 'user-local'
+    assert result['model'] == model_slots.selected(tmp_path, 'transcription')
 
 
 def test_unset_rewrite_never_contacts_endpoint(tmp_path,monkeypatch):

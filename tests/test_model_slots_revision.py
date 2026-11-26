@@ -15,8 +15,7 @@ def test_choose_choose_clear_removes_owned_folders(tmp_path, task):
         folder = root / 'models/slot-imports' / str(index)
         folder.mkdir(parents=True)
         if task == 'transcription':
-            (folder/'config.json').write_text('{}')
-            (folder/'weights.npz').write_bytes(b'weights')
+            (folder/'weights.bin').write_bytes(b'lmgg-test')
         else:
             (folder/'kokoro-v1.0.onnx').write_bytes(b'model')
             with (folder/'voices-v1.0.bin').open('wb') as handle:
