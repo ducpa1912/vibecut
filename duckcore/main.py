@@ -1601,7 +1601,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         track["id"] = f"at_{uuid.uuid4().hex[:10]}"
         track["kind"] = "dub"
-        track["name"] = f"Dub · {body.voice}"
+        track["name"] = f"Dub · {track.get('voice') or body.voice}"
         track["start"] = 0.0
         track["volume"] = 1.0
         track["language"] = body.language

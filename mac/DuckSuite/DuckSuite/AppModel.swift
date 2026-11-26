@@ -164,7 +164,7 @@ final class AppModel: ObservableObject {
         }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        let required = task == "voice" ? ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+        let required = task == "voice" ? ["kokoro-v1.0.onnx", "voices-v1.0.bin", "tokenizer.onnx"]
             : task == "transcription" ? ["config.json"] : ["model.bin", "config.json", "sentencepiece.bpe.model"]
         let missing = required.filter {
             !FileManager.default.fileExists(
