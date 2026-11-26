@@ -63,7 +63,7 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
 | Voice | macOS voices; a user ONNX voice folder only when it brings its own text frontend (`tokenizer.onnx`), because espeak (GPL) is gone (R2); dub, music and SFX on one audio track | Manual microphone test (founder); a GPL-free frontend for user voice folders | Voice cloning; the Kokoro pack (dropped from v1, D9, 2026-11-26) |
 | Edit | Trim, stories, **written story** (thesis + 3–6 beats from anywhere), media beats, filters; **Cut Focus** (aspect, Fit/Fill, crop, four grade sliders, Lanczos enhance); timeline zoom 1×–16×; layer count and a fade in the inspector; empty timeline lanes collapse to a `+` row; frame timecode as a tooltip | Frame timecode beside the time (loop 28); CoreML super-resolution is research only; split, reorder, remove silence | LUTs, keyframes |
 | Render | The Cut aspect (source, 9:16, 1:1, 4:5, 16:9), 1080-class, 24/30 fps chosen by one stated rule, H.264/AAC, two-column screen with the estimate and the leftover-text check on the left, queue and finished cards on the right; a finished job whose file is gone says so | Lower cold cost with no pixel change (loop 27) | Auto-frame, 4K, 60 fps, HDR, ProRes |
-| Models | LaMa bundled (GPU); the Whisper optional pack, each file checked for exact size and the publisher's hash where one is published (loop 26); translation from a user CTranslate2 folder; local slots for transcription, a writing model at a URL on this Mac and voice (loop 25); **a user fill model** (ONNX or TorchScript) runs in place of LaMa, and a fill problem names the next step | A smaller Whisper pack, only after a Vietnamese comparison | Any translation weights shipped or hosted by DuckSuite |
+| Models | LaMa bundled (GPU); Whisper runs inside the app (whisper.cpp with Metal, P-B) and the optional speech pack is weights only (GGML large-v3-turbo, 1.62 GB; an old pack shows "needs update"), each file checked for exact size and the publisher's hash where one is published (loop 26); translation from a user CTranslate2 folder; local slots for transcription, a writing model at a URL on this Mac and voice (loop 25); **a user fill model** (ONNX or TorchScript) runs in place of LaMa, and a fill problem names the next step | A smaller Whisper pack, only after a Vietnamese comparison | Any translation weights shipped or hosted by DuckSuite |
 | Cloud | None. Nothing uploads | — | User keys after v1; cloud render plans |
 | Licences | Settings shows "FFmpeg 7.1.1 · LGPL 2.1 · Source offer" (loop 26); the contact address is still a placeholder | Founder fills the contact | — |
 
@@ -76,7 +76,7 @@ One project at a time. One 48 px toolbar: `Check · Edit · Preview · Render`, 
   clean. Text that Check did not find is not judged.
 - **GPU fill is fast, not instant.** Cold render on the review project: 620–847 s for 160 s of
   video, varying with load (measured 2026-11-12); CPU fill is 4.6× slower or worse under load.
-- **Vietnamese transcription needs the Whisper pack** (1.61 GB). Apple Speech does not transcribe it.
+- **Vietnamese transcription needs the speech pack** (1.62 GB GGML weights; the runner is inside the app). Apple Speech does not transcribe it.
 - **Apple Intelligence must be enabled** for rewrite; without it the rewrite is a basic cleanup.
 - **macOS 26 only.**
 

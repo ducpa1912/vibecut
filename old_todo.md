@@ -490,3 +490,4 @@ Closed, verified against code and tests on 2026-11-16:
 - [x] Kokoro: the two files have no publisher hash (exact size only); a publisher hash closes it. Moot for v1 once R2 lands (D9: Kokoro dropped). Closed 2026-11-26: Kokoro removed (R2).
 
 - [x] REQ-20261125-03 · R2 follow-ups (OpenCode, `docs/teams/r2-followups/BRIEF.md`): show the voice fallback message in `app.js` (generate and preview, ~4740/4761); the dub title at `main.py` ~1604 names the requested voice, not the one used; `AppModel.swift` ~167 prechecks only the old two voice files; drop the retired package from `requirements-duck.txt` line 7 — merged `6b0cab2` 2026-11-26 (OpenCode, review `docs/teams/r2-followups/review.md`)
+- [x] REQ-20261125-03 · P-B whisper.cpp inside the app, pack is weights only (Codex, D3 decided 2026-11-26; brief `docs/teams/pb-whisper-in-app/BRIEF.md`) — merged `4fb6a7b` 2026-11-26 (Codex `43e79ff`; whisper.cpp v1.8.2 Metal, 2.76 MB helper; JFK sample 22 words; 436 tests)
