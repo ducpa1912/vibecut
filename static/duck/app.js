@@ -8,7 +8,7 @@ import {
   sourceToTimeline as mapSourceToTimeline,
   storyRanges,
 } from './timeline-model.js';
-import { waveformPeaks, audibleRows, mixEntry } from './audio-tools.js';
+import { drawLevels, audibleRows, mixEntry } from './audio-tools.js';
 import { storyBannerMarkup, mediaInspectorMarkup, audioFocusMarkup } from './editor-markup.js';
 
 const app = document.querySelector('#app');
@@ -560,6 +560,8 @@ function sceneLayers(scene) {
 function clipIndexForScene(scene, index = state.selectedScene) {
   const clips = state.edit?.clips || [];
   if (!clips.length) return -1;
+  const active = storyClipAt(state.timelineTime);
+  if (active && active.clip.scene === scene?.id) return active.index;
   const byScene = clips.findIndex((clip) => clip.scene === scene?.id);
   if (byScene >= 0) return byScene;
   return Math.max(0, Math.min(index, clips.length - 1));
@@ -2272,6 +2274,19 @@ function syncAudioMixButton() {
   if (button) button.innerHTML = `${icon('play', 12)} ${state.mixPlaying ? 'Stop' : 'Preview mix'}`;
 }
 
+function scheduleAudio(ctx, buffer, entry, startTime) {
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(entry.envelope[0][1], startTime);
+  for (const [time, volume] of entry.envelope.slice(1)) {
+    gain.gain.linearRampToValueAtTime(volume, startTime + time);
+  }
+  source.connect(gain).connect(ctx.destination);
+  source.start(startTime, entry.offset, entry.duration);
+  return source;
+}
+
 async function auditionAudioTrack(trackId) {
   const row = editAudioRows().find((item) => String(item.id) === String(trackId));
   if (!row) return;
@@ -2286,15 +2301,9 @@ async function auditionAudioTrack(trackId) {
     toast('Audio row: file could not be read.', 'bad');
     return;
   }
-  const offset = Math.max(0, Math.min(buffer.duration - 0.01, Number(row.offset || 0)));
-  const wanted = Math.max(0.2, Number(row.duration || 0.2));
-  const playable = Math.max(0.01, Math.min(wanted, buffer.duration - offset));
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  const gain = ctx.createGain();
-  gain.gain.value = Math.max(0, Math.min(1.5, Number(row.volume ?? (row.kind === 'music' ? 0.25 : 1))));
-  source.connect(gain).connect(ctx.destination);
-  source.start(0, offset, playable);
+  const entry = mixEntry(row, Number(row.start || 0), buffer.duration);
+  if (!entry) return;
+  const source = scheduleAudio(ctx, buffer, entry, ctx.currentTime);
   source.onended = () => {
     state.audioSources = state.audioSources.filter((item) => item !== source);
     if (!state.audioSources.length && !state.mixPlaying) {
@@ -2331,7 +2340,7 @@ async function toggleAudioMixPreview() {
   const video = document.querySelector('[data-preview]');
   if (video) {
     try {
-      video.currentTime = playhead;
+      video.currentTime = timelineToSource(playhead);
       video.muted = sourceMuted || soloActive || dub || voiceOnly;
       video.volume = voices.length ? 0.22 : 1;
       await video.play();
@@ -2345,19 +2354,7 @@ async function toggleAudioMixPreview() {
     if (!buffer) continue;
     const entry = mixEntry(row, playhead, buffer.duration);
     if (!entry) continue;
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const gain = ctx.createGain();
-    const startTime = base + entry.delay;
-    const endTime = startTime + entry.duration;
-    gain.gain.setValueAtTime(entry.fadeIn ? 0 : entry.level, startTime);
-    if (entry.fadeIn) gain.gain.linearRampToValueAtTime(entry.level, startTime + entry.fadeIn);
-    if (entry.fadeOut) {
-      gain.gain.setValueAtTime(entry.level, Math.max(startTime, endTime - entry.fadeOut));
-      gain.gain.linearRampToValueAtTime(0, endTime);
-    }
-    source.connect(gain).connect(ctx.destination);
-    source.start(startTime, entry.offset, entry.duration);
+    const source = scheduleAudio(ctx, buffer, entry, base + entry.delay);
     state.audioSources.push(source);
     last = Math.max(last, Number(row.start || 0) + Math.max(0.2, Number(row.duration || 0.2)));
   }
@@ -2464,7 +2461,7 @@ function editAudioRows() {
   }
   for (const effect of edit.sfx || []) {
     if (effect.kind === 'sound') {
-      rows.push({ id: effect.id, kind: 'sound', name: effect.name || 'Sound effect', audio: effect.file, duration: Math.max(0.2, Number(effect.end || 0) - Number(effect.start || 0)), start: Number(effect.start || 0), volume: effect.volume ?? 0.9, muted: effect.muted, solo: effect.solo, fade_in: effect.fade_in, fade_out: effect.fade_out, offset: effect.offset || 0 });
+      rows.push({ ...effect, id: effect.id, kind: 'sound', name: effect.name || 'Sound effect', audio: effect.file, duration: Number(effect.end || 0) - Number(effect.start || 0), start: Number(effect.start || 0), volume: effect.volume ?? 0.9, muted: effect.muted, solo: effect.solo, fade_in: effect.fade_in, fade_out: effect.fade_out, offset: effect.offset || 0 });
     }
   }
   return rows;
@@ -2484,42 +2481,31 @@ function centerTimelineOnPlayhead() {
 
 function timelineDuration() {
   const edit = state.edit;
-  if (isStoryEdit()) {
-    return storyDuration(edit?.clips || []);
-  }
-  const scenes = getScenes();
-  return Math.max(
-    Number(edit?.end || 0),
-    Number(scenes[scenes.length - 1]?.end || 0),
-    ...scriptCues().map((cue) => Number(cue.end || 0)),
-    ...editAudioRows().map((row) => Number(row.start || 0) + Number(row.duration || 0)),
-    ...(edit?.sfx || []).map((effect) => Number(effect.end || 0)),
-  );
+  return storyDuration(edit?.clips || []);
 }
 
 function timelineSceneRanges() {
   const scenes = getScenes();
-  if (!isStoryEdit()) {
-    return scenes.map((scene, index) => ({ scene, index, start: Number(scene.start || 0), end: Number(scene.end || 0) }));
-  }
   const byId = new Map(scenes.map((scene) => [scene.id, scene]));
   return storyRanges(state.edit?.clips || [], byId);
 }
 
 function timelineToSource(time) {
-  if (!isStoryEdit()) return Number(time) || 0;
   return mapTimelineToSource(state.edit?.clips || [], time);
 }
 
 function sourceToTimeline(time) {
-  if (!isStoryEdit()) return Number(time) || 0;
+  const active = storyClipAt(state.timelineTime);
+  if (active && time >= active.clip.start && time < active.clip.end) {
+    return active.start + time - active.clip.start;
+  }
   return mapSourceToTimeline(state.edit?.clips || [], time);
 }
 
 function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '', title = '') {
   const left = total > 0 ? Math.max(0, Math.min(100, (Number(start) / total) * 100)) : 0;
-  const width = total > 0 ? Math.max(0.6, Math.min(100 - left, ((Number(end) - Number(start)) / total) * 100)) : 0;
-  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} ${title ? `title="${esc(title)}"` : ''} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}">${esc(label)}</button>`;
+  const width = total > 0 ? Math.max(action === 'select-clip' ? 0 : 0.6, Math.min(100 - left, ((Number(end) - Number(start)) / total) * 100)) : 0;
+  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} ${title ? `title="${esc(title)}"` : ''} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}"><span>${esc(label)}</span></button>`;
 }
 
 function timelinePanel() {
@@ -2557,6 +2543,7 @@ function timelinePanel() {
   return `<section class="panel timeline" data-total="${total}">
     <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${(state.edit.sfx || []).length} effects</span><span class="spacer"></span>
       <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="icon-btn timeline-action" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}" title="Trim selected clip">${icon('scissors', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="split-at-playhead" title="Split at playhead">${icon('split', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="-0.5" title="Slip earlier">${icon('chevronLeft', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="0.5" title="Slip later">${icon('chevronRight', 14)}</button></span>
+      <button class="btn small" type="button" data-action="quiet-open">Remove silence</button>
       <span class="timeline-zoom" aria-label="Timeline zoom">
         <button type="button" data-action="timeline-zoom" data-dir="-1" aria-label="Zoom out">−</button>
         <span data-zoom-label>${Math.round(Number(state.timelineZoom || 1) * 10) / 10}×</span>
@@ -2576,35 +2563,28 @@ function timelinePanel() {
         <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool icon" type="button" data-action="open-focus" data-focus="sfx" title="Add special effect">${icon('plus', 10)}</button></div>
       </div>
       <div class="timeline-tracks" style="grid-template-rows:${laneRows}">
-        <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
-        <div class="timeline-track scene">${(() => {
-          const rows = timelineSceneRanges();
-          const dense = rows.length > 18;
-          return rows.map((row) => {
-            const story = isStoryEdit();
-            const full = story ? storyClipLabel(row.clip, row.index) : `S${pad(row.index + 1)}`;
-            const label = dense && row.index !== state.selectedScene ? '' : full;
-            const action = story ? 'timeline-seek' : 'select-scene';
-            const data = story ? `data-time="${row.start.toFixed(3)}"` : `data-index="${row.index}"`;
-            const extra = !story && row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '';
-            const title = `${full} · ${fmtDuration((row.end || 0) - (row.start || 0))}`;
-            return timelineBlock(row.start, row.end, total, label, action, data, extra, title);
-          }).join('');
-        })()}</div>
+        <div class="timeline-track video">${timelineSceneRanges().map(({clip,index,start,end}) => {
+          const key = clip.kind === 'media' ? 'media:' + index : 'source';
+          return `<span style="width:${(end-start)/total*100}%">${clip.media === 'image' ? '' : waveCanvas(key, clip.kind === 'media' ? (clip.offset || 0) : clip.start, end-start, start, state.edit.audio_source_muted ? 0 : clip.volume ?? 1, clip.file)}</span>`;
+        }).join('')}</div>
+        <div class="timeline-track scene">${timelineSceneRanges().map(({clip,index,start,end}) =>
+          timelineBlock(start, end, total, storyClipLabel(clip,index), 'select-clip',
+            `data-clip="${index}" draggable="true" aria-label="Clip ${index+1}, ${esc(storyClipLabel(clip,index))}. Alt and arrow keys move this clip." aria-pressed="${storyClipAt(state.timelineTime)?.index === index}"`,
+            '', 'Drag to move, or use Alt + Left / Right')).join('')}</div>
         <div class="timeline-track script${cues.length ? '' : ' is-empty'}">${cues.length ? cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('') : `<button class="lane-add" type="button" data-action="open-script">${icon('plus', 10)} Add a caption</button>`}</div>
         <div class="timeline-track audio-stack${audioRows.length ? '' : ' is-empty'}">${audioRows.length ? audioRows.map((row) => {
           const start = Number(row.start || 0);
-          const duration = Math.max(0.2, Number(row.duration || 0.2));
+          const duration = Math.max(0.001, Number(row.duration || 0.2));
           const left = total > 0 ? Math.max(0, Math.min(100, (start / total) * 100)) : 0;
           const width = total > 0 ? Math.max(0.6, Math.min(100 - left, (duration / total) * 100)) : 0;
-          const bars = Array.from({ length: 36 }, (_unused, index) => `<i style="height:${(25 + Math.abs(Math.sin((index + start) * 1.7)) * 70).toFixed(0)}%"></i>`).join('');
           return `<div class="audio-lane${row.muted ? ' is-muted' : ''}${row.solo ? ' is-solo' : ''}" style="--lane-color:${audioColor(row.kind)}">
             <span class="audio-lane-tools">
               <button class="lane-tool${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="Mute ${esc(row.name || row.kind)}">M</button>
               <button class="lane-tool${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="Solo ${esc(row.name || row.kind)}">S</button>
             </span>
             <button class="timeline-block audio-block" type="button" data-action="open-focus" data-focus="audio" data-track="${esc(row.id)}" data-start="${start.toFixed(3)}" data-duration="${duration.toFixed(3)}" data-offset="${Number(row.offset || 0).toFixed(3)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${audioColor(row.kind)}b8;color:#fff;border-color:transparent">
-              <span class="audio-wave" data-track="${esc(row.id)}" data-offset="${Number(row.offset || 0).toFixed(3)}" data-duration="${duration.toFixed(3)}" aria-hidden="true">${bars}</span>
+              ${waveCanvas(row.id, row.offset || 0, duration, start, row.muted ? 0 : row.volume ?? (row.kind === 'music' ? .25 : 1), row.audio)}
+
               <span class="audio-handle left" data-edge="start"></span><span class="audio-block-label">${esc(row.name || row.kind)}</span><span class="audio-handle right" data-edge="end"></span>
             </button>
           </div>`;
@@ -2928,30 +2908,131 @@ function updateGhostActive() {
   });
 }
 
+function timelineApi() {
+  return `/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}`;
+}
+
+function waveCanvas(track, offset, duration, start, gain, file) {
+  return `<canvas class="timeline-wave" aria-hidden="true" data-track="${esc(track)}" data-wave-key="${esc(file ? 'asset:' + file : track)}" data-offset="${offset}" data-start="${start}" data-duration="${duration}" data-gain="${gain}"></canvas>`;
+}
+
+let waveEdit = '';
+let quietSpans = [];
 async function loadAudioWaveforms() {
-  if (!state.project || !state.edit) return;
-  const waves = [...document.querySelectorAll('.audio-wave[data-track]')];
-  if (!waves.length) return;
-  const rows = editAudioRows();
-  for (const wave of waves) {
-    const id = wave.dataset.track || '';
-    const row = rows.find((item) => String(item.id) === id);
-    if (!row) continue;
-    const offset = Math.max(0, Number(wave.dataset.offset || 0));
-    const duration = Math.max(0.05, Number(wave.dataset.duration || 0.05));
-    const count = Math.max(6, Math.min(64, Math.round((wave.clientWidth || 48) / 2)));
-    const key = `${id}:${offset.toFixed(2)}:${duration.toFixed(2)}:${count}`;
-    if (state.waveformCache.has(key)) {
-      const peaks = state.waveformCache.get(key);
-      wave.innerHTML = peaks.map((peak) => `<i style="height:${Math.max(8, peak * 100).toFixed(0)}%"></i>`).join('');
-      continue;
-    }
-    const buffer = await audioBufferFor(row);
-    if (!buffer) continue;
-    const peaks = waveformPeaks(buffer.getChannelData(0), buffer.duration, offset, duration, count);
-    state.waveformCache.set(key, peaks);
-    wave.innerHTML = peaks.map((peak) => `<i style="height:${Math.max(8, peak * 100).toFixed(0)}%"></i>`).join('');
+  if (!state.edit || !state.project) return;
+  const base = timelineApi();
+  const version = base + ':' + state.edit.updated;
+  if (waveEdit !== version) {
+    waveEdit = version;
+    state.waveformCache.clear();
+    quietSpans = [];
   }
+  await Promise.all([...document.querySelectorAll('canvas.timeline-wave')].map(async canvas => {
+    const {track, waveKey, offset, duration, start, gain} = canvas.dataset;
+    let request = state.waveformCache.get(waveKey);
+    if (!request) {
+      request = api(base + '/levels?track=' + encodeURIComponent(track));
+      state.waveformCache.set(waveKey, request);
+    }
+    try {
+      const {values} = await request;
+      if (!canvas.isConnected || waveEdit !== version) return;
+      drawLevels(canvas, values, +offset, +duration, +gain,
+        quietSpans.map(([a,b]) => [a-start,b-start]));
+    } catch (_) {
+      if (state.waveformCache.get(waveKey) === request) state.waveformCache.delete(waveKey);
+      canvas.parentElement?.setAttribute('title', 'Audio levels unavailable');
+    }
+  }));
+}
+
+function selectClip(index, offset = 0) {
+  const row = timelineSceneRanges()[index];
+  if (!row) return;
+  state.timelineTime = row.start + offset;
+  state.previewTime = timelineToSource(state.timelineTime);
+  const sceneIndex = getScenes().findIndex(scene => scene.id === row.clip.scene);
+  if (sceneIndex >= 0) state.selectedScene = sceneIndex;
+  render();
+}
+
+async function moveTimelineClip(index, target) {
+  if (index === target || target < 0 || target >= state.edit.clips.length) return;
+  const current = storyClipAt(state.timelineTime);
+  try {
+    const data = await api(timelineApi() + '/clips/move', {method:'POST',
+      body:JSON.stringify({index,target,updated:state.edit.updated})});
+    state.edit = data.edit;
+    selectClip(target, index === current?.index ? current.offset : 0);
+    document.querySelector(`[data-action="select-clip"][data-clip="${target}"]`)?.focus();
+  } catch (error) { toast(error.message, 'bad'); }
+}
+
+function setupClipMovement() {
+  for (const button of document.querySelectorAll('[data-action="select-clip"]')) {
+    const index = Number(button.dataset.clip);
+    button.addEventListener('keydown', e => {
+      if (!e.altKey || !['ArrowLeft','ArrowRight'].includes(e.key)) return;
+      e.preventDefault();
+      moveTimelineClip(index, index + (e.key === 'ArrowLeft' ? -1 : 1));
+    });
+    button.addEventListener('dragstart', e => e.dataTransfer.setData('application/x-duck-clip', String(index)));
+    button.addEventListener('dragover', e => e.preventDefault());
+    button.addEventListener('drop', e => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData('application/x-duck-clip');
+      if (/^\d+$/.test(from)) moveTimelineClip(Number(from), index);
+    });
+  }
+}
+
+function quietDialog() {
+  const base = timelineApi();
+  openModal(`<dialog class="modal" aria-label="Remove silence"><div class="modal-head"><h2>Remove silence</h2></div>
+    <form class="modal-body quiet-form">
+      <label>Threshold (dBFS) <input type="number" name="threshold" value="-40" min="-90" max="0" required></label>
+      <label>Minimum quiet time (s) <input type="number" name="minimum" value="0.6" min="0.05" max="120" step=".01" required></label>
+      <label>Keep at each edge (s) <input type="number" name="padding" value="0.12" min="0" max="5" step=".01" required></label>
+      <button type="submit" class="btn">Find quiet spans</button><p role="status"></p><div class="quiet-list"></div>
+      <button type="button" class="btn" data-action="close-modal">Cancel</button>
+      <button type="button" class="btn primary" data-apply disabled>Remove selected</button>
+    </form></dialog>`);
+  const form = modalRoot.querySelector('form');
+  const list = form.querySelector('.quiet-list'), status = form.querySelector('[role=status]'), apply = form.querySelector('[data-apply]');
+  let revision = 0, preview, params;
+  const clear = () => { revision++; preview = null; list.replaceChildren(); status.textContent = ''; apply.disabled = true; quietSpans = []; loadAudioWaveforms(); };
+  form.closest('dialog').addEventListener('close', clear, {once:true});
+  form.querySelectorAll('input[type=number]').forEach(input => input.addEventListener('input', clear));
+  const selected = () => [...list.querySelectorAll('input:checked')].map(box => Number(box.value));
+  function selection() {
+    quietSpans = selected().map(i => preview.spans[i]);
+    apply.disabled = !quietSpans.length;
+    status.textContent = `${preview.spans.length} quiet spans · ${preview.total.toFixed(2)} s found · ${quietSpans.reduce((sum,[a,b])=>sum+b-a,0).toFixed(2)} s selected`;
+    loadAudioWaveforms();
+  }
+  list.onchange = selection;
+  form.onsubmit = async e => {
+    e.preventDefault(); clear(); const request = revision;
+    params = Object.fromEntries([...new FormData(form)].map(([k,v]) => [k,Number(v)]));
+    status.textContent = 'Reading audio levels…';
+    try {
+      const data = await api(base + '/clips/silence', {method:'POST',body:JSON.stringify(params)});
+      if (!form.isConnected || request !== revision) return;
+      preview = data;
+      list.innerHTML = data.spans.map(([a,b],i) => `<label><input type="checkbox" value="${i}" checked> ${a.toFixed(2)}–${b.toFixed(2)} s</label>`).join('');
+      selection();
+    } catch (err) { if (request === revision) status.textContent = err.message; }
+  };
+  apply.onclick = async () => {
+    if (!preview) return;
+    apply.disabled = true;
+    try {
+      const data = await api(base + '/clips/silence', {method:'POST',
+        body:JSON.stringify({...params, preview_id:preview.preview_id, selected:selected()})});
+      state.edit = data.edit; closeModal(); selectClip(0);
+      toast(`Removed ${data.removed.toFixed(2)} s at ${params.threshold} dBFS, minimum ${params.minimum} s.`);
+    } catch (err) { status.textContent = err.message; apply.disabled = false; }
+  };
 }
 
 function setupAudioRows() {
@@ -3078,6 +3159,10 @@ function updateTimelinePlayhead(time) {
   const total = Number(timeline?.dataset.total || 0);
   if (!head || total <= 0) return;
   head.style.left = `${Math.max(0, Math.min(100, (Number(time) / total) * 100)).toFixed(2)}%`;
+  const current = storyClipAt(time);
+  timeline.querySelectorAll('[data-action="select-clip"]').forEach(button => {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.clip) === current?.index));
+  });
   const rulerHead = timeline?.querySelector('.ruler-playhead');
   if (rulerHead) rulerHead.style.left = head.style.left;
 }
@@ -3281,7 +3366,7 @@ function proofStepBar(hasProof) {
 }
 
 function sequenceSegments() {
-  if (isStoryEdit()) {
+  if (state.edit?.clips?.length) {
     const out = [];
     let skipped = 0;
     (state.edit?.clips || []).forEach((clip) => {
@@ -3988,6 +4073,7 @@ function openModal(html) {
 }
 
 function closeModal() {
+  modalRoot.querySelector('dialog[open]')?.close();
   modalRoot.innerHTML = '';
 }
 
@@ -4549,13 +4635,14 @@ async function splitAtPlayhead() {
     toast('Move the playhead inside a clip first.', 'bad');
     return;
   }
+  const rightIndex = storyClipAt(state.timelineTime).index + 1;
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clips/split`, {
       method: 'POST',
-      body: JSON.stringify({ time: state.timelineTime }),
+      body: JSON.stringify({ time: state.timelineTime, updated: state.edit.updated }),
     });
     state.edit = data.edit;
-    render();
+    selectClip(rightIndex);
     toast('Clip split.');
   } catch (error) {
     toast(`Split: ${error.message}`, 'bad');
@@ -5141,6 +5228,8 @@ document.addEventListener('click', async (event) => {
       if (strip) strip.scrollBy({ left: Number(target.dataset.dir || 1) * Math.max(180, strip.clientWidth * 0.75), behavior: 'smooth' });
     }
     else if (action === 'trim-apply') await applyTrim();
+    else if (action === 'select-clip') selectClip(Number(target.dataset.clip));
+    else if (action === 'quiet-open') quietDialog();
     else if (action === 'split-at-playhead') await splitAtPlayhead();
     else if (action === 'slip-clip') await slipClip(Number(target.dataset.delta || 0));
     else if (action === 'clear-queue') await clearQueue();
@@ -5587,6 +5676,7 @@ function setupPlayerBars() {
 function afterRender() {
   setupBrushCanvas();
   setupTimelineRuler();
+  setupClipMovement();
   setupAudioRows();
   loadAudioWaveforms();
   setupAudioDrag();
@@ -5606,7 +5696,34 @@ function afterRender() {
     if (state.previewTime > 0 && Math.abs(video.currentTime - state.previewTime) > 0.35) {
       try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
     }
-    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; state.timelineTime = sourceToTimeline(video.currentTime); updateTimelinePlayhead(state.timelineTime); syncSceneForTime(); refreshTranscriptOverlay(); }, { passive: true });
+    const advance = () => {
+      if (isStoryEdit() || video.seeking || (video.paused && !video.ended)) return false;
+      const active = storyClipAt(state.timelineTime);
+      if (!active || video.currentTime < active.clip.end) return false;
+      const next = state.edit.clips[active.index + 1];
+      state.timelineTime = active.start + active.clip.end - active.clip.start;
+      if (next) {
+        state.previewTime = next.start;
+        video.currentTime = next.start;
+        if (video.ended || video.paused) video.play().catch(() => {});
+      } else {
+        state.previewTime = active.clip.end;
+        video.pause();
+      }
+      updateTimelinePlayhead(state.timelineTime);
+      syncSceneForTime();
+      refreshTranscriptOverlay();
+      return true;
+    };
+    video.addEventListener('ended', advance);
+    video.addEventListener('timeupdate', () => {
+      if (advance() || video.seeking) return;
+      state.previewTime = video.currentTime;
+      state.timelineTime = sourceToTimeline(video.currentTime);
+      updateTimelinePlayhead(state.timelineTime);
+      syncSceneForTime();
+      refreshTranscriptOverlay();
+    }, { passive: true });
   }
 
   document.querySelectorAll('.split-stage').forEach((stage) => {
