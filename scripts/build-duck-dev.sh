@@ -91,22 +91,33 @@ fi
 
 FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpeg}}"
 FFPROBE_SRC="${DUCK_FFPROBE:-$(dirname "$FFMPEG_SRC")/ffprobe}"
-if [ -x "$FFMPEG_SRC" ]; then
+DAV1D="${DUCK_DAV1D:-$ROOT/build/ffmpeg-lgpl/lib/libdav1d.7.dylib}"
+missing=0
+missing_helper() {
+  if [[ "${DUCK_ALLOW_NO_FFMPEG:-0}" != 1 ]]; then
+    printf 'error: %s; run scripts/build-ffmpeg-lgpl.sh\n' "$1" >&2
+    exit 1
+  fi
+  printf 'warning: %s\n' "$1" >&2
+  missing=1
+}
+if [[ -x "$FFMPEG_SRC" && -f "$FFMPEG_SRC" ]]; then
   cp "$FFMPEG_SRC" "$APP/Contents/Helpers/ffmpeg"
 else
-  printf 'warning: LGPL ffmpeg not copied; set DUCK_FFMPEG=/path/to/lgpl/ffmpeg\n' >&2
+  missing_helper 'LGPL ffmpeg not copied; set DUCK_FFMPEG=/path/to/lgpl/ffmpeg'
 fi
-if [ -x "$FFPROBE_SRC" ]; then
+if [[ -x "$FFPROBE_SRC" && -f "$FFPROBE_SRC" ]]; then
   cp "$FFPROBE_SRC" "$APP/Contents/Helpers/ffprobe"
 else
-  printf 'warning: LGPL ffprobe not copied; set DUCK_FFPROBE=/path/to/lgpl/ffprobe\n' >&2
+  missing_helper 'LGPL ffprobe not copied; set DUCK_FFPROBE=/path/to/lgpl/ffprobe'
 fi
-
-DAV1D="${DUCK_DAV1D:-$ROOT/build/ffmpeg-lgpl/lib/libdav1d.7.dylib}"
-if [ -f "$DAV1D" ]; then
+if [[ -f "$DAV1D" ]]; then
   cp "$DAV1D" "$APP/Contents/Helpers/libdav1d.7.dylib"
 else
-  printf 'warning: libdav1d not copied; AV1 input will not decode\n' >&2
+  missing_helper 'libdav1d not copied; AV1 input will not decode'
+fi
+if [[ "$missing" == 0 ]]; then
+  "$ROOT/scripts/check-bundle-helpers.sh" "$APP"
 fi
 
 # Local ad-hoc signature; App Store needs a real identity (see the script).
