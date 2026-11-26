@@ -14,6 +14,15 @@ Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries i
 - [ ] Founder, by hand, one sitting: `docs/teams/founder-test-all.md` (loops 10–26, fix-02, fix-04;
   each step names its loop; includes story playback, the microphone and the three model slots).
 
+## REQ-20261126-01 — Adopt from Editroom (2026-11-26)
+
+Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) → P-E → G1 → T1.
+
+- [ ] REQ-20261126-01 · W1 core RMS levels per source, one canvas waveform, the same levels feed remove-silence (fold into P-D: founder decision)
+- [ ] REQ-20261126-01 · G1 one baked grade cube for preview and render (fixes preview ≠ render), `lut3d`, user .cube LUTs, 8 ported looks with MIT notice, tint (Codex)
+- [ ] REQ-20261126-01 · T1 filmstrip per clip, clip names, track headers, blade tool, scene bin grid (OpenCode, after P-E)
+- [ ] REQ-20261126-01 · icon style pass: one stroke weight, icon per inspector row, fade-curve icons (with T1)
+
 ## REQ-20261125-03 — App Store readiness plan (2026-11-25)
 
 Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
