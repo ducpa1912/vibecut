@@ -691,6 +691,45 @@ def set_cut(
     return edit
 
 
+def remove_clean_layer(edit: dict, layer_id: str) -> dict:
+    """Drop one Clean layer from the edit and remember that choice.
+
+    The layer leaves the edit for good, not just Off. The id is kept in
+    ``removed_clean`` so a later Clean re-plan does not put the same detected
+    line back.
+    """
+    wanted = str(layer_id)
+    kept = []
+    found = False
+    for layer in edit.get("clean") or []:
+        if isinstance(layer, dict) and str(layer.get("id")) == wanted:
+            found = True
+            continue
+        kept.append(layer)
+    if not found:
+        raise KeyError(layer_id)
+    edit["clean"] = kept
+    removed = [
+        str(item) for item in edit.get("removed_clean") or []
+        if str(item) != wanted
+    ]
+    removed.append(wanted)
+    edit["removed_clean"] = removed
+    return edit
+
+
+def drop_removed_layers(edit: dict) -> dict:
+    """Keep removed layers out of a Clean re-plan that rebuilt them."""
+    removed = {str(item) for item in edit.get("removed_clean") or []}
+    if not removed:
+        return edit
+    edit["clean"] = [
+        layer for layer in edit.get("clean") or []
+        if not (isinstance(layer, dict) and str(layer.get("id")) in removed)
+    ]
+    return edit
+
+
 def save_edit(edit: dict, data_root: Path, *, expected_updated: float | None = None) -> dict:
     from duckcore.render import output_fps
 

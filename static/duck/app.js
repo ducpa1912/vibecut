@@ -1859,6 +1859,7 @@ function inspectorClean(scene, layer, layers) {
     </div>
     <div class="box-actions"><button class="btn small" type="button" data-action="box-apply" data-layer="${esc(layer.id)}">Apply box</button><button class="btn small" type="button" data-action="recheck-scene">Re-check &amp; re-apply</button></div>
   </div>` : ''}
+  ${removeLayerButton(layer)}
   <div class="proof-pair">
     <figure><div class="frame"><img src="${frameUrl(sceneMid(scene))}" alt=""></div><figcaption>Before</figcaption></figure>
     <span class="arrow">${icon('chevronRight', 14)}</span>
@@ -1883,6 +1884,11 @@ function layerNote(layer) {
   return layer.quality === 'moving'
     ? 'Blur hides the words and keeps the motion.'
     : 'Blur hides the words without rebuilding the background.';
+}
+
+function removeLayerButton(layer) {
+  if (!layer) return '';
+  return `<button class="btn small wide clean-remove" style="margin-top:8px" type="button" data-action="clean-remove" data-layer="${esc(layer.id)}" title="Delete this layer from the edit">${icon('trash', 13)} Remove layer</button>`;
 }
 
 function fillRepairText(kind) {
@@ -2844,6 +2850,7 @@ function screenClean() {
             </div>
             <div class="box-actions"><button class="btn small" type="button" data-action="box-apply" data-layer="${esc(layer.id)}">Apply box</button><button class="btn small" type="button" data-action="recheck-scene">Re-check &amp; re-apply</button></div>
           </div>` : ''}
+          ${removeLayerButton(layer)}
           <div class="fill-engine-line"><span class="rail-head">AI fill engine</span>${fillEngineControl()}</div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
           <button class="btn wide" type="button" data-action="prove-scene" data-index="${allScenes.indexOf(scene)}" ${state.previewRunning ? 'disabled' : ''}>${icon('sparkle', 14)} ${hasProof ? 'Prove again · blur' : 'Prove this scene · blur'}</button>
@@ -3276,6 +3283,22 @@ function detectionLayers(scene, time) {
     .map((layer) => ({ layer, box: layerBoxAt(layer, time) }));
 }
 
+function detectLayerAtPoint(scene, time, x, y) {
+  const hits = detectionLayers(scene, time).filter(({ box }) => {
+    const bx = Number(box.x || 0);
+    const by = Number(box.y || 0);
+    const bw = Number(box.w || 0);
+    const bh = Number(box.h || 0);
+    return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+  });
+  // Where boxes overlap, the smallest one under the pointer wins.
+  hits.sort((left, right) => (
+    Number(left.box.w || 0) * Number(left.box.h || 0)
+    - Number(right.box.w || 0) * Number(right.box.h || 0)
+  ));
+  return hits.length ? String(hits[0].layer.id || '') : '';
+}
+
 function updateDetectionOverlay(player, scene) {
   const overlay = document.querySelector('[data-detect-overlay]');
   if (!overlay || !scene) return;
@@ -3298,7 +3321,7 @@ function updateDetectionOverlay(player, scene) {
   const boxes = detectionLayers(scene, Number(player.currentTime || 0));
   overlay.innerHTML = boxes.map(({ layer, box }) => {
     const label = layer.label || LAYER_KIND[layer.tracklet_kind] || 'Text';
-    return `<span class="detect-box ${layer.kind === 'blur' ? 'is-blur' : 'is-fill'}" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"><span class="detect-tag">${esc(layer.kind === 'blur' ? 'Blur' : label).slice(0, 22)}</span></span>`;
+    return `<span class="detect-box ${layer.kind === 'blur' ? 'is-blur' : 'is-fill'}${layer.id === state.selectedLayerId ? ' is-active' : ''}" data-layer="${esc(layer.id)}" title="${esc(label)} · click to select this layer" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"><span class="detect-tag">${esc(layer.kind === 'blur' ? 'Blur' : label).slice(0, 22)}</span></span>`;
   }).join('');
 }
 
@@ -3326,6 +3349,23 @@ function setupInlineDetectionReview() {
   player.addEventListener('seeked', update);
   player.addEventListener('play', update);
   update();
+  const overlay = document.querySelector('[data-detect-overlay]');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      const rect = overlay.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      const layerId = detectLayerAtPoint(scene, Number(player.currentTime || 0), x, y);
+      if (!layerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.selectedLayerId === layerId) return;
+      state.selectedLayerId = layerId;
+      state.inspectorTab = 'clean';
+      render();
+    });
+  }
 }
 
 function proofTime(scene) {
@@ -4600,6 +4640,33 @@ async function cleanAction(layerId, action) {
   }
 }
 
+async function removeCleanLayer(layerId) {
+  if (!state.project || !state.edit || !layerId) return;
+  const ok = window.confirm('Remove this layer? It leaves this edit, and the text it covered comes back on the next render. The other layers keep their saved fills.');
+  if (!ok) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/${encodeURIComponent(layerId)}`, {
+      method: 'DELETE',
+    });
+    state.edit = data.edit;
+    state.cleanVersion += 1;
+    if (state.selectedLayerId === layerId) state.selectedLayerId = '';
+    const scene = currentScene();
+    if (scene) {
+      state.previewCache.delete(scene.id);
+      state.previewStatus.set(scene.id, 'pending');
+    }
+    if (state.previewRunning) {
+      state.previewRun += 1;
+      state.previewRunning = false;
+    }
+    render();
+    toast('Layer removed. Its text comes back on the next render.');
+  } catch (error) {
+    toast(`Remove failed: ${error.message}`, 'bad');
+  }
+}
+
 async function clearQueue() {
   try {
     const data = await api('/api/queue/clear', { method: 'POST' });
@@ -5234,6 +5301,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'slip-clip') await slipClip(Number(target.dataset.delta || 0));
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
+    else if (action === 'clean-remove') await removeCleanLayer(target.dataset.layer || '');
     else if (action === 'clean-all') confirmCleanAll();
     else if (action === 'clean-all-confirm') await cleanAll();
     else if (action === 'queue-scope') { state.queueScope = state.queueScope === 'all' ? 'project' : 'all'; render(); }
