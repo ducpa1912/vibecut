@@ -67,7 +67,7 @@ exactly this.
 5. **Inspector.** Look menu, strength, then the sliders, laid out the way Editroom does it: an
    icon, a label, a slider, a number field. Copy grade / paste grade between clips.
 
-### W1 · Loudness waveform from the core (fold into P-D)
+### W1 · Loudness waveform from the core (folded into P-D, founder yes 2026-11-26)
 1. The core computes RMS levels once per source: 100 per second, mono, from FFmpeg into NumPy.
    It caches them next to the check data and serves them as JSON.
 2. P-D's remove-silence reads **the same levels**. Then the quiet spans the creator sees are the
