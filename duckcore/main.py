@@ -1240,6 +1240,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         report = check.get("report") or {}
         edit = clean.apply_report(edit, report)
+        # A layer the creator removed stays gone after a re-plan.
+        edit = edits.drop_removed_layers(edit)
         edits.save_edit(edit, data_root)
         return {
             "edit": edit,
@@ -2189,6 +2191,23 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         edits.save_edit(edit, data_root)
         return {"edit": edit}
+
+    @app.delete("/api/projects/{project_id}/edits/{edit_id}/clean/{layer_id}")
+    def remove_clean_layer(
+        project_id: str,
+        edit_id: str,
+        layer_id: str,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = edits.remove_clean_layer(edit, layer_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Layer not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        edits.save_edit(edit, data_root)
+        return {"edit": edit, "removed": layer_id}
 
     @app.patch("/api/projects/{project_id}")
     def rename_project(
