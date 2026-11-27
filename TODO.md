@@ -1,10 +1,12 @@
 # TODO — DuckSuite open work
 
 Only open work lives here; done items and closed loops are in `old_todo.md` (agents do not read it).
-Order follows `PLAN.md`. One loop at a time, top to bottom. Every item carries its request id
+Order follows `PLAN.md`. Reserve work in order, one independent loop per lane. Every item carries its request id
 (`REQ-YYYYMMDD-NN`, from `MEMORY.md`) or its brief/review path.
 
 ## Now
+
+- [ ] REQ-20261127-01 · Verify exact Pstack command resolution and effective lead/worker model variants before either team starts. See docs/teams/two-po/operations.md.
 
 
 - Historical media outputs and scratch footage/projects were removed at the founder's request; retain analysis and recreate authorized scratch data for future measurements (`docs/MEDIA-CLEANUP.md`).
@@ -23,7 +25,7 @@ Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) �
 
 ## REQ-20261125-03 — App Store readiness plan (2026-11-25)
 
-Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Lanes (2026-11-26): Codex the heavy work (release, licensing, in-app Whisper, split + reorder); OpenCode small bounded fixes; PO review/merge.
+Plan: `docs/plans/2026-11-25-app-store-readiness.md`. Feature ownership follows the current two-PO register.
 
 - [ ] REQ-20261125-03 · R3 notices generated from the bundle; test for unlisted components; LaMa entry fixed (Codex)
 - [ ] REQ-20261125-03 · R4 trim the bundle; R5 release mode without runtime swiftc (Codex)

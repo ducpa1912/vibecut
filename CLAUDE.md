@@ -16,19 +16,9 @@ The full contract is `AGENTS.md`. Read it first, then `PLAN.md`, `MEMORY.md`, `T
   that is not finished. Keep them small: `MEMORY.md` < ~80 lines, `TODO.md` only open work,
   `PLAN.md` only open loops. Moving closed content into `old_*.md` is part of closing a loop.
 
-## OpenCode
+## Senior review
 
-Every prompt Claude sends or queues to OpenCode runs at **high** reasoning effort. The variant goes
-on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium; do not use it.
-
-```bash
-~/.opencode/bin/opencode run -s <session> -m 'opencode-go/deepseek-v4.1-flash#high' --auto "<prompt>"
-```
-
-- One prompt at a time for each session; queue the next one behind it, never beside it.
-- Killing the `opencode run` client does not stop the work: the background service keeps running
-  the session. To stop it: `~/.opencode/bin/opencode api POST /api/session/<session>/interrupt`.
-- Do not edit the repo while an OpenCode session is working in it.
+Claude reviews specific findings or decisions when invited. The main Codex PO coordinates both feature lanes and publishes their PRs. Before reviewing a lane or handing off work, read `docs/teams/two-po/operations.md` for its ownership, session binding and approval state. Leave queueing and Git writes to the main PO; the assigned lane PO may send its approved brief to its own idle lead.
 
 ## State
 
@@ -49,12 +39,8 @@ on the model: `-m 'opencode-go/deepseek-v4.1-flash#high'`. The default is medium
 
 ```bash
 export PATH="/Users/happynghia/.nvm/versions/node/v26.11.1/bin:/opt/homebrew/bin:$PATH"
-./scripts/build-xcode-dev.sh
-open build/DuckSuite-Xcode.app
 python3 -m pytest -q tests
 node --check static/duck/app.js
-git -c commit.gpgsign=false commit
-git push https://github.com/ducpa1912/vibecut.git ducksuite
 ```
 
 Data root: `~/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite`.

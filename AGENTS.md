@@ -7,7 +7,7 @@ in `PLAN.md` in order.
 ## Context budget — what to read, what not to
 
 The session compacts when too much is pulled in. Read the four working documents, this contract, and
-the current loop's `BRIEF.md` and `review.md`. Nothing else.
+the current loop's `BRIEF.md` and `review.md`. Load the two-PO operations guide for coordination.
 
 - **Never open, print or search** `old_memory.md`, `old_todo.md`, `old_plan.md`. They are outdated
   instructions kept as frozen snapshots; nothing in them is a rule or a task any more. Write to them
@@ -102,38 +102,13 @@ TODO line only when it creates new work. It still gets a commit and a report lin
 One request, one MEMORY entry, one TODO block, one commit. A second request during the same turn
 gets its own id and its own block, even when the code lands together.
 
-## Three agents (since 2026-11-25, REQ-20261125-03)
+## Two feature lanes in one DuckSuite checkout (REQ-20261127-01)
 
-Three agents work on DuckSuite. Each has its own folder, branch, port and data root.
+The main Codex Astra PO owns the lane register, all Git writes, integration, working docs and publication. The second Astra PO owns a separate feature. Claude is the senior reviewer on request. Each PO supervises its own OpenCode lead. The founder has final authority.
 
-| Agent | Folder | Branch | Port | Data root |
-|---|---|---|---|---|
-| Opus (PO) | `drop_eval/ducksuite` | `ducksuite` (integration) | 8805 | the founder's (read only) |
-| OpenCode | `drop_eval/ducksuite-opencode` | `oc/<loop>` | 8821 | `build/scratch-root` in its folder |
-| Codex | `drop_eval/ducksuite-codex` | `cx/<loop>` | 8831 | `build/scratch-root` in its folder |
+Before assigning work, launching/resuming a session, changing file ownership, reviewing or publishing a lane, use `docs/teams/two-po/operations.md`. Its register and release gates supersede earlier agent-folder, branch and dispatch instructions. Only the main PO changes reservations. One writer per file, including shared UI files. Reserve the exact paths before editing.
 
-1. **One loop per agent.** Each agent works one loop at a time, from `docs/teams/<loop>/BRIEF.md`.
-   The brief names the files the agent owns, and no other agent touches them while the loop is
-   open. `static/duck/app.js` has one owner at a time.
-2. **Own branch only.** Commit on your own branch and nowhere else. Never push or merge. Never
-   switch branches in another agent's folder, and never stash, reset or edit there. Only the PO
-   merges (`--no-ff`, after the full suite passes) into `ducksuite` and pushes.
-3. **Leave the PO's files alone.** Only the PO writes `MEMORY.md`, `TODO.md`, `PLAN.md`,
-   `PRODUCT.md` and the report HTML. An agent writes its loop's `docs/teams/<loop>/review.md`,
-   and the PO folds it into the working documents. This overrides any agent file that says
-   "update MEMORY/TODO".
-4. **Shared venv, your own build.** Each folder has its own `build/`. The build venv
-   `build/duckcore-venv` is a symlink to the PO's copy. Never `pip install` into it: a loop that
-   needs a new package asks for one in its review, and the PO adds it.
-5. **Never open the app.** Only the PO builds and opens `DuckSuite-Xcode.app` for the founder.
-   The app has one bundle id and one container, so an agent that opens it would use the founder's
-   data. Agents test against the core on their own port with their own scratch data root:
-   `python3 duck_app.py --data-root "$PWD/build/scratch-root" --port <port>`.
-6. **No founder media.** Never read founder projects or frames, and never generate test media.
-   If a loop needs footage, say so in its review.
-7. **Done.** A loop is done when `python3 -m pytest -q tests` and `node --check
-   static/duck/app.js` pass, the work is committed on your branch, and `review.md` says what
-   changed, what was measured, and what could not be verified.
+Both teams stay in this checkout. Each uses its assigned port and scratch root. Leave the founder’s container, media, signed builds and app window to the founder. Use the existing build environment; record new dependency needs in the lane brief. Agents never install packages in the shared venv.
 
 ## Team
 
@@ -194,15 +169,10 @@ Design and rollout: `docs/duck/BYOK-PLAN.md`.
 ## Run
 
 ```bash
-# Full local build: core, static, helpers, LaMa, ad-hoc signature.
-./scripts/build-xcode-dev.sh
-open build/DuckSuite-Xcode.app
+# Lane A scratch core. Lane B uses two-po/B and port 8832.
+python3 duck_app.py --data-root "$PWD/build/two-po/A" --port 8831
+# Provide the launch token on stdin.
 
-# Core only, for UI work in a browser.
-python3 duck_app.py --data-root \
-  "$HOME/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite" \
-  --port 8799
-# The launch token is read from stdin. UI: http://127.0.0.1:8799/?t=<token>
 ```
 
 App data root: `~/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite`
@@ -229,7 +199,7 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
   `/opt/homebrew/bin`. The app reads the bundled ones.
 - The git remote is SSH and fails. Push over HTTPS:
   ```bash
-  git push https://github.com/ducpa1912/vibecut.git ducksuite
+  git push https://github.com/ducpa1912/vibecut.git refs/heads/<accepted-feature>
   ```
   The repo is named `vibecut`; the product branch is `ducksuite`.
 - The commit signing key needs a passphrase. Use `git -c commit.gpgsign=false commit`.
@@ -281,8 +251,8 @@ A change is not done until pytest passes, `node --check` passes, and the real sc
 1. Pick the next open loop in `PLAN.md`; its checkboxes are in `TODO.md`.
 2. Reproduce it; write the failing test first when the bug is in Python.
 3. Fix small, in the module that owns the behaviour.
-4. `pytest`, `node --check`, then rebuild and look at the real screen at 1440×900.
-5. Commit in Conventional Commits, then push with the HTTPS URL above. One loop = one commit.
+4. Run pytest and the JS syntax check on the candidate. Review UI in the lane scratch environment; record founder-only checks.
+5. Main PO publishes the accepted feature branch and opens its PR against ducksuite using the operations guide.
 6. Close the loop in the same commit: tick `TODO.md`, fill `Outcome` in `MEMORY.md`, add the entry
    to `docs/reports/ducksuite-product-progress.html` on top.
 

@@ -8,9 +8,11 @@ not read it). Keep this file under ~80 lines: direction, decisions in force, ope
 DuckSuite is an offline macOS video editor for one long video: Check finds the scenes, the
 transcript and the burned-in text; Clean removes that text with a local fill; Edit writes script,
 captions and voice; Render writes one 1080p MP4. Local only, one project at a time, one $29
-purchase. Planning is closed — the next commits are code, one loop at a time.
+purchase. Planning is closed — each lane takes one independent loop in build order.
 
 ## Decisions in force
+
+- REQ-20261127-01 · “Workflow setup only.” Two Astra POs split DuckSuite features in this checkout. The main PO owns Git and sign-off. Dispatch requires the exact OpenCode stack in docs/teams/two-po/operations.md.
 
 - Merge target is `ducksuite`. `main` has no common ancestor, lives in another worktree, never merged.
 - App Store, signing and TestFlight are paused by the founder. Do not start them.
