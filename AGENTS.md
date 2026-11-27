@@ -108,7 +108,7 @@ The main Codex Astra PO owns the lane register, all Git writes, integration, wor
 
 Before assigning work, launching/resuming a session, changing file ownership, reviewing or publishing a lane, use `docs/teams/two-po/operations.md`. Its register and release gates supersede earlier agent-folder, branch and dispatch instructions. Only the main PO changes reservations. One writer per file, including shared UI files. Reserve the exact paths before editing.
 
-Both teams stay in this checkout. Each uses its assigned port and scratch root. Leave the founder’s container, media, signed builds and app window to the founder. Use the existing build environment; record new dependency needs in the lane brief. Agents never install packages in the shared venv.
+Claude and both Codex POs work in the original drop_eval/ducksuite folder on the ducksuite branch. OpenCode can edit an assigned lightweight code worktree. Run integrated checks and packaging in the original folder. Keep a single toolchain, build directory and set of app bundles there. Leave the founder’s container, media, signed builds and app window to the founder. Use the existing build environment; record new dependency needs in the lane brief. Agents never install packages in the shared venv.
 
 ## Team
 

@@ -18,7 +18,7 @@ The full contract is `AGENTS.md`. Read it first, then `PLAN.md`, `MEMORY.md`, `T
 
 ## Senior review
 
-Claude reviews specific findings or decisions when invited. The main Codex PO coordinates both feature lanes and publishes their PRs. Before reviewing a lane or handing off work, read `docs/teams/two-po/operations.md` for its ownership, session binding and approval state. Leave queueing and Git writes to the main PO; the assigned lane PO may send its approved brief to its own idle lead.
+Claude and Codex share the original ducksuite checkout and integration branch. OpenCode worktrees contain code only. Claude reviews specific findings or decisions when invited. The main Codex PO coordinates both feature lanes and publishes their PRs. Before reviewing a lane or handing off work, read `docs/teams/two-po/operations.md` for its ownership, session binding and approval state. Leave queueing and Git writes to the main PO; the assigned lane PO may send its approved brief to its own idle lead.
 
 ## State
 

@@ -1,5 +1,7 @@
 # Workflow setup review · 2026-11-27
 
+Revision: Claude and Codex share the original integration checkout. OpenCode uses code-only worktrees. The shared-index rehearsal below is historical. Consolidation retained the old scratch data and reduced the legacy Codex worktree from 5.5 GiB to 16 MiB.
+
 **Workflow ready. Feature dispatch gated for both lanes.** The local OpenCode catalog advertised openai/gpt-6.2-astra, openai/gpt-6.2-sol and xingchi/gpt-6.1-sol. A read-only service probe with the explicit directory header resolved to this DuckSuite checkout. Omitting the header resolved to the user's home directory.
 
 Local OpenCode skill discovery found Impeccable, Grill Me, Loop Me and Code Review. The Pstack installation under `~/.local/share/pstack/skills` contains `swarm`, `thermo-nuclear-review` and `make-pr-easy-to-review`. Their availability inside the two OpenCode leads still needs verification. The installed Pstack agents include the Thermo Nuclear Review subagent. The separate requested Review Agent still needs identification. Main PO must locate or enable the exact packages in both leads’ effective configuration and record their resolved names and revisions. Then confirm both Astra clients are on Medium and verify a Sol High lead and a XingChi Sol Max child in each lane. Model listing proves availability only; runtime effort and Pstack execution are still untested. Both session briefs are prepared; neither team received a feature prompt.

@@ -12,7 +12,7 @@ purchase. Planning is closed — each lane takes one independent loop in build o
 
 ## Decisions in force
 
-- REQ-20261127-01 · “Workflow setup only.” Two Astra POs split DuckSuite features in this checkout. The main PO owns Git and sign-off. Dispatch requires the exact OpenCode stack in docs/teams/two-po/operations.md.
+- REQ-20261127-01 · “Workflow setup only.” Claude and both Astra POs use the original ducksuite checkout. OpenCode may edit code-only worktrees. Integration, tests, environments and packaging live in the original folder. The main PO owns Git and sign-off. Dispatch requires the exact OpenCode stack in docs/teams/two-po/operations.md.
 
 - Merge target is `ducksuite`. `main` has no common ancestor, lives in another worktree, never merged.
 - App Store, signing and TestFlight are paused by the founder. Do not start them.
