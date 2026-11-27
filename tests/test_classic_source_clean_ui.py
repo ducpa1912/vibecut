@@ -139,8 +139,9 @@ def test_source_rows_frame_and_box_cap_are_wired():
     assert "X-VibeCut-Height" in js
     assert "setSourceAspect" in js
     assert "cleanFrameBody" in js and 'state.cleanScope === "source"' in js
-    assert 'const outside = !sourceScope && cutStart === null;' in js
-    assert "click a row to jump to the text" in js
+    assert "const outside = !sourceScope && cutStart === null;" in js
+    assert 'const headerCopy = `${rows.length} found`;' in js
+    assert '<span class="clean-found-title">Regions</span>' in js
     assert "const cap = 1000;" in js
     assert 'state.cleanScope !== "source" && !classicTextSupported()' in js
     assert "Whole video" in js

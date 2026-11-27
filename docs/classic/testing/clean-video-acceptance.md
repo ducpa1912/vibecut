@@ -5,9 +5,10 @@ are engineering checks only; they are not acceptance. Only the human run on
 real footage with the real model pack counts. No generated media or fake voice
 is used in this document.
 
-Tip for this pass: the current `classic` tip after Phase 5. The reviewer writes
-the verdict in this file and in the phase notes; a green test run alone is not
-acceptance.
+Tip for this pass: base `bb3e89e` plus the 2026-11-18 Clean workspace and
+review-queue revision (uncommitted when this document was updated). Record the
+exact commit tested. The reviewer writes the verdict in this file and in the
+phase notes; a green test run alone is not acceptance.
 
 ## Terminal 1 — serve Classic
 

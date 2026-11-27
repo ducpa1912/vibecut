@@ -280,6 +280,12 @@ class ClassicCleanLayersBody(BaseModel):
     clips: list[dict]
 
 
+class ClassicSourceReviewBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    clean: list[dict] = []
+
+
 class ClassicSourceCleanBody(BaseModel):
     """A full-source Clean render. ``clips`` may be omitted or the source clip."""
 
@@ -2342,6 +2348,39 @@ def classic_clean_layers(job_id: str, body: ClassicCleanLayersBody) -> dict:
     return {"clips_hash": key, "clean": list(row.get("clean") or [])}
 
 
+@router.post("/api/classic/jobs/{job_id}/clean/source/review")
+def classic_source_review(job_id: str, body: ClassicSourceReviewBody) -> dict:
+    """Persist AI-clean candidates for review without starting a render."""
+    import app
+
+    job = app.load_job(job_id)
+    if job.get("status") != "source_ready":
+        raise HTTPException(409, "Source is not waiting for Clean review.")
+    duration = _source_duration(job)
+    layers = _source_clean_layers(body.clean, duration, require_ready=False)
+
+    def mutate(current: dict) -> None:
+        store = dict(current.get("classic_text") or {})
+        store["source"] = {
+            "clean": layers,
+            "review_ready": True,
+            "updated": time.time(),
+        }
+        current["classic_text"] = store
+
+    app.update_job(job_id, mutate)
+    return {"id": job_id, "status": "review_ready", "clean": layers, "rendered": False}
+
+
+@router.get("/api/classic/jobs/{job_id}/clean/source/review")
+def get_classic_source_review(job_id: str) -> dict:
+    import app
+
+    job = app.load_job(job_id)
+    source = (job.get("classic_text") or {}).get("source") or {}
+    return {"id": job_id, "status": "review_ready" if source.get("review_ready") else "pending", "clean": list(source.get("clean") or []), "rendered": False}
+
+
 @router.post("/api/classic/jobs/{job_id}/clean/plan")
 def classic_clean_plan(job_id: str, body: ClassicCleanLayersBody) -> dict:
     """Return the Check rows and the current cut's Clean layers in one plan."""
@@ -3132,4 +3171,3 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         "render_method": engine,
         "cached": False,
     }
-

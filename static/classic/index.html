@@ -50,14 +50,24 @@
   <script src="/static/classic/trust.js?v=0.1.0" defer></script>
   <script src="/static/classic/i18n.js?v=0.4.0" defer></script>
   <script src="/static/classic/clean-merge.js?v=0.1.0" defer></script>
+  <link rel="stylesheet" href="/static/classic/workspace.css?v=7">
   <script src="/static/classic/clean-timeline.js?v=0.1.0" defer></script>
   <script src="/static/classic/clean-options.js?v=0.1.0" defer></script>
-  <script src="/static/classic/app.js?v=0.21.0" defer></script>
+  <script src="/static/classic/app.js?v=0.22.0" defer></script>
   <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
 <body>
   <header class="shell topbar">
     <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
+    <nav id="clean-phases" class="clean-phases" hidden aria-label="Clean phases">
+      <span class="clean-phase" data-phase="scan">Scan</span>
+      <span class="clean-phase-sep" aria-hidden="true">›</span>
+      <span class="clean-phase" data-phase="review">Review</span>
+      <span class="clean-phase-sep" aria-hidden="true">›</span>
+      <span class="clean-phase" data-phase="clean">Clean</span>
+      <span class="clean-phase-sep" aria-hidden="true">›</span>
+      <button id="clean-phase-render" class="clean-phase is-render" type="button" data-phase="render" disabled>Render</button>
+    </nav>
     <div class="topbar-right">
       <a id="classic-studio-return" href="/?studio=1">Open Studio</a>
       <a id="classic-voice-room" href="/voices">Voice Room</a>
@@ -88,7 +98,7 @@
       <div class="ingest-grid">
         <div class="ingest-panel">
           <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a video">
-            <input id="file-input" type="file" accept="video/*" hidden>
+            <input id="file-input" type="file" accept="video/*" multiple hidden>
             <div class="drop-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3.5"/></svg>
             </div>
@@ -160,6 +170,15 @@
           <p class="hint clean-responsibility">You are responsible for having permission to edit this footage.</p>
           <div id="ingest-error" class="error" hidden></div>
         </div>
+
+        <aside id="clean-batch-panel" class="clean-batch-panel" hidden>
+          <div class="section-head"><div><p class="eyebrow">review queue</p><h2>Clean review queue</h2></div><span id="clean-batch-count" class="muted"></span></div>
+          <p class="hint">Drop multiple videos or choose a folder. Classic checks each file and prepares AI Clean boxes. Nothing renders until you review it.</p>
+          <button id="clean-batch-start" class="primary small" type="button">Scan queue</button>
+          <button id="clean-batch-folder-button" class="ghost small" type="button">Add folder</button>
+          <input id="clean-batch-folder" type="file" accept="video/*" webkitdirectory multiple hidden>
+          <div id="clean-batch-list" class="clean-batch-list" role="list"></div>
+        </aside>
 
         <aside class="principle-panel">
           <p class="eyebrow">the cut</p>
@@ -319,6 +338,10 @@
             <span id="clean-timeline-count" class="hint clean-timeline-count"></span>
           </div>
           <div class="clean-timeline-actions">
+            <button class="ghost small" type="button" data-clean-zoom="out" aria-label="Zoom out timeline" title="Zoom out">−</button>
+            <output id="clean-zoom-level" aria-live="polite">1×</output>
+            <button class="ghost small" type="button" data-clean-zoom="in" aria-label="Zoom in timeline" title="Zoom in">+</button>
+            <button class="ghost small" type="button" data-clean-zoom="fit" aria-label="Fit timeline" title="Fit the whole timeline">Fit</button>
             <button id="clean-add-range" class="icon-btn" type="button" aria-label="Add range" title="Add range at the playhead"><svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 8v8M8 12h8"/></svg></button>
           </div>
         </div>
@@ -362,12 +385,18 @@
             </div>
           </div>
         </div>
+        <div class="clean-timeline-scroll">
         <div id="clean-timeline" class="clean-timeline" role="group" aria-label="Clean timeline">
           <div id="clean-ruler" class="clean-ruler"></div>
           <div id="clean-lanes" class="clean-lanes"></div>
           <div id="clean-playhead" class="clean-playhead" aria-hidden="true"></div>
           <p id="clean-timeline-empty" class="hint clean-timeline-empty">No ranges yet. Find text or add a range.</p>
         </div>
+        </div>
+        <section id="clean-manager" aria-label="Manage clean regions">
+          <h3>Clean regions</h3>
+          <p class="hint">Select a row to inspect it. Untick detected text to keep it. Delete removes a saved box or brush mask.</p>
+        </section>
       </section>
 
       <div id="result-ready" class="result-ready" hidden>

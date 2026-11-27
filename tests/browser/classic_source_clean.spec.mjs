@@ -474,7 +474,72 @@ async function run(viewport) {
   assert(head.ratio === "1280 / 720", `${label}: frame aspect is ${head.ratio}`);
   assert(head.frame.startsWith("blob:"), `${label}: the source frame is not an image`);
 
-  await page.locator("#source-clean-run").click();
+  // An auto-scanned box is directly selectable, draggable and resizable before
+  // the render. The drag creates the layer; the reload resets the stub so the
+  // rest of the run still starts from the same two auto-ticked rows.
+  const scanBox = page.locator("#clean-canvas .clean-scan-box").first();
+  await scanBox.click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#clean-canvas .clean-scan-box.is-selected .clean-handle").length === 4,
+  null, { timeout: 10000 });
+  const scanActions = await page.evaluate(() =>
+    [...document.querySelectorAll("#clean-canvas .clean-box-actions button")]
+      .map((node) => node.textContent.trim()));
+  assert(scanActions.length === 2 && scanActions[0] === "Unselect",
+    `${label}: scanned-box actions are ${JSON.stringify(scanActions)}`);
+  const pendingSave = page.waitForRequest((request) =>
+    /\/api\/classic\/jobs\/j1\/text$/.test(request.url()) && request.method() === "PUT",
+  { timeout: 5000 }).catch(() => null);
+  const scanRect = await scanBox.boundingBox();
+  await page.mouse.move(scanRect.x + scanRect.width / 2, scanRect.y + scanRect.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    scanRect.x + scanRect.width / 2 + 24,
+    scanRect.y + scanRect.height / 2 + 12,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#clean-canvas .clean-box").length === 1,
+  null, { timeout: 10000 });
+  await pendingSave;
+  const beforeResize = await page.locator("#clean-canvas .clean-box")
+    .first().getAttribute("data-src-box");
+  const resizeHandle = page.locator(
+    '#clean-canvas .clean-box .clean-handle[data-clean-handle="se"]',
+  ).first();
+  const handleRect = await resizeHandle.boundingBox();
+  await page.mouse.move(handleRect.x + handleRect.width / 2, handleRect.y + handleRect.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    handleRect.x + handleRect.width / 2 + 18,
+    handleRect.y + handleRect.height / 2 + 12,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  const afterResize = await page.locator("#clean-canvas .clean-box")
+    .first().getAttribute("data-src-box");
+  assert(beforeResize && afterResize && beforeResize !== afterResize,
+    `${label}: the scanned box did not resize (${beforeResize} -> ${afterResize})`);
+
+  sourceRows = [];
+  statusReads = 0;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator("#result-view").waitFor({ state: "visible", timeout: 30000 });
+  await page.waitForFunction(() =>
+    document.body.classList.contains("source-mode")
+      && /Clean 2 texts/.test(document.querySelector("#source-clean-run").textContent || ""),
+  null, { timeout: 20000 });
+  await page.waitForFunction(() => {
+    const img = document.querySelector("#clean-frame");
+    return Boolean(img && (img.getAttribute("src") || "").startsWith("blob:") && img.naturalWidth > 0);
+  }, null, { timeout: 30000 });
+
+  await page.waitForFunction(() => {
+    const run = document.querySelector("#source-clean-run");
+    return run && !run.disabled && /^Clean 2 texts/.test(run.textContent || "");
+  }, null, { timeout: 20000 });
+  await page.evaluate(() => document.querySelector("#source-clean-run").click());
   await page.locator("#source-clean-result").waitFor({ state: "visible", timeout: 30000 });
   const result = await page.evaluate(() => ({
     output: document.querySelector("#source-clean-output").textContent,
@@ -507,6 +572,28 @@ async function run(viewport) {
     `${label}: a source layer still says whole cut`);
   assert(renderBodies.length === 1 && renderBodies[0].clean.length === 2,
     `${label}: the first render carried ${renderBodies[0]?.clean?.length} boxes`);
+
+  // A preview box selects the same region row and timeline bar, and offers
+  // exactly Unselect plus the clean-type toggle.
+  await page.locator("#clean-canvas .clean-box").first().click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#clean-canvas .clean-box-actions button").length === 2,
+  null, { timeout: 10000 });
+  const linked = await page.evaluate(() => ({
+    row: Boolean(document.querySelector("#clean-layers .clean-row.is-selected")),
+    found: Boolean(document.querySelector("#clean-found [data-selected=\"true\"]")),
+    bar: Boolean(document.querySelector("#clean-lanes .clean-bar.is-selected")),
+    actions: [...document.querySelectorAll("#clean-canvas .clean-box-actions button")]
+      .map((node) => node.textContent.trim()),
+  }));
+  assert(linked.row && linked.found && linked.bar,
+    `${label}: box selection did not reach row/bar ${JSON.stringify(linked)}`);
+  assert(linked.actions.length === 2 && linked.actions[0] === "Unselect",
+    `${label}: selected-box actions are ${JSON.stringify(linked.actions)}`);
+  await page.locator('#clean-canvas [data-clean-box-action="unselect"]').click();
+  await page.waitForFunction(() =>
+    !document.querySelector("#clean-canvas .clean-box-actions"),
+  null, { timeout: 10000 });
 
   await page.locator('[data-found-index="0"]').dblclick();
   await page.locator("#clean-detail").waitFor({ state: "visible", timeout: 10000 });

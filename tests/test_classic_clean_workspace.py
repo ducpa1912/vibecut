@@ -309,3 +309,38 @@ def test_timeline_test_is_in_the_page_and_i18n_carries_the_new_copy():
         ("Detection check · boxes outlined · not the final clean", "Kiểm tra nhận diện · khung được viền · không phải bản làm sạch cuối"),
     ):
         assert f'"{english}": "{vietnamese}"' in words, english
+
+
+def test_preview_box_selection_drives_timeline_and_offers_two_actions():
+    """A box click must select the same row/bar and expose Unselect + method."""
+    page = PAGE.read_text(encoding="utf-8")
+    app = APP.read_text(encoding="utf-8")
+    workspace = (CLASSIC / "workspace.css").read_text(encoding="utf-8")
+
+    assert 'id="clean-phases"' in page
+    assert 'id="clean-phase-render"' in page
+    for phase in ("scan", "review", "clean", "render"):
+        assert f'data-phase="{phase}"' in page
+    assert "function paintCleanPhases()" in app
+    assert "paintCleanPhases();" in app
+    assert 'dom.cleanPhaseRender?.addEventListener("click"' in app
+
+    select = between(app, "function selectClean(id)", "function addCleanBox(options")
+    assert "paintCleanTimeline();" in select
+    assert "revealCleanSelection(" in select
+    bar = between(app, "function selectCleanBar(", "/** Keep preview")
+    assert "revealCleanSelection(" in bar
+
+    assert 'data-clean-box-action="unselect"' in app
+    assert 'data-clean-box-action="method"' in app
+    assert 'data-scan-identity=' in app
+    assert 'data-scan-handle="se"' in app
+    assert 'data-scan-box-action="unselect"' in app
+    assert "function ensureScanLayer(" in app
+    assert "function cleanScanEntryFromNode(" in app
+    assert '>Unselect<' in app
+    assert 'setCleanMethod(id, method === "fill" ? "blur" : "fill");' in app
+    assert "clean-box-actions" in app
+    assert ".clean-box-actions" in workspace
+    assert "clean-found-headline" in app
+    assert ".clean-found-headline" in workspace

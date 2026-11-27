@@ -1,0 +1,304 @@
+/* Clean is one bounded workstation: a large frame, a compact region list, and
+ * a short timeline. The pane may scroll only when the window is too short for
+ * the minimum frame height; the normal case fits without it. */
+body.editor-frame:is(.source-mode, .cut-clean-mode) { overflow: auto; }
+body.editor-frame:is(.source-mode, .cut-clean-mode) #result-view:not([hidden]) {
+  overflow: hidden;
+  min-height: 0;
+}
+body.editor-frame:is(.source-mode, .cut-clean-mode) .editor-pane-preview {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 29%);
+  grid-template-rows: minmax(250px, 1fr) auto;
+  grid-template-areas: "frame regions" "timeline timeline";
+  gap: 6px;
+  align-items: stretch !important;
+  padding: 0 0 6px !important;
+  overflow: auto !important;
+  min-height: 0;
+}
+body:is(.source-mode, .cut-clean-mode) #clean-stage {
+  grid-area: frame;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-stage-bar { flex: 0 0 auto; gap: 6px; }
+body:is(.source-mode, .cut-clean-mode) .clean-stage-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-canvas {
+  height: auto;
+  max-height: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-stage-foot,
+body:is(.source-mode, .cut-clean-mode) .clean-preview-controls { flex: 0 0 auto; }
+body:is(.source-mode, .cut-clean-mode) #clean-manager {
+  grid-area: regions;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+body:is(.source-mode, .cut-clean-mode) #clean-timeline-panel {
+  grid-area: timeline;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  overflow: visible;
+  border-radius: 8px;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-fill-popover,
+body:is(.source-mode, .cut-clean-mode) .clean-engine-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: auto;
+  left: 0;
+  z-index: 70;
+}
+.clean-timeline-panel[hidden] { display: none !important; }
+.clean-timeline-head, .clean-action-bar { flex: 0 0 auto; }
+.clean-timeline-scroll { flex: 1 1 auto; min-height: 0; }
+
+/* One heading, one line of status, no repeated instructions. */
+#clean-manager > h3, #clean-manager > .hint { display: none; }
+#clean-manager .clean-found,
+#clean-manager .clean-layers {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+#clean-manager .clean-found-title { color: var(--text); font: 600 12px/1.3 var(--sans); letter-spacing: 0; text-transform: none; }
+#clean-manager .clean-found-head { margin: 0 0 4px; }
+#clean-manager .clean-found-list { gap: 1px; margin: 0; max-height: none; overflow: visible; }
+#clean-manager .clean-found-row { min-height: 32px; padding: 3px 2px; gap: 5px; }
+#clean-manager .clean-found-thumb { width: 26px; height: 26px; border-radius: 4px; }
+#clean-manager .clean-found-copy { line-height: 1.3; }
+#clean-manager .clean-found-sample,
+#clean-manager .clean-found-method { line-height: 1.35; }
+#clean-manager .clean-found-kind { font-size: 11px; font-weight: 500; }
+#clean-manager .clean-found-sample { font-size: 11px; }
+#clean-manager .clean-found-time { font-size: 11px; }
+#clean-manager .clean-found-method { font-size: 11px; }
+#clean-manager .clean-found-actions { gap: 4px; margin-top: 5px; }
+#clean-manager .clean-found-note { display: none; }
+#clean-manager .clean-row { padding: 3px 0; gap: 4px; }
+#clean-manager .clean-row-methods { gap: 2px; }
+#clean-manager .clean-found-selected { display: none; }
+body:is(.source-mode, .cut-clean-mode) .clean-timeline-head { padding: 3px 8px; }
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar { padding: 3px 8px; flex-wrap: nowrap; gap: 4px 8px; }
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .clean-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .source-clean-action,
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .cut-clean-action {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .source-clean-summary,
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .cut-clean-summary { display: none; }
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .primary { min-height: 30px; white-space: nowrap; }
+body:is(.source-mode, .cut-clean-mode) .clean-fill { flex: 0 0 auto; }
+body:is(.source-mode, .cut-clean-mode) .clean-ruler { height: 16px; line-height: 16px; margin: 0 7px; }
+body:is(.source-mode, .cut-clean-mode) .clean-lanes { min-height: 0; max-height: 74px; overflow-y: auto; margin: 2px 7px 3px; gap: 2px; }
+body:is(.source-mode, .cut-clean-mode) .clean-lane { height: 20px; }
+body:is(.source-mode, .cut-clean-mode) .clean-timeline { padding-bottom: 0; }
+body:is(.source-mode, .cut-clean-mode) .editor-pane-preview {
+  width: min(100%, 1180px);
+  margin-inline: auto;
+}
+body:is(.source-mode, .cut-clean-mode) .clean-bar {
+  top: 50%;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(122, 162, 255, 0.6);
+  transform: translateY(-50%);
+}
+body:is(.source-mode, .cut-clean-mode) .clean-bar.is-manual { background: rgba(175, 200, 255, 0.85); }
+body:is(.source-mode, .cut-clean-mode) .clean-bar.is-unticked { opacity: 0.22; }
+body:is(.source-mode, .cut-clean-mode) .clean-bar.is-selected {
+  height: 11px;
+  outline: 0;
+  background: var(--playhead);
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.25);
+}
+body:is(.source-mode, .cut-clean-mode) .clean-bar-trim { width: 5px; background: transparent; }
+body:is(.source-mode, .cut-clean-mode) .clean-playhead { top: 22px; bottom: 0; }
+body:is(.source-mode, .cut-clean-mode) .result-top { padding: 2px 0 4px; }
+body:is(.source-mode, .cut-clean-mode) #result-eyebrow { display: none; }
+body:is(.source-mode, .cut-clean-mode) .result-top h2 {
+  max-width: min(52vw, 620px);
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body:is(.source-mode, .cut-clean-mode) .result-meta {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body:is(.source-mode, .cut-clean-mode) .result-heading { gap: 8px; }
+body:is(.source-mode, .cut-clean-mode) .source-back { min-height: 26px; padding-inline: 9px; }
+body:is(.source-mode, .cut-clean-mode) .clean-timeline-head { min-height: 30px; }
+body:is(.source-mode, .cut-clean-mode) .clean-timeline-actions .ghost.small,
+body:is(.source-mode, .cut-clean-mode) .clean-timeline-actions .icon-btn { min-height: 26px; height: 26px; padding-inline: 8px; }
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .clean-model-chip { height: 26px; padding-inline: 9px; font-size: 11px; }
+body:is(.source-mode, .cut-clean-mode) .clean-action-bar .primary { min-height: 30px; padding: 5px 13px; font-size: 12px; }
+body:is(.source-mode, .cut-clean-mode) .clean-lanes { height: 44px; max-height: 44px; }
+body:is(.source-mode, .cut-clean-mode) .clean-bar-label { opacity: 0; }
+body:is(.source-mode, .cut-clean-mode) .clean-bar:hover .clean-bar-label,
+body:is(.source-mode, .cut-clean-mode) .clean-bar.is-selected .clean-bar-label,
+body:is(.source-mode, .cut-clean-mode) .clean-bar:focus-visible .clean-bar-label { opacity: 1; }
+
+/* Four-phase strip in the top bar. Phases report state; Render is the shortcut
+ * to the same reviewed Clean action as the primary button below. */
+.clean-phases {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline: 14px;
+  white-space: nowrap;
+}
+.clean-phases[hidden] { display: none; }
+.clean-phase {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1;
+}
+.clean-phase.is-active {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+  color: var(--text);
+}
+.clean-phase-sep { color: var(--dim); font-size: 11px; }
+#clean-phase-render {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+#clean-phase-render:not(:disabled) { color: var(--text); }
+#clean-phase-render:not(:disabled):hover { border-color: var(--accent); }
+#clean-phase-render.is-active { border-color: var(--accent); color: var(--text); }
+#clean-phase-render:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* A selected box carries its two actions just outside its top-right corner. */
+.clean-box-actions {
+  position: absolute;
+  z-index: 7;
+  display: inline-flex;
+  gap: 3px;
+  transform: translate(-100%, calc(-100% - 5px));
+}
+.clean-box-actions.is-below { transform: translate(-100%, 5px); }
+.clean-box-actions.is-left { transform: translate(0, calc(-100% - 5px)); }
+.clean-box-actions.is-left.is-below { transform: translate(0, 5px); }
+.clean-box-actions button {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--panel-3);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.clean-box-actions button:hover { border-color: var(--accent); }
+.clean-box-actions button[data-clean-box-action="unselect"] { color: var(--muted); }
+.clean-box-actions button[data-clean-box-action="method"] { color: var(--text); }
+
+/* One line for time + kind keeps the scan list compact. */
+.clean-found-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.clean-found-headline .clean-found-time { flex: 0 0 auto; }
+.clean-found-headline .clean-found-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#clean-manager .clean-found-sample {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .clean-phases { margin-inline: 4px; gap: 2px; }
+  .clean-phase { padding: 0 5px; }
+  .clean-phase:not(.is-active):not(#clean-phase-render),
+  .clean-phase-sep { display: none; }
+  .topbar-right { gap: 8px; }
+  #health { display: none; }
+}
+body:is(.source-mode, .cut-clean-mode) .clean-ruler-tick.is-last {
+  padding-right: 5px;
+  padding-left: 0;
+  border-right: 1px solid var(--line-2);
+  border-left: 0;
+}
+body:is(.source-mode, .cut-clean-mode) .stage-kicker,
+body:is(.source-mode, .cut-clean-mode) #clean-help,
+body:is(.source-mode, .cut-clean-mode) #clean-stage-hint { display: none; }
+body:is(.source-mode, .cut-clean-mode) .clean-stage-tools { gap: 2px; }
+body:is(.source-mode, .cut-clean-mode) .clean-stage-tools .icon-btn { width: 26px; min-width: 26px; height: 26px; }
+body:is(.source-mode, .cut-clean-mode) .clean-preview-controls { padding: 3px 4px; gap: 4px 6px; }
+body:is(.source-mode, .cut-clean-mode) .clean-preview-controls .hint:not(#clean-preview-time) { display: none; }
+
+@media (min-width: 1000px) {
+  body.editor-frame:is(.source-mode, .cut-clean-mode) .editor-pane-preview {
+    width: min(100%, 960px) !important;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    justify-self: center;
+  }
+}
+@media (max-width: 900px) {
+  body.editor-frame:is(.source-mode, .cut-clean-mode) .editor-pane-preview {
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 36%);
+  }
+  #clean-manager .clean-found-thumb { display: none; }
+  #clean-manager .clean-found-row { grid-template-columns: 16px minmax(0, 1fr) auto; }
+}
+@media (max-width: 560px) {
+  body.editor-frame:is(.source-mode, .cut-clean-mode) .editor-pane-preview {
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 42%);
+    grid-template-rows: minmax(220px, 1fr) auto;
+  }
+  #clean-manager .clean-found-kind, #clean-manager .clean-found-method { display: none; }
+}

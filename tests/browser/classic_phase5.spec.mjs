@@ -2,11 +2,11 @@
  * Phase 5 · polish gate, driven without real media.
  *
  * Source Clean and Cut Clean are opened through stubbed routes at 1440×900,
- * 1280×800, 1050×800 and 900×800. The spec proves the rail is a bottom sheet
- * under 1100 px, the primary action stays reachable, motion respects the OS
- * preference, focus rings stay visible, no visible text is under 11 px, the
- * Clean entry time moves to the first text row (or explains a black 0:00), and
- * the normal flows keep the console clean.
+ * 1280×800, 1050×800 and 900×800. The spec proves the region manager stays
+ * beside the frame at every width, the primary action stays reachable, motion
+ * respects the OS preference, focus rings stay visible, no visible text is
+ * under 11 px, the Clean entry time moves to the first text row (or explains a
+ * black 0:00), and the normal flows keep the console clean.
  *
  * Exit 0 passes, exit 2 means this host cannot run Playwright (skip).
  */
@@ -269,21 +269,30 @@ async function layout(page, viewport, mode) {
         return node ? node.scrollWidth - node.clientWidth : 0;
       })(),
       settingsOverflow: (() => {
-        const node = document.querySelector(".editor-pane-settings");
+        const node = document.querySelector("#clean-manager");
         return node ? node.scrollWidth - node.clientWidth : 0;
       })(),
       preview: rect(".editor-pane-preview"),
-      settings: rect(".editor-pane-settings"),
+      frame: rect("#clean-stage"),
+      settings: rect("#clean-manager"),
       top: rect(".result-top"),
       run: rect("#source-clean-run") || rect("#cut-clean-run"),
       download: rect("#source-clean-download") || rect("#cut-clean-download"),
       radius: (() => {
-        const node = document.querySelector(".editor-pane-settings");
+        const node = document.querySelector("#clean-manager");
         return node ? getComputedStyle(node).borderTopLeftRadius : "";
       })(),
       slider: (() => {
         const node = document.querySelector("#clean-scrub");
         return node ? { value: node.value, y: node.getBoundingClientRect().y } : null;
+      })(),
+      phases: (() => {
+        const node = document.querySelector("#clean-phases");
+        return node ? {
+          hidden: node.hidden,
+          count: node.querySelectorAll("[data-phase]").length,
+          renderVisible: Boolean(document.querySelector("#clean-phase-render")?.offsetParent),
+        } : null;
       })(),
     };
   });
@@ -295,18 +304,15 @@ async function layout(page, viewport, mode) {
     `${label}: result-view clips content (${box.resultOverflow}px)`);
   assert(box.settingsOverflow <= 1,
     `${label}: settings rail clips content (${box.settingsOverflow}px)`);
-  assert(box.preview && box.settings, `${label}: preview or rail is missing`);
-  if (viewport.width >= 1100) {
-    assert(box.settings.x >= box.preview.right - 2,
-      `${label}: the rail is not beside the frame (${box.settings.x} < ${box.preview.right})`);
-  } else {
-    assert(box.settings.y >= box.preview.bottom - 2,
-      `${label}: the rail is not below the frame (${box.settings.y} < ${box.preview.bottom})`);
-    assert(parseFloat(box.radius) >= 10,
-      `${label}: the rail is not a bottom sheet (radius ${box.radius})`);
-  }
+  assert(box.preview && box.settings && box.frame, `${label}: preview, frame or region manager is missing`);
+  assert(box.settings.x >= box.frame.right - 2,
+    `${label}: the region manager is not beside the frame (${box.settings.x} < ${box.frame.right})`);
+  assert(parseFloat(box.radius) >= 8,
+    `${label}: the region manager has no panel edge (radius ${box.radius})`);
   assert(box.run && box.run.y >= 0 && box.run.bottom <= viewport.height + 1,
     `${label}: the primary action is outside the viewport (${JSON.stringify(box.run)})`);
+  assert(box.phases && !box.phases.hidden && box.phases.count === 4 && box.phases.renderVisible,
+    `${label}: the four Clean phases or Render step are missing (${JSON.stringify(box.phases)})`);
   return box;
 }
 

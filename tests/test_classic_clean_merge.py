@@ -294,7 +294,8 @@ def test_review_first_setting_and_scan_only_split_are_wired():
     assert "if (!reviewFirst && duration >= 180 && !confirm) {" in app
     assert 'let label = reviewFirst ? "Find text" : "Find text & clean";' in app
     assert "row.added = matching.length > 0;" in app
-    assert "clean-found-selected" in app
+    assert 'data-selected="${identity === state.classicText.selectedBar}"' in app
+    assert "function paintCleanSelection()" in app
     assert "Select ${esc(row.text)} for cleaning" in app
 
     change = between(app, 'dom.cleanFound?.addEventListener("change"', 'dom.cleanFound?.addEventListener("keydown"')

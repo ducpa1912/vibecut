@@ -166,6 +166,12 @@
     urlStatus: $("#url-status"),
     urlError: $("#url-error"),
     fileInput: $("#file-input"),
+    cleanBatchPanel: $("#clean-batch-panel"),
+    cleanBatchList: $("#clean-batch-list"),
+    cleanBatchStart: $("#clean-batch-start"),
+    cleanBatchCount: $("#clean-batch-count"),
+    cleanBatchFolder: $("#clean-batch-folder"),
+    cleanBatchFolderButton: $("#clean-batch-folder-button"),
     fileCard: $("#file-card"),
     fileName: $("#file-name"),
     fileInfo: $("#file-info"),
@@ -380,6 +386,8 @@
     textScanStart: $("#clean-scan-start"),
     textScanCancel: $("#clean-scan-cancel"),
     cleanStage: $("#clean-stage"),
+    cleanPhases: $("#clean-phases"),
+    cleanPhaseRender: $("#clean-phase-render"),
     cleanCanvas: $("#clean-canvas"),
     cleanFrame: $("#clean-frame"),
     cleanReviewVideo: $("#clean-review-video"),
@@ -765,7 +773,12 @@
   function init() {
     syncTokenCookie();
     state.recentOpened = readRecentOpened();
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLEAN_BATCH_KEY) || "[]");
+      cleanBatch = Array.isArray(saved) ? saved.filter((item) => item.jobId) : [];
+    } catch (_) { cleanBatch = []; }
     bind();
+    renderCleanBatch();
     enhanceAudioSelects();
     updateUrlState();
     loadHealth();
@@ -1641,6 +1654,50 @@
     });
   }
 
+  const CLEAN_BATCH_KEY = "vibecut.classic.clean-review-queue";
+  let cleanBatch = [];
+  function saveCleanBatch() {
+    localStorage.setItem(CLEAN_BATCH_KEY, JSON.stringify(cleanBatch.map(({ file, ...item }) => item)));
+  }
+  function renderCleanBatch() {
+    if (!dom.cleanBatchPanel) return;
+    dom.cleanBatchPanel.hidden = cleanBatch.length === 0;
+    dom.cleanBatchCount.textContent = cleanBatch.length ? `${cleanBatch.length} file${cleanBatch.length === 1 ? "" : "s"}` : "";
+    dom.cleanBatchList.innerHTML = cleanBatch.map((item, index) => `<div class="clean-batch-item" role="listitem"><strong>${esc(item.name)}</strong><span class="clean-batch-state">${esc(item.state)}</span>${item.jobId ? `<button type="button" class="ghost small" data-clean-batch-open="${index}">Review</button>` : ""}</div>`).join("");
+  }
+  async function scanCleanBatch() {
+    if (state.busy) return;
+    state.busy = true;
+    for (const item of cleanBatch) {
+      if (item.state === "Ready for review" || !item.file) continue;
+      item.state = "Uploading"; renderCleanBatch();
+      try {
+        const result = await uploadFile(item.file, readOptions(), () => {}, null, "clean");
+        item.jobId = result.id;
+        item.state = "Scanning text"; renderCleanBatch();
+        let answer = await checkRequest(`/api/jobs/${result.id}/check`, { method: "POST", body: JSON.stringify({ sample_text: true }) });
+        while (answer.status === 202 || answer.data?.status === "queued" || answer.data?.status === "running") {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          answer = await checkRequest(`/api/jobs/${result.id}/check`);
+        }
+        if (answer.status !== 200) throw new Error(answer.data?.detail || "Text scan failed.");
+        const report = answer.data?.report || answer.data;
+        const rows = report?.clean_prefill || [];
+        const layers = rows.map((row, index) => ({ id: `cl${String(index + 1).padStart(2, "0")}`, box: row.box, ranges: row.ranges || [], label: row.kind || row.text || "Detected text", kind: row.kind || "text", text_key: row.text_key || row.text || "", tracklet_id: row.tracklet_id || "", tracklet_kind: row.kind || "text", method: "fill", engine: "lama", source: "scan", hidden: false }));
+        item.state = "Preparing AI Clean boxes"; renderCleanBatch();
+        await api(`/api/classic/jobs/${result.id}/clean/source/review`, { method: "POST", body: JSON.stringify({ clean: layers }) });
+        item.state = "Ready for review";
+        item.rows = rows.length;
+        saveCleanBatch(); renderCleanBatch();
+      } catch (error) {
+        item.state = `Failed: ${error.message}`; saveCleanBatch(); renderCleanBatch();
+      }
+    }
+    state.busy = false;
+    const next = cleanBatch.find((item) => item.state === "Ready for review" && item.jobId);
+    if (next) openJob(next.jobId);
+  }
+
   // ---------------------------------------------------------------- health + recent
 
   async function loadHealth() {
@@ -1970,8 +2027,13 @@
       }
     });
     dom.fileInput.addEventListener("change", () => {
-      const file = dom.fileInput.files && dom.fileInput.files[0];
-      if (file) handleFile(file);
+      const files = Array.from(dom.fileInput.files || []);
+      if (files.length > 1) {
+        cleanBatch = files.map((file) => ({ file, name: file.name, state: "Queued" }));
+        saveCleanBatch(); renderCleanBatch();
+        return;
+      }
+      if (files[0]) handleFile(files[0]);
     });
 
     ["dragenter", "dragover"].forEach((name) => {
@@ -1986,8 +2048,11 @@
     dom.dropzone.addEventListener("drop", (event) => {
       event.preventDefault();
       dom.dropzone.classList.remove("dragging");
-      const file = event.dataTransfer?.files?.[0];
-      if (file) handleFile(file);
+      const files = Array.from(event.dataTransfer?.files || []);
+      if (files.length > 1) {
+        cleanBatch = files.map((file) => ({ file, name: file.name, state: "Queued" }));
+        saveCleanBatch(); renderCleanBatch();
+      } else if (files[0]) handleFile(files[0]);
     });
 
     dom.clearFile.addEventListener("click", clearFile);
@@ -2003,6 +2068,22 @@
     });
     dom.analyze.addEventListener("click", startAnalysis);
     dom.cleanVideo?.addEventListener("click", startCleanVideo);
+    dom.cleanBatchStart?.addEventListener("click", scanCleanBatch);
+    dom.cleanPhaseRender?.addEventListener("click", () => {
+      if (state.cleanScope === "source") sourceCleanPrimaryAction();
+      else cutCleanPrimaryAction();
+    });
+    dom.cleanBatchFolderButton?.addEventListener("click", () => dom.cleanBatchFolder.click());
+    dom.cleanBatchFolder?.addEventListener("change", () => {
+      const files = Array.from(dom.cleanBatchFolder.files || []).filter((file) => file.type.startsWith("video/"));
+      cleanBatch = [...cleanBatch, ...files.map((file) => ({ file, name: file.webkitRelativePath || file.name, state: "Queued" }))];
+      renderCleanBatch();
+    });
+    dom.cleanBatchList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-clean-batch-open]");
+      const item = button && cleanBatch[Number(button.dataset.cleanBatchOpen)];
+      if (item?.jobId) openJob(item.jobId);
+    });
     dom.sourceBack?.addEventListener("click", resetToIngest);
     dom.sourceCleanRun?.addEventListener("click", sourceCleanPrimaryAction);
     dom.sourceCleanCancel?.addEventListener("click", cancelSourceCleanRender);
@@ -3869,6 +3950,8 @@
       dom.sourceCleanAnalysisBack.hidden = !(ready && state.sourceCleanAnalysisError);
     }
     if (dom.sourceCleanAgain) dom.sourceCleanAgain.disabled = false;
+    paintCleanReviewChrome();
+    paintCleanPhases();
   }
 
   function cutCleanEngineLabel() {
@@ -4185,6 +4268,7 @@
       dom.cutCleanAgain.hidden = stale;
       dom.cutCleanAgain.disabled = false;
     }
+    paintCleanPhases();
     updateResultModeGuard();
   }
 
@@ -4978,6 +5062,17 @@
     state.visible = 96;
     state.busy = false;
     state.classicText = freshClassicText();
+    let prepared = job.classic_text?.source?.clean;
+    if (!Array.isArray(prepared)) prepared = [];
+    if (Array.isArray(prepared) && prepared.length) {
+      state.classicText.clean = prepared.map((layer) => ({ ...layer }));
+      state.classicText.selection = state.classicText.clean[0].id || "";
+      const first = state.classicText.clean
+        .flatMap((layer) => layer.ranges || [])
+        .filter((range) => Number.isFinite(Number(range.start)))
+        .sort((a, b) => Number(a.start) - Number(b.start))[0];
+      if (first) state.classicText.t = Math.max(0, Number(first.start) || 0);
+    }
     state.classicText.previewSide = "before";
     setCleanStatus("");
     dom.hookLab.hidden = true;
@@ -9566,45 +9661,35 @@
 
   // The preview pane is the real constraint: a 9:16 frame has to fit inside it,
   // not inside the window, or its own corner handles sit below the fold.
+  function cleanCanvasAspect() {
+    if (state.cleanScope === "source" && state.sourceAspect) {
+      const width = Math.max(2, Number(state.sourceAspect.width) || 2);
+      return width / Math.max(2, Number(state.sourceAspect.height) || 2);
+    }
+    return String(dom.cleanCanvas?.dataset.aspect || "") === "4:5" ? 4 / 5 : 9 / 16;
+  }
+
   function sizeCleanCanvas() {
     const stage = dom.cleanStage;
     if (!stage || stage.hidden) return;
-    const pane = stage.closest(".editor-pane");
-    const height = pane && pane.clientHeight
-      ? pane.clientHeight
-      : window.innerHeight;
-    // The toolbar, the scrub row, the preview controls and the range timeline
-    // take the rest. The timeline lives under the frame, so it must be
-    // subtracted here or the frame pushes it below the pane.
-    const bar = stage.querySelector(".clean-stage-bar");
-    const foot = stage.querySelector(".clean-stage-foot");
-    const controls = document.querySelector("#clean-preview-controls");
-    const timeline = document.querySelector("#clean-timeline-panel");
-    const timelineRoom = timeline && !timeline.hidden
-      ? (timeline.offsetHeight || 0) + 14
-      : 0;
-    const chrome = (bar?.offsetHeight || 0) + (foot?.offsetHeight || 0)
-      + (controls?.offsetHeight || 0) + timelineRoom + 24;
-    const room = Math.max(190, Math.round(height - chrome));
-    stage.style.setProperty("--clean-frame-h", `${room}px`);
     const canvas = dom.cleanCanvas;
     if (!canvas) return;
-    if (state.cleanScope === "source" && state.sourceAspect) {
-      const width = Math.max(2, state.sourceAspect.width);
-      const aspect = width / Math.max(2, state.sourceAspect.height);
-      const paneWidth = Math.max(190, (pane?.clientWidth || window.innerWidth) - 8);
-      let frameHeight = room;
-      let frameWidth = frameHeight * aspect;
-      if (frameWidth > paneWidth) {
-        frameWidth = paneWidth;
-        frameHeight = frameWidth / aspect;
-      }
-      canvas.style.width = `${Math.round(frameWidth)}px`;
-      canvas.style.height = `${Math.round(frameHeight)}px`;
-    } else {
-      canvas.style.width = "";
-      canvas.style.height = "";
+    const body = stage.querySelector(".clean-stage-body");
+    if (!body) return;
+    // The body is the frame's real compartment: the bar, scrubber and controls
+    // are flex siblings, so nothing has to be estimated or subtracted twice.
+    const roomHeight = Math.max(120, (body.clientHeight || 0) - 2);
+    const roomWidth = Math.max(120, (body.clientWidth || 0) - 2);
+    const aspect = cleanCanvasAspect();
+    let height = roomHeight;
+    let width = height * aspect;
+    if (width > roomWidth) {
+      width = roomWidth;
+      height = width / aspect;
     }
+    canvas.style.width = `${Math.round(width)}px`;
+    canvas.style.height = `${Math.round(height)}px`;
+    stage.style.setProperty("--clean-frame-h", `${Math.round(height)}px`);
   }
 
   function paintCleanStage(options = {}) {
@@ -9655,6 +9740,7 @@
     paintCleanBoxes();
     paintCleanPanel(options);
     paintClassicUndo();
+    paintCleanPhases();
   }
 
   // ------------------------------------------------- boxes: source ↔ frame
@@ -9761,7 +9847,7 @@
     for (const row of cleanTimelineRows()) {
       if (row.manual) continue;
       const identity = cleanRowIdentity(row);
-      if (row.added && !includeAdded && identity !== selected) continue;
+      if (row.added && !includeAdded) continue;
       const members = Array.isArray(row.entryRows) && row.entryRows.length ? row.entryRows : [row];
       for (const member of members) {
         const box = member?.box || row.box;
@@ -9817,7 +9903,13 @@
           <span class="clean-handle" data-clean-handle="ne"></span>
           <span class="clean-handle" data-clean-handle="sw"></span>
           <span class="clean-handle" data-clean-handle="se"></span>
-        </div>`;
+        </div>
+        ${selected ? `
+        <div class="clean-box-actions${box.y < 0.1 ? " is-below" : ""}${box.x + box.w < 0.5 ? " is-left" : ""}"
+             style="left:${((box.x + box.w) * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%">
+          <button type="button" data-clean-box-action="unselect" data-clean-box-target="${esc(layer.id)}" title="Unselect this box">Unselect</button>
+          <button type="button" data-clean-box-action="method" data-clean-box-target="${esc(layer.id)}" title="Switch between AI fill and Blur">${method === "fill" ? "AI" : (method === "blur" ? "Blur" : "Crop")}</button>
+        </div>` : ""}`;
     }).join("");
     const selectedRow = state.classicText.selectedBar;
     const scanBoxes = cleanScanPartsAt(t).filter((part) => !part.row.added).map((part) => {
@@ -9825,10 +9917,23 @@
       if (box.w <= 0.0001 || box.h <= 0.0001) return "";
       return `
         <div class="clean-scan-box${part.selected ? " is-selected" : ""}"
+             data-scan-identity="${esc(part.identity)}"
+             data-scan-member="${esc(String(part.member?.tracklet_id || ""))}"
              style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"
-             aria-hidden="true">
-          ${part.selected ? `<span class="clean-scan-tag">${esc(part.label)}</span>` : ""}
-        </div>`;
+             role="button" tabindex="0"
+             aria-label="${esc(part.label)}. Drag to place a Clean box; pull a corner to resize.">
+          ${part.selected ? `<span class="clean-scan-tag">${esc(part.label)}</span>
+          <span class="clean-handle" data-scan-handle="nw" data-clean-handle="nw"></span>
+          <span class="clean-handle" data-scan-handle="ne" data-clean-handle="ne"></span>
+          <span class="clean-handle" data-scan-handle="sw" data-clean-handle="sw"></span>
+          <span class="clean-handle" data-scan-handle="se" data-clean-handle="se"></span>` : ""}
+        </div>
+        ${part.selected ? `
+        <div class="clean-box-actions${box.y < 0.1 ? " is-below" : ""}${box.x + box.w < 0.5 ? " is-left" : ""}"
+             style="left:${((box.x + box.w) * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%">
+          <button type="button" data-scan-box-action="unselect" data-scan-identity="${esc(part.identity)}" data-scan-member="${esc(String(part.member?.tracklet_id || ""))}" title="Unselect this scanned box">Unselect</button>
+          <button type="button" data-scan-box-action="method" data-scan-identity="${esc(part.identity)}" data-scan-member="${esc(String(part.member?.tracklet_id || ""))}" title="Apply this box with AI fill or Blur">${cleanRowMethod(part.row) === "fill" ? "AI" : (cleanRowMethod(part.row) === "blur" ? "Blur" : "Crop")}</button>
+        </div>` : ""}`;
     }).join("");
     if (!state.classicText.review.active) overlay.insertAdjacentHTML("beforeend", scanBoxes);
     const focus = state.classicText.focusBox;
@@ -10816,6 +10921,40 @@
     return state.cleanScope === "source" || cutCleanActive();
   }
 
+  /** A compact four-step state strip in the top bar. Review comes after a
+   * scan, Clean after a tick or a saved layer, Render after a ready result. */
+  function paintCleanPhases() {
+    const bar = dom.cleanPhases;
+    if (!bar) return;
+    const active = Boolean(state.job && state.plan) && cleanWorkspaceActive();
+    bar.hidden = !active;
+    if (!active) return;
+    const rows = cleanScanRows();
+    const ticked = state.cleanScope === "source"
+      ? sourceTickedCount(rows, state.classicText.foundTicks)
+      : cutCleanTickedCount(rows, state.classicText.foundTicks);
+    const layers = classicCleanLayers().length;
+    const rendered = state.cleanScope === "source"
+      ? state.sourceClean?.status === "ready"
+      : Boolean(cleanReviewRecord());
+    let phase = "scan";
+    if (rendered) phase = "render";
+    else if (layers) phase = "clean";
+    else if (state.textScan?.status === "ready") phase = "review";
+    for (const node of bar.querySelectorAll("[data-phase]")) {
+      node.classList.toggle("is-active", node.dataset.phase === phase);
+    }
+    if (dom.cleanPhaseRender) {
+      const busy = state.cleanScope === "source"
+        ? state.sourceCleanBusy || ["queued", "running"].includes(state.sourceClean?.status || "")
+        : state.cutCleanBusy || ["queued", "running"].includes(cleanReviewRecord()?.status || "");
+      dom.cleanPhaseRender.disabled = busy || (!layers && !ticked);
+      dom.cleanPhaseRender.title = dom.cleanPhaseRender.disabled
+        ? "Scan and review at least one text first."
+        : "Render the reviewed Clean.";
+    }
+  }
+
   function cleanTimelineTotal() {
     return Math.max(0.1, Number(cleanCutTotal()) || 0.1);
   }
@@ -10878,15 +11017,33 @@
 
   function paintCleanRuler(total) {
     if (!dom.cleanRuler) return;
-    const ticks = CleanTimeline.rulerTicks(total, 6);
+    const ticks = CleanTimeline.rulerTicks(total, Math.min(192, 6 * cleanTimelineZoom));
     dom.cleanRuler.innerHTML = ticks.map((tick) => `
-      <span class="clean-ruler-tick" style="left:${tick.left.toFixed(3)}%">${esc(fmtTime(tick.time, total < 60 ? 1 : 0))}</span>`).join("");
+      <span class="clean-ruler-tick${tick.last ? " is-last" : ""}" style="${tick.last ? "left:auto;right:0" : `left:${tick.left.toFixed(3)}%`}">${esc(fmtTime(tick.time, total < 60 ? 1 : 0))}</span>`).join("");
   }
+
+  let cleanTimelineZoom = 1;
+  const cleanManagerHomes = new Map();
 
   function paintCleanTimeline() {
     if (!dom.cleanTimelinePanel || !dom.cleanLanes) return;
     const active = Boolean(state.job && state.plan) && cleanWorkspaceActive();
     dom.cleanTimelinePanel.hidden = !active;
+    const manager = document.querySelector("#clean-manager");
+    if (manager) {
+      manager.hidden = !active;
+      if (active) dom.cleanStage.parentElement.append(manager);
+    }
+    for (const node of [dom.cleanFound, dom.cleanLayers, dom.cleanDetail]) {
+      if (!node || !manager) continue;
+      if (!cleanManagerHomes.has(node)) {
+        const home = document.createComment("Clean manager home");
+        node.before(home);
+        cleanManagerHomes.set(node, home);
+      }
+      if (active) manager.append(node);
+      else cleanManagerHomes.get(node).after(node);
+    }
     if (!active) return;
     const total = cleanTimelineTotal();
     const rows = cleanTimelineRows();
@@ -10895,7 +11052,7 @@
     const ticks = state.classicText.foundTicks;
     if (dom.cleanTimelineTotal) dom.cleanTimelineTotal.textContent = fmtTime(total, 1);
     if (dom.cleanTimelineCount) {
-      dom.cleanTimelineCount.textContent = `${bars.length} bar${bars.length === 1 ? "" : "s"}`;
+      dom.cleanTimelineCount.textContent = `${rows.length} text${rows.length === 1 ? "" : "s"}`;
     }
     paintCleanRuler(total);
     const laneCount = Math.max(1, rows.reduce((max, row) => Math.max(max, Number(row.lane) || 0), 0) + 1);
@@ -10976,7 +11133,32 @@
       ));
     state.classicText.selection = match ? match.id : "";
     paintCleanStage({ rows: false });
+    paintCleanSelection();
+    paintCleanTimeline();
+    revealCleanSelection(match?.id || "", rowIdentity);
+    scrollIntoViewSafe(dom.cleanStage, { behavior: "smooth", block: "nearest" });
     setCleanStatus(`${CleanTimeline.barLabel(member?.text || row.text, 0)} · ${fmtTime(row.ranges?.[0]?.start ?? 0, 1)}`);
+  }
+
+  /** Keep preview, region list and timeline pointing at the same box. */
+  function revealCleanSelection(layerId, identity) {
+    const managerRow = layerId && dom.cleanLayers
+      ? dom.cleanLayers.querySelector(`[data-clean-row="${CSS.escape(layerId)}"]`)
+      : null;
+    if (managerRow) scrollIntoViewSafe(managerRow, { behavior: "smooth", block: "nearest" });
+    const foundRow = identity && dom.cleanFound
+      ? [...dom.cleanFound.querySelectorAll("[data-found-index]")]
+        .find((node) => node.dataset.selected === "true")
+      : null;
+    if (foundRow) scrollIntoViewSafe(foundRow, { behavior: "smooth", block: "nearest" });
+    const bar = identity && dom.cleanLanes
+      ? dom.cleanLanes.querySelector(`[data-bar-row="${CSS.escape(identity)}"]`)
+      : null;
+    if (bar) {
+      scrollIntoViewSafe(bar, {
+        behavior: "smooth", block: "nearest", inline: "nearest",
+      });
+    }
   }
 
   function cleanBarEntry(barId) {
@@ -11027,6 +11209,21 @@
     const timeline = dom.cleanTimeline;
     if (!timeline || timeline.dataset.bound === "1") return;
     timeline.dataset.bound = "1";
+    dom.cleanTimelinePanel.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-clean-zoom]");
+      if (!button) return;
+      const scroll = timeline.parentElement;
+      const anchor = currentCleanTime() / cleanTimelineTotal();
+      cleanTimelineZoom = button.dataset.cleanZoom === "fit" ? 1
+        : clamp(cleanTimelineZoom * (button.dataset.cleanZoom === "in" ? 2 : 0.5), 1, 32);
+      timeline.style.width = `${cleanTimelineZoom * 100}%`;
+      paintCleanRuler(cleanTimelineTotal());
+      document.querySelector("#clean-zoom-level").textContent = `${cleanTimelineZoom}×`;
+      dom.cleanTimelinePanel.querySelector('[data-clean-zoom="out"]').disabled = cleanTimelineZoom === 1;
+      dom.cleanTimelinePanel.querySelector('[data-clean-zoom="in"]').disabled = cleanTimelineZoom === 32;
+      scroll.scrollLeft = anchor * timeline.offsetWidth - scroll.clientWidth / 2;
+      updateCleanPlayhead();
+    });
     let drag = null;
     const onMove = (event) => {
       if (!drag) return;
@@ -11035,6 +11232,8 @@
         return;
       }
       const delta = cleanTimelineTimeAt(event.clientX) - drag.originTime;
+      if (!drag.moved && Math.abs(event.clientX - drag.originX) < 4) return;
+      drag.moved = true;
       const total = cleanTimelineTotal();
       const entry = cleanBarEntry(drag.barId);
       if (!entry) return;
@@ -11050,6 +11249,7 @@
       drag = null;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       if (finished.kind !== "seek") {
         saveClassicText();
         scheduleCleanFrame();
@@ -11095,10 +11295,12 @@
           rangeIndex,
           start,
           end,
-          originTime: cleanTimelineTimeAt(event.clientX),
+           originTime: cleanTimelineTimeAt(event.clientX),
+           originX: event.clientX,
         };
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp, { once: true });
+        window.addEventListener("pointercancel", onUp, { once: true });
         return;
       }
       if (event.target.closest(".clean-lane, #clean-ruler, .clean-timeline")) {
@@ -11189,14 +11391,31 @@
       <button type="button" data-clean-detail-close>Close details</button>`;
   }
 
+  /** Refresh the selected-row highlight without rebuilding the list. Rebuilding
+   * on pointer-down would swallow the second click of a double-click. */
+  function paintCleanSelection() {
+    if (!dom.cleanFound) return;
+    const rows = cleanScanRows();
+    const selected = state.classicText.selectedBar;
+    dom.cleanFound.querySelectorAll("[data-found-index]").forEach((node) => {
+      const row = rows[Number(node.dataset.foundIndex)];
+      node.dataset.selected = String(Boolean(row) && cleanRowIdentity(row) === selected);
+    });
+  }
+
   function renderCleanFound() {
     const panel = dom.cleanFound;
     if (!panel) return;
     const sourceScope = state.cleanScope === "source";
     const rows = cleanScanRows();
     if (!rows.length) {
-      panel.hidden = true;
-      panel.innerHTML = "";
+      panel.hidden = false;
+      panel.innerHTML = `
+        <div class="clean-found-head">
+          <span class="clean-found-title">Regions</span>
+          <span class="hint">0 found</span>
+        </div>
+        <p class="hint clean-found-empty">Find text to list detected regions.</p>`;
       if (sourceScope) paintSourceClean();
       return;
     }
@@ -11229,9 +11448,13 @@
       const scene = sourceScope ? null : cleanSceneAtCut(cutStart ?? 0);
       const thumb = scene ? thumbUrl(scene) : "";
       const time = cleanRowTimeLabel(row);
+      const meta = [
+        cleanRowMethod(row) === "fill" ? "" : CLEAN_METHODS[cleanRowMethod(row)].label,
+        row.lines > 1 ? `${row.lines} lines` : "",
+      ].filter(Boolean).join(" · ");
       return `
         <div class="clean-found-row clean-lane-${Math.min(3, row.lane || 0)}${ticked ? " is-ticked" : ""}${outside ? " is-outside" : ""}${low ? " is-low" : ""}${row.added ? " is-added" : ""}"
-             role="listitem" tabindex="0" data-found-index="${index}">
+             role="listitem" tabindex="0" data-found-index="${index}" data-selected="${identity === state.classicText.selectedBar}">
           ${row.manual
             ? '<span class="clean-found-tick-space" aria-hidden="true"></span>'
             : (row.added
@@ -11239,10 +11462,12 @@
               : `<input type="checkbox" class="clean-found-tick" data-found-tick="${esc(identity)}"${ticked ? " checked" : ""} aria-label="Select ${esc(row.text)} for cleaning">`)}
           ${thumb ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(row.box)}" aria-hidden="true"></span>` : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>'}
           <div class="clean-found-copy">
-            <span class="clean-found-time mono">${esc(time)}</span>
-            <span class="clean-found-kind">${esc(row.kind)}${sourceScope ? `<span class="clean-found-confidence">${Math.round((Number(row.confidence) || 0) * 100)}%</span>` : ""}</span>
+            <span class="clean-found-headline">
+              <span class="clean-found-time mono">${esc(time)}</span>
+              <span class="clean-found-kind">${esc(row.kind)}${sourceScope ? `<span class="clean-found-confidence">${Math.round((Number(row.confidence) || 0) * 100)}%</span>` : ""}${low ? ' <span class="clean-found-confidence">review</span>' : ""}</span>
+            </span>
             <span class="clean-found-sample">${esc(row.text)}</span>
-            <span class="clean-found-method">${esc(CLEAN_METHODS[cleanRowMethod(row)].label)} · lane ${Number(row.lane) + 1}${row.lines > 1 ? ` · ${row.lines} lines` : ""}${low ? " · review" : ""}${ticked && !row.added ? ' · <b class="clean-found-selected">Selected</b>' : ""}</span>
+            <span class="clean-found-method">${esc(meta)}</span>
           </div>
           ${outside ? '<span class="clean-found-blocked">Not in this cut</span>' : ""}
           ${row.manual ? '<span class="clean-found-blocked is-added">drawn</span>' : ""}
@@ -11271,12 +11496,10 @@
       : (state.cleanScope === "source"
         ? "AI fill needs its model pack · Blur works now"
         : "AI fill needs its model pack · Blur and Crop guard work now");
-    const headerCopy = sourceScope
-      ? `${rows.length} row${rows.length === 1 ? "" : "s"} · click a row to jump to the text`
-      : `${rows.length} row${rows.length === 1 ? "" : "s"} · click a row to open its moment`;
+    const headerCopy = `${rows.length} found`;
     panel.innerHTML = `
       <div class="clean-found-head">
-        <span class="clean-found-title">Found text</span>
+        <span class="clean-found-title">Regions</span>
         <span class="hint">${headerCopy}</span>
       </div>
       <div class="clean-found-list" role="list">${rowsHtml}</div>
@@ -11293,14 +11516,14 @@
   }
 
   function addCleanFromScan(entry, method, engine) {
-    if (!entry) return;
+    if (!entry) return null;
     const ranges = cleanCutRanges(entry.ranges);
     if ((entry.ranges || []).length && !ranges.length) {
       setCleanStatus("That text is not inside this cut, so there is nothing to clean here.");
-      return;
+      return null;
     }
     const wanted = method || CLEAN_SCAN_METHOD[entry.action] || "blur";
-    addCleanBox({
+    return addCleanBox({
       box: entry.box,
       method: wanted,
       ...(wanted === "fill"
@@ -11315,6 +11538,41 @@
       ranges,
       source: "scan",
     });
+  }
+
+  /** The scan row/member behind a preview scan box. */
+  function cleanScanEntryFromNode(node) {
+    if (!node) return null;
+    const identity = node.dataset.scanIdentity || "";
+    const memberId = node.dataset.scanMember || "";
+    const row = cleanTimelineRows().find((item) => cleanRowIdentity(item) === identity);
+    if (!row) return null;
+    const member = (row.entryRows || [])
+      .find((item) => String(item.tracklet_id || "") === memberId) || row;
+    return { row, member, identity };
+  }
+
+  /** The layer for this scan line, created on first drag so a click only selects. */
+  function ensureScanLayer(row, member) {
+    const trackletId = String(member?.tracklet_id || "");
+    const existing = classicCleanLayers().find((layer) => (
+      layer.source === "scan"
+      && (trackletId
+        ? String(layer.tracklet_id || "") === trackletId
+        : scanLayerMatchesRow(layer, row))
+    ));
+    if (existing) return existing;
+    const ranges = cleanOverrideFor(row, member) || member.ranges || row.ranges || [];
+    let method = state.classicText.foundMethod || "fill";
+    if (method === "fill" && !fillEngineReady()) method = "blur";
+    return addCleanFromScan({
+      ...member,
+      box: member.box || row.box,
+      ranges,
+      text_key: member.text_key || member.text || row.text_key || row.text,
+      tracklet_id: member.tracklet_id || row.tracklet_id,
+      kind: member.kind || row.kind,
+    }, method, fillEngineNow());
   }
 
   function applyFoundTicks() {
@@ -11418,7 +11676,7 @@
         <div class="clean-row${selected ? " is-selected" : ""}${layer.hidden ? " is-off" : ""}" role="listitem" data-clean-row="${esc(layer.id)}">
           <button class="clean-eye" type="button" data-clean-eye="${esc(layer.id)}" aria-pressed="${layer.hidden ? "false" : "true"}" title="${layer.hidden ? "Show" : "Hide"} this box" aria-label="${layer.hidden ? "Show" : "Hide"} this box">${cleanIcon(layer.hidden ? "eye-off" : "eye")}</button>
           <div class="clean-row-copy">
-            <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "scan" : "manual")}</span></span>
+            <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "Detected text" : layer.mask?.strokes?.length ? "Manual brush" : "Manual box")}</span></span>
             <span class="clean-row-meta">${esc(ranges)} · ${(layer.box.w * 100).toFixed(0)}×${(layer.box.h * 100).toFixed(0)}%${out ? ` · ${esc(out)}` : ""}</span>
           </div>
           ${cleanRowTimes(layer)}
@@ -11529,8 +11787,15 @@
 
   function selectClean(id) {
     state.classicText.selection = id || "";
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    const row = cleanTimelineRows().find((item) => item.layer_id === id || (layer && scanLayerMatchesRow(layer, item)));
+    if (row) state.classicText.selectedBar = cleanRowIdentity(row);
+    if (layer?.ranges?.length) cleanSeek(layer.ranges[0].start);
     if (!id) state.classicText.selectedBar = "";
-    paintCleanStage();
+    paintCleanStage({ rows: false });
+    paintCleanSelection();
+    paintCleanTimeline();
+    revealCleanSelection(id || "", state.classicText.selectedBar);
   }
 
   function addCleanBox(options = {}) {
@@ -11605,6 +11870,12 @@
     pending.ids.add(String(id));
     if (layer) pending.tokens.add(cleanIdentityToken(layer));
     state.classicText.clean = classicCleanLayers().filter((item) => item.id !== id);
+    if (layer?.source === "scan") {
+      for (const row of cleanScanRows()) {
+        if (scanLayerMatchesRow(layer, row)) state.classicText.foundTicks.delete(cleanRowIdentity(row));
+      }
+      saveFoundTicks();
+    }
     if (state.classicText.selection === id) {
       state.classicText.selection = "";
       state.classicText.selectedBar = "";
@@ -11612,6 +11883,7 @@
     saveClassicText();
     paintCleanStage();
     scheduleCleanFrame();
+    setCleanStatus("Box removed from Clean. Undo restores it.");
   }
 
   function defaultFillEngine(_kind) {
@@ -11704,9 +11976,27 @@
     const canvas = dom.cleanCanvas;
     if (!canvas) return;
     let drag = null;
+    let pendingScan = null;
     const onMove = (event) => {
-      if (!drag) return;
       const point = cleanLocalPoint(event);
+      if (pendingScan) {
+        if (Math.hypot(point.x - pendingScan.origin.x, point.y - pendingScan.origin.y) < 0.006) {
+          return;
+        }
+        const origin = pendingScan.origin;
+        const layer = ensureScanLayer(pendingScan.row, pendingScan.member);
+        pendingScan = null;
+        if (!layer) return;
+        drag = {
+          kind: "move",
+          id: layer.id,
+          origin,
+          startBox: { ...layer.box },
+          crop: cleanCropAt(currentCleanTime()),
+          pointerId: event.pointerId,
+        };
+      }
+      if (!drag) return;
       if (drag.kind === "draw") {
         const x = Math.min(drag.origin.x, point.x);
         const y = Math.min(drag.origin.y, point.y);
@@ -11757,6 +12047,13 @@
       updateCleanBox(drag.id, cleanSourceBox({ x, y, w, h }, drag.crop));
     };
     const onUp = () => {
+      if (pendingScan) {
+        canvas.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        canvas.releasePointerCapture?.(pendingScan.pointerId);
+        pendingScan = null;
+        return;
+      }
       if (!drag) return;
       canvas.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -11788,6 +12085,52 @@
     };
     canvas.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      if (event.target.closest("[data-clean-box-action]")
+        || event.target.closest("[data-scan-box-action]")) {
+        event.preventDefault();
+        return;
+      }
+      const scanNode = event.target.closest("[data-scan-identity]");
+      if (scanNode) {
+        const entry = cleanScanEntryFromNode(scanNode);
+        if (!entry) return;
+        event.preventDefault();
+        const origin = cleanLocalPoint(event);
+        const crop = cleanCropAt(currentCleanTime());
+        const scanHandle = event.target.closest("[data-scan-handle]");
+        if (scanHandle) {
+          const layer = ensureScanLayer(entry.row, entry.member);
+          if (!layer) return;
+          selectClean(layer.id);
+          drag = {
+            kind: "resize",
+            corner: scanHandle.dataset.scanHandle,
+            id: layer.id,
+            origin,
+            startBox: { ...layer.box },
+            crop,
+            pointerId: event.pointerId,
+          };
+          canvas.setPointerCapture?.(event.pointerId);
+          canvas.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onUp, { once: true });
+          return;
+        }
+        selectCleanBar(entry.identity, {
+          memberId: String(entry.member?.tracklet_id || ""),
+        });
+        pendingScan = {
+          row: entry.row,
+          member: entry.member,
+          origin,
+          crop,
+          pointerId: event.pointerId,
+        };
+        canvas.setPointerCapture?.(event.pointerId);
+        canvas.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+        return;
+      }
       if (state.cleanScope !== "source" && !classicTextSupported()) {
         setCleanStatus("Clean boxes render on 9:16 and 4:5. Switch the shape first.");
         return;
@@ -11899,6 +12242,48 @@
       canvas.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp, { once: true });
     });
+    canvas.addEventListener("click", (event) => {
+      const scanAction = event.target.closest("[data-scan-box-action]");
+      if (scanAction) {
+        event.preventDefault();
+        const entry = cleanScanEntryFromNode(scanAction);
+        if (!entry) return;
+        if (scanAction.dataset.scanBoxAction === "unselect") {
+          state.classicText.selectedBar = "";
+          paintCleanStage();
+          return;
+        }
+        const layer = ensureScanLayer(entry.row, entry.member);
+        if (!layer) return;
+        const method = cleanMethodKey(layer);
+        setCleanMethod(layer.id, method === "fill" ? "blur" : "fill");
+        return;
+      }
+      const action = event.target.closest("[data-clean-box-action]");
+      if (!action) return;
+      event.preventDefault();
+      const id = action.dataset.cleanBoxTarget || "";
+      if (action.dataset.cleanBoxAction === "unselect") {
+        selectClean("");
+        return;
+      }
+      const layer = classicCleanLayers().find((item) => item.id === id);
+      if (!layer) return;
+      const method = cleanMethodKey(layer);
+      setCleanMethod(id, method === "fill" ? "blur" : "fill");
+    });
+    canvas.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const node = event.target.closest("[data-scan-identity]");
+      if (!node) return;
+      event.preventDefault();
+      const entry = cleanScanEntryFromNode(node);
+      if (entry) {
+        selectCleanBar(entry.identity, {
+          memberId: String(entry.member?.tracklet_id || ""),
+        });
+      }
+    });
   }
 
   function toggleCleanDraw() {
@@ -11992,7 +12377,13 @@
       }
       const row = event.target.closest("[data-found-index]");
       if (row && !event.target.closest("input, select, button")) {
-        focusCleanRow(cleanScanRows()[Number(row.dataset.foundIndex)]);
+        const item = cleanScanRows()[Number(row.dataset.foundIndex)];
+        const start = cleanRowCutStart(item);
+        if (state.cleanScope !== "source" && start === null) {
+          focusCleanRow(item);
+          return;
+        }
+        selectCleanBar(cleanRowIdentity(item), { start: Math.max(0, (start || 0) - 0.5) });
       }
     });
     dom.cleanFound?.addEventListener("change", (event) => {
@@ -12003,7 +12394,7 @@
         else state.classicText.foundTicks.delete(identity);
         resetSourceConfirmation();
         saveFoundTicks();
-        renderCleanFound();
+        paintCleanStage();
         const restored = Array.from(
           dom.cleanFound?.querySelectorAll("[data-found-tick]") || [],
         ).find((node) => node.dataset.foundTick === identity);
@@ -12025,7 +12416,13 @@
       const index = rows.indexOf(row);
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        focusCleanRow(cleanScanRows()[Number(row.dataset.foundIndex)]);
+        const item = cleanScanRows()[Number(row.dataset.foundIndex)];
+        const start = cleanRowCutStart(item);
+        if (state.cleanScope !== "source" && start === null) {
+          focusCleanRow(item);
+          return;
+        }
+        selectCleanBar(cleanRowIdentity(item), { start: Math.max(0, (start || 0) - 0.5) });
         return;
       }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -13454,6 +13851,7 @@
     }
     renderCleanFound();
     paintCleanTimeline();
+    paintCleanPhases();
     paintMomentsScan();
   }
 

@@ -796,7 +796,8 @@ def _rects_for(_index):
     return [(20, 30, 180, 70)]
 
 
-def test_a_saved_fill_answers_without_the_model(tmp_path):
+def test_a_saved_fill_answers_without_the_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     filler = _PictureFiller()
     area = _moving_frames(1)[0]
     mask = np.zeros(area.shape[:2], dtype=bool)
@@ -810,7 +811,8 @@ def test_a_saved_fill_answers_without_the_model(tmp_path):
     assert filler.calls == 1 and again.hits == 1
 
 
-def test_a_saved_fill_is_never_used_for_a_different_question(tmp_path):
+def test_a_saved_fill_is_never_used_for_a_different_question(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     filler = _PictureFiller()
     area = _moving_frames(1)[0]
     mask = np.zeros(area.shape[:2], dtype=bool)
@@ -827,7 +829,8 @@ def test_a_saved_fill_is_never_used_for_a_different_question(tmp_path):
     assert filler.calls == 4
 
 
-def test_a_damaged_saved_fill_goes_back_to_the_model(tmp_path):
+def test_a_damaged_saved_fill_goes_back_to_the_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     filler = _PictureFiller()
     area = _moving_frames(1)[0]
     mask = np.ones(area.shape[:2], dtype=bool)
@@ -840,7 +843,8 @@ def test_a_damaged_saved_fill_goes_back_to_the_model(tmp_path):
     assert filler.calls == 2 and again.hits == 0
 
 
-def test_a_full_disk_costs_the_resume_not_the_render(tmp_path):
+def test_a_full_disk_costs_the_resume_not_the_render(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     filler = _PictureFiller()
     area = _moving_frames(1)[0]
     mask = np.ones(area.shape[:2], dtype=bool)
@@ -851,7 +855,8 @@ def test_a_full_disk_costs_the_resume_not_the_render(tmp_path):
     assert saved.writable is False
 
 
-def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path):
+def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     frames = _moving_frames()
     whole_filler = _PictureFiller()
     whole = list(textfill.fill_frames_lama(
@@ -889,6 +894,8 @@ def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path):
 def test_tidying_saved_fills_drops_old_ones_and_leftovers(tmp_path, monkeypatch):
     import os
 
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
+
     now = 2_000_000_000.0
     old = tmp_path / "old.npy"
     new = tmp_path / "new.npy"
@@ -915,6 +922,7 @@ def test_tidying_a_missing_folder_does_nothing(tmp_path):
 
 def _span_with_counting_model(tmp_path, monkeypatch, *, stop_at=None):
     """prepare_span with ffmpeg and the model faked. Returns the model's call count."""
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     monkeypatch.setenv("VIBECUT_FILL_MODELS", str(tmp_path))
     # Written once: a changed model file must not reuse old fills.
     model_file = tmp_path / textfill.MODEL_FILES["lama"]
@@ -1003,7 +1011,8 @@ def test_stopping_a_clip_keeps_its_fills_and_the_next_run_uses_them(tmp_path, mo
     assert model.calls < fresh_calls
 
 
-def test_a_frame_that_repeats_in_one_run_is_not_a_resume(tmp_path):
+def test_a_frame_that_repeats_in_one_run_is_not_a_resume(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: textfill.SAVED_MIN_FREE + 1)
     filler = _PictureFiller()
     area = _moving_frames(1)[0]
     mask = np.ones(area.shape[:2], dtype=bool)

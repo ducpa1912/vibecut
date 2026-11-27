@@ -546,7 +546,8 @@ async function run(viewport) {
     player: getComputedStyle(document.querySelector("#player-wrap")).display,
     ready: getComputedStyle(document.querySelector("#result-ready")).display,
     audio: getComputedStyle(document.querySelector("#audio-panel")).display,
-    cleanPanel: getComputedStyle(document.querySelector("#clean-panel")).display,
+    cleanPanel: getComputedStyle(document.querySelector("#clean-manager")).display,
+    cleanFound: getComputedStyle(document.querySelector("#clean-found")).display,
     head: document.querySelector("#cut-clean-name")?.textContent,
     meta: document.querySelector("#cut-clean-meta")?.textContent,
     primary: document.querySelector("#cut-clean-run")?.textContent.trim(),
@@ -560,7 +561,8 @@ async function run(viewport) {
     `${label}: the Edit preview still shows in Clean`);
   assert(clean.ready === "none", `${label}: a second Download row still shows`);
   assert(clean.audio === "none", `${label}: the audio panel still shows in Clean`);
-  assert(clean.cleanPanel !== "none", `${label}: the Clean rail is hidden`);
+  assert(clean.cleanPanel !== "none" && clean.cleanFound !== "none",
+    `${label}: the Clean region manager is hidden`);
   assert(clean.head === "15s clean cut", `${label}: the rail header is ${clean.head}`);
   assert(/7\.0s/.test(clean.meta) && /210 frames/.test(clean.meta),
     `${label}: the rail meta is ${clean.meta}`);
@@ -790,17 +792,18 @@ async function run(viewport) {
 
   // The AI fill choices are offered, and the next render carries them.
   const fillOptions = await page.evaluate(() => ({
-    engine: document.querySelector("#clean-fill-engine")?.value,
-    device: document.querySelector("#clean-fill-device")?.value,
+    engine: document.querySelector('#clean-engine-menu [data-engine][aria-checked="true"]')?.dataset.engine,
+    device: document.querySelector('[data-fill-device][aria-pressed="true"]')?.dataset.fillDevice ?? null,
     follow: document.querySelector("#clean-fill-follow")?.checked,
-    disabled: [...document.querySelectorAll("#clean-fill-engine option")]
-      .filter((node) => node.disabled).map((node) => node.value),
+    disabled: [...document.querySelectorAll("#clean-engine-menu [data-engine]")]
+      .filter((node) => node.disabled).map((node) => node.dataset.engine),
   }));
   assert(fillOptions.engine === "lama" && fillOptions.device === "" && fillOptions.follow === false,
     `${label}: the AI fill defaults are ${JSON.stringify(fillOptions)}`);
   assert(fillOptions.disabled.join() === "migan,ns",
     `${label}: the engines not ready are ${fillOptions.disabled.join()}`);
-  await page.locator("#clean-fill-device").selectOption("cpu");
+  await page.locator("#clean-fill-options-open").click();
+  await page.locator('[data-fill-device="cpu"]').click();
   await page.locator("#clean-fill-follow").check();
   const remembered = await page.evaluate(() => JSON.parse(localStorage.getItem("vibecut.classic.fillChoice")));
   assert(remembered.device === "cpu" && remembered.follow === true,
@@ -1112,29 +1115,22 @@ async function run(viewport) {
   await page.locator("#result-mode-clean").click();
   await page.waitForFunction(() =>
     document.body.classList.contains("cut-clean-mode")
-      && Boolean(document.querySelector("#clean-fill .clean-fill-locked")),
+      && /Not ready/.test(document.querySelector("#clean-model-chip")?.textContent || ""),
   null, { timeout: 30000 });
   const fillLayout = await page.evaluate(() => {
-    const panel = document.querySelector("#clean-panel");
+    const manager = document.querySelector("#clean-manager");
     const fill = document.querySelector("#clean-fill");
-    const reason = document.querySelector("#clean-fill .clean-fill-locked p.hint");
-    const panelBox = panel.getBoundingClientRect();
-    const reasonBox = reason.getBoundingClientRect();
     return {
-      panelScroll: panel.scrollWidth,
-      panelClient: panel.clientWidth,
+      panelScroll: manager.scrollWidth,
+      panelClient: manager.clientWidth,
       fillScroll: fill.scrollWidth,
       fillClient: fill.clientWidth,
-      reasonRight: reasonBox.right,
-      panelRight: panelBox.right,
     };
   });
   assert(fillLayout.panelScroll <= fillLayout.panelClient + 1,
-    `${label}: the Clean rail overflows (${fillLayout.panelScroll} > ${fillLayout.panelClient})`);
+    `${label}: the region manager overflows (${fillLayout.panelScroll} > ${fillLayout.panelClient})`);
   assert(fillLayout.fillScroll <= fillLayout.fillClient + 1,
-    `${label}: the fill card overflows (${fillLayout.fillScroll} > ${fillLayout.fillClient})`);
-  assert(fillLayout.reasonRight <= fillLayout.panelRight + 1,
-    `${label}: the fill reason crosses the rail (${fillLayout.reasonRight} > ${fillLayout.panelRight})`);
+    `${label}: the fill controls overflow (${fillLayout.fillScroll} > ${fillLayout.fillClient})`);
 
   // A target change re-runs the auto-tick for the new cut. HELLO WORLD stays
   // inside at 15 and 60; the outside high row stays unticked; the low row is

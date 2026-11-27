@@ -1,7 +1,8 @@
 # Classic lane plan
 
 Status: **active**, Classic lane only. Phase 5 clean-video polish is built after
-`classic` `fb433d7` (founder acceptance PENDING).
+`classic` `fb433d7`. The 2026-11-18 Clean workspace revision and review queue are
+built in the working tree on base `bb3e89e`. Founder acceptance is **PENDING**.
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -152,21 +153,83 @@ still open.
   *(PENDING. Commands and checklist: `docs/classic/testing/clean-video-acceptance.md`.
   The automated run is not a founder pass.)*
 
+### G. Clean workspace revision and review queue (2026-11-18)
+
+Build contract: `PRODUCT.md` and `docs/classic/memory.md`. Base `bb3e89e`;
+the change set is uncommitted.
+
+- [x] Make Clean one bounded workspace: frame + region manager beside it +
+  compact timeline. Remove the separate settings rail from Clean.
+- [x] Size the canvas from `.clean-stage-body`, not the window or pane. The
+  verified 1280×800 frame is 248×440.
+- [x] Compress the timeline to 139 px: a 30 px header, one compact action line,
+  16 px ruler and a 44 px lane viewport. Lanes scroll internally.
+- [x] Add timeline zoom from 1× to 32×, Fit, horizontal scrolling, a stable
+  playhead anchor and a right-aligned last ruler tick.
+- [x] Slim timeline bars to 7 px with labels only on hover, selection or focus.
+- [x] Restore the region manager: detected text, manual boxes and brush masks
+  in one list; selected rows highlight without a rebuild.
+- [x] Fix double-click detail: selection no longer re-renders the list.
+- [x] Row click/Enter seeks to `start − 0.5 s`; outside-cut rows say
+  **Not in this cut** and do not move.
+- [x] Remove repeated row metadata: no lane number, no “Selected” badge; low
+  confidence shows one **review** note on the confidence line.
+- [x] Open AI-fill menus upward in Clean so the timeline cannot clip them.
+- [x] Add a four-phase top-bar strip: **Scan → Review → Clean → Render**.
+  Render is a shortcut to the reviewed primary action, not a second render
+  path. At narrow widths only the active phase and Render stay visible.
+- [x] Make selection two-way: a preview box selects its region row and timeline
+  bar and scrolls both into view; the row keeps the time inputs.
+- [x] Make auto-scanned boxes directly editable: click selects and shows
+  handles + the two actions; first drag or resize creates the layer. The
+  browser source spec drags and resizes a scanned box, then reloads cleanly.
+- [x] Add the selected-box action cluster outside its top-right corner:
+  **Unselect** and the **AI / Blur** method toggle.
+- [x] Compact the scan rows: time + kind + confidence share one line, sample
+  truncates, and the row height is 51 px at 1280×800.
+- [x] Add the review queue: multiple files or a folder, sequential upload as
+  `source_ready`, Check, AI-fill layer preparation, source review record.
+  The queue never renders.
+- [x] Add source review persistence:
+  `POST/GET /api/classic/jobs/{id}/clean/source/review`, stored at
+  `job.classic_text.source`, with `rendered: false`.
+- [x] Hydrate prepared source layers in Source Clean from the public job record.
+- [x] Keep completed queue job IDs across reloads; show per-file failure states.
+- [x] Move `XhsCookieBody` above its route so `/openapi.json` resolves.
+- [x] Update the stale browser specs to the manager layout and current AI-fill
+  chip/menu UI.
+- [x] Update saved-fill tests to control free-disk assumptions; production
+  threshold stays 10 GB.
+
+Acceptance for this revision:
+
+- Full suite: **2171 passed, 104 skipped** (92 skips wait on absent real media).
+- All four Classic browser specs pass.
+- At 1280×800: page exactly 800 px, timeline 139 px, lanes 44 px, no page
+  scroll, no console errors.
+- No render request is sent by the review queue.
+- Founder acceptance on real media is still **PENDING**. The review queue and
+  brush-mask management have not been run on a real founder folder.
+- Remaining gaps are tracked in `docs/classic/todo.md`: queue retry/remove,
+  file-handle reload limits, brush management on real media, GPU timing and the
+  language work.
+
 ## Release gate
 
 - [ ] No P0 or P1 open. *(no sign-off recorded yet.)*
-- [x] Classic tests pass on the chosen tip. *(1,878 passed, 103 skipped at
-  `c7032b8`; the skips are tests waiting on absent `data/media` real files.
-  `node --check` passes for every `static/**/*.js`.)*
-- [ ] Founder pass recorded on the chosen tip. *(no pass at `c7032b8` yet; the
-  record table is at the top of the beta pass.)*
+- [x] Classic tests pass on the current working tree. *(2,170 passed, 104
+  skipped on 2026-11-18; 92 skips wait on absent `data/media` real files.
+  All four Classic browser specs pass. `node --check` passes for every
+  `static/**/*.js`. The revision is not committed yet.)*
+- [ ] Founder pass recorded on the chosen tip. *(No pass at `bb3e89e` or on the
+  current uncommitted revision; the record table is at the top of the beta
+  pass.)*
 - [x] All new commits are signed. *(Checked with
   `scripts/verify-signatures.sh`. `732254a` and `8186e2a` are recorded
   pre-signing exceptions; the tag is signed by `scripts/release.sh` when it
   exists. No beta tag exists yet.)*
-- [x] `docs/classic/testing/classic-beta-pass-2.md` matches the build. *(Labels,
-  paths, media, Clean/fill steps and the T1–T6 trust table are re-checked
-  against the source at `c7032b8`. The founder's Result column is still the
-  only evidence for a pass.)*
+- [ ] `docs/classic/testing/classic-beta-pass-2.md` matches the current build.
+  *(Last re-checked at `c7032b8`. The 2026-11-18 workspace and review queue have
+  not been walked against that document yet; update it after the founder pass.)*
 - [ ] Merge target confirmed: Classic lane only, or explicit merge to `main`.
   *(Nothing is merged; the lane stays on `classic` until someone asks.)*

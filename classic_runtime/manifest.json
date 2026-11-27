@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
-   "sha256": "e1f471e86405a6a4b539547634207c4f973227df8a536dc2d0513df11590f780",
-   "feature_version": "1.0.10"
+   "source": "move XhsCookieBody above its route so OpenAPI resolves",
+   "sha256": "33b623b4ace101200057b4026498a0605b6b88f673be1f7784e5ea557ac136d8",
+   "feature_version": "1.0.11"
   },
   {
    "path": "artifacts.py",
