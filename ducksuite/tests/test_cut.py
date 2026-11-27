@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from duckcore import edits
+from duckcore.main import create_app
+from duckcore.render import _scale_filter, cut_size
+
+META = {"width": 1920, "height": 1080}
+
+
+def test_set_cut_clamps_and_keeps_the_numbers() -> None:
+    edit = {"id": "ed_cut"}
+    out = edits.set_cut(edit, aspect="9:16", fit="fill", crop={"x": 0.9, "y": -1, "w": 0.5, "h": 2})
+    assert out["cut"]["aspect"] == "9:16"
+    assert out["cut"]["fit"] == "fill"
+    assert out["cut"]["crop"] == {"x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0}
+
+
+def test_set_cut_rejects_a_bad_aspect_or_fit() -> None:
+    for kwargs in ({"aspect": "21:9"}, {"fit": "stretch"}):
+        try:
+            edits.set_cut({"id": "ed_cut"}, **kwargs)
+        except edits.EditError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError(kwargs)
+
+
+def test_cut_size_and_filters() -> None:
+    assert cut_size(META) == (1920, 1080)
+    assert cut_size(META, {"cut": {"aspect": "9:16"}}) == (1080, 1920)
+    assert cut_size(META, {"cut": {"aspect": "1:1"}}) == (1080, 1080)
+    out_w, out_h, chain = _scale_filter(META, 30, {"cut": {"aspect": "9:16", "fit": "fill"}})
+    assert (out_w, out_h) == (1080, 1920)
+    assert "force_original_aspect_ratio=increase" in chain and "crop=1080:1920" in chain
+    _, _, crop_chain = _scale_filter(META, 30, {"cut": {"aspect": "source", "fit": "fit", "crop": {"x": 0.25, "y": 0.1, "w": 0.5, "h": 0.5}}})
+    assert crop_chain.startswith("crop=960:540:480:108")
+
+
+def test_cut_route_saves(tmp_path: Path) -> None:
+    edit_dir = tmp_path / "projects" / "prj_cut" / "edits"
+    edit_dir.mkdir(parents=True)
+    (edit_dir / "ed_cut.json").write_text(json.dumps({"id": "ed_cut", "project_id": "prj_cut"}), encoding="utf-8")
+    app = create_app("test-token", tmp_path)
+    with TestClient(app) as client:
+        saved = client.patch(
+            "/api/projects/prj_cut/edits/ed_cut/cut",
+            headers={"Authorization": "Bearer test-token"},
+            json={"aspect": "4:5", "fit": "fill", "crop": None},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["edit"]["cut"] == {
+            "aspect": "4:5", "fit": "fill", "crop": None,
+            "grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0,
+                      "tint": 0, "look": None, "look_strength": 100},
+            "enhance": {"enabled": False, "sharpen": 0},
+        }
+        bad = client.patch(
+            "/api/projects/prj_cut/edits/ed_cut/cut",
+            headers={"Authorization": "Bearer test-token"},
+            json={"aspect": "21:9", "fit": "fit", "crop": None},
+        )
+        assert bad.status_code == 400
+
+
+def test_no_cut_keeps_the_old_source_chain() -> None:
+    _, _, chain = _scale_filter(META, 30, None)
+    assert chain == (
+        "scale=1920:1080:force_original_aspect_ratio=decrease,"
+        "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30"
+    )
+
+
+def test_grade_clamps_and_survives_the_route(tmp_path: Path) -> None:
+    edit = {"id": "ed_grade"}
+    out = edits.set_cut(edit, grade={"exposure": 250, "contrast": -140, "saturation": 40, "temperature": -20})
+    assert out["cut"]["grade"] == {"exposure": 100, "contrast": -100, "saturation": 40, "temperature": -20, "tint": 0, "look": None, "look_strength": 100}
+    edit_dir = tmp_path / "projects" / "prj_grade" / "edits"
+    edit_dir.mkdir(parents=True)
+    (edit_dir / "ed_grade.json").write_text(json.dumps({"id": "ed_grade", "project_id": "prj_grade"}), encoding="utf-8")
+    app = create_app("test-token", tmp_path)
+    with TestClient(app) as client:
+        saved = client.patch(
+            "/api/projects/prj_grade/edits/ed_grade/cut",
+            headers={"Authorization": "Bearer test-token"},
+            json={"aspect": "source", "fit": "fit", "crop": None,
+                  "grade": {"exposure": 25, "contrast": 10, "saturation": -10, "temperature": 50}},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["edit"]["cut"]["grade"]["temperature"] == 50
+
+
+def test_grade_turns_into_ffmpeg_filters() -> None:
+    _, _, chain = _scale_filter(META, 30, {"cut": {"grade": {"exposure": 100, "contrast": 50, "saturation": -50, "temperature": 100}}})
+    assert "lut3d=file=" in chain and ":interp=tetrahedral" in chain
+    assert all(old not in chain for old in ("exposure=", "eq=", "colorbalance="))
+    _, _, plain = _scale_filter(META, 30, {"cut": {"grade": {"exposure": 0, "contrast": 0, "saturation": 0, "temperature": 0}}})
+    assert "exposure=" not in plain and "colorbalance=" not in plain and "eq=" not in plain
+
+
+def test_enhance_clamps_and_only_lifts_a_small_source() -> None:
+    out = edits.set_cut({"id": "ed_e"}, enhance={"enabled": True, "sharpen": 180})
+    assert out["cut"]["enhance"] == {"enabled": True, "sharpen": 100}
+    small = {"width": 640, "height": 360}
+    _, _, chain = _scale_filter(small, 30, {"cut": {"enhance": {"enabled": True, "sharpen": 50}}})
+    assert "flags=lanczos+accurate_rnd" in chain
+    assert "unsharp=5:5:0.750:5:5" in chain
+    _, _, big = _scale_filter(META, 30, {"cut": {"enhance": {"enabled": True, "sharpen": 50}}})
+    assert "lanczos" not in big
+    assert "unsharp" not in big
+    _, _, off = _scale_filter(small, 30, {"cut": {"enhance": {"enabled": False, "sharpen": 50}}})
+    assert "lanczos" not in off and "unsharp" not in off
+
+
+def test_the_check_view_is_the_render_chain_without_the_frame_rate() -> None:
+    from duckcore.render import check_view
+
+    meta = {"width": 1080, "height": 1920, "fps": 30}
+    assert check_view(meta, {}) is None
+    assert check_view(meta, {"cut": {"aspect": "9:16", "fit": "fit"}}) is None
+    edit = {"cut": {
+        "aspect": "16:9", "fit": "fit",
+        "crop": {"x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5},
+        "grade": {"contrast": -40, "exposure": 0, "saturation": 0, "temperature": 30},
+        "enhance": {"enabled": True, "sharpen": 50},
+    }}
+    view = check_view(meta, edit)
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert chain == f"{view.chain},fps=30"
+    assert "crop=540:960:270:480" in view.chain and "lut3d=file=" in view.chain
+    assert (view.width, view.height) == (1920, 1080)
+    # The crop's corner lands on the left edge of the picture, inside the pad.
+    x, y = view.point(270, 480)
+    assert abs(y) < 1e-6 and abs(x - (1920 - 540 * 1080 / 960) / 2) < 1e-6
+    # The far corner lands on the far edge.
+    x, y = view.point(270 + 540, 480 + 960)
+    assert abs(y - 1080) < 1e-6 and abs(x - (1920 + 540 * 1080 / 960) / 2) < 1e-6
+
+
+def test_a_fill_cut_maps_the_box_past_the_edges() -> None:
+    from duckcore.render import check_view
+
+    meta = {"width": 1920, "height": 1080, "fps": 30}
+    view = check_view(meta, {"cut": {"aspect": "9:16", "fit": "fill"}})
+    assert "force_original_aspect_ratio=increase" in view.chain
+    x0, _y0 = view.point(0, 0)
+    x1, _y1 = view.point(1920, 1080)
+    assert x0 < 0 and x1 > 1080  # the sides are cut away
+
+
+def test_a_cropped_upscale_gets_lanczos_and_sharpen() -> None:
+    """A 50 % crop back to full size is a 2x upscale, though the output is the
+    source's size: the enhance must compare with the crop, not the source."""
+    meta = {"width": 1080, "height": 1920}
+    edit = {"cut": {
+        "aspect": "9:16", "fit": "fill",
+        "crop": {"x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5},
+        "enhance": {"enabled": True, "sharpen": 60},
+    }}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert "flags=lanczos+accurate_rnd" in chain
+    assert "unsharp=5:5:0.900:5:5" in chain
+    # No crop, same size: nothing is upscaled, so nothing is added.
+    edit["cut"]["crop"] = None
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    assert "lanczos" not in chain and "unsharp" not in chain
+
+
+def test_the_grade_runs_before_the_letterbox_so_the_bars_stay_black() -> None:
+    meta = {"width": 1080, "height": 1920}
+    edit = {"cut": {"aspect": "16:9", "fit": "fit",
+                    "grade": {"contrast": -50, "temperature": 40}}}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    parts = chain.split(",")
+    pad = next(i for i, part in enumerate(parts) if part.startswith("pad="))
+    assert pad > next(i for i, part in enumerate(parts) if part.startswith("lut3d="))
+
+
+def test_letterbox_bars_are_black_in_a_graded_render(tmp_path) -> None:
+    """Run the chain on a grey frame: the picture is graded, the bars are 0."""
+    import subprocess
+
+    import numpy as np
+
+    from duckcore import media
+
+    try:
+        ffmpeg = media.ffmpeg()
+    except Exception:  # noqa: BLE001 - no ffmpeg on this machine
+        import pytest
+        pytest.skip("ffmpeg is not available")
+    meta = {"width": 108, "height": 192}
+    edit = {"cut": {"aspect": "16:9", "fit": "fit", "grade": {"contrast": -50}}}
+    _w, _h, chain = _scale_filter(meta, 30, edit)
+    chain = chain.replace("1920", "192").replace("1080", "108")
+    done = subprocess.run(
+        [ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=108x192:d=0.04",
+         "-vf", f"{chain},format=gray", "-frames:v", "1", "-f", "rawvideo", "-"],
+        capture_output=True, check=False,
+    )
+    assert done.returncode == 0, done.stderr.decode()[-300:]
+    frame = np.frombuffer(done.stdout, dtype=np.uint8).reshape(108, 192)
+    assert int(frame[:, :10].max()) <= 16  # left bar: black (limited range)
+    assert 100 < int(frame[54, 96]) < 160  # the picture is still grey

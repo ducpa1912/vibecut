@@ -1,0 +1,93 @@
+# MEMORY — DuckSuite current direction
+
+**Read `AGENTS.md` first, then this file and `TODO.md`.** History is in `old_memory.md` (agents do
+not read it). Keep this file under ~80 lines: direction, decisions in force, open requests.
+
+## Direction
+
+DuckSuite is an offline macOS video editor for one long video: Check finds the scenes, the
+transcript and the burned-in text; Clean removes that text with a local fill; Edit writes script,
+captions and voice; Render writes one 1080p MP4. Local only, one project at a time, one $29
+purchase. Planning is closed — each lane takes one independent loop in build order.
+
+## Decisions in force
+
+- REQ-20261127-01 · “Workflow setup only.” Claude and both Astra POs use the original ducksuite checkout. OpenCode may edit code-only worktrees. Integration, tests, environments and packaging live in the original folder. The main PO owns Git and sign-off. Dispatch requires the exact OpenCode stack in docs/teams/two-po/operations.md.
+
+- Merge target is `ducksuite`. `main` has no common ancestor, lives in another worktree, never merged.
+- App Store, signing and TestFlight are paused by the founder. Do not start them.
+- v1 is completely local: no account, no upload, no telemetry, no keys. A step may take a
+  user-supplied local model; no step needs a download.
+- LaMa is the only shipped model. GPU (MPS) is the default; CPU fill is a 198 MB pack. Bundle ≈ 981 MB.
+- Translation ships no weights and hosts no download (user CTranslate2 folder). Packs live in app data.
+- A line over a moving background is flagged `moves`, never silently switched to blur. Only a flash
+  under 0.6 s read once defaults to blur.
+- Do not hide a limit: measure it and say it in the UI. Old information is never deleted (`old_*.md`).
+- Moving fill (2026-11-12): no video-inpaint engine has a commercial weight licence; LaMa and the
+  `moves` warning stay. A user fill model folder (ONNX or TorchScript; the built sidecar imports onnxruntime, loop 24) replaces LaMa.
+- Rewrite is Apple Intelligence, else basic cleanup; no Ollama fallback. `online_*` settings are gone.
+- Cut (loops 14–19): `edit.cut` runs in ffmpeg as crop → scale → sharpen → grade → pad (bars stay
+  black); enhance is Lanczos + unsharp only when drawn larger; the player grade is CSS, labelled
+  approximate. The leftover check reads the source through the same filters (`render.check_view`).
+- Output fps is automatic: 24 when the source is within 0.6 of 24, else 30; Render shows it.
+- Native UI track planned (`PLAN.md`, N1–N8), three decisions open in `TODO.md`; not started.
+
+## Where the build stands (2026-11-16)
+
+| Fact | Value |
+|---|---|
+| Tests / JS | Last code verification: 346 pass · `node --check static/duck/app.js` clean |
+| Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
+| Clean layers | 42 fill, 0 blur; 1 founder layer `auto: false` (`cl_7b144258ac`, 0.0–0.067 s) |
+| Fill | `textfill.VERSION` 17; PyTorch GPU remains default. Core ML is opt-in and blocked from promotion by measured padding drift and native MPSGraph abort; a Core ML clip carries `:coreml-gpu`. |
+| Leftover-text check | per letter, per frame, output against source; 40 of 42 lines checked, 68–81 s on a quiet Mac (170–190 s with the Mac under load); `inkcheck.SAME` 20 (untouched text measures 9–13.4, a fill 30+) |
+| Last render | `ed_38a4c36a3aae_20261112-104149.mp4` (warm ink store, 24 of 24 spans reused): 0 leftover in 2,964 frame checks; 2 lines not checked, shown with the reason |
+| Cold render | 620–847 s on this Mac (was 418 s): every frame is filled alone where something crosses the text. Model time is ≈ 64 % of it |
+| Estimate | from the fill's own run plan: 790.4 s against 847.2 s real (6.7 % low), shown as a range. Warm call < 0.3 s; first ever for a project 144.8 s in the background; one queued job per edit (older saves never run); a starting render never waits in the queue |
+| Ink store | `<data root>/ink`, one file per line with every `Ink` field, `ink.STORE_VERSION` 2, shared by estimate, queue and render, capped at 512 MiB |
+| Layout | Render is two columns (320 px settings/start/estimate, queue right with finished cards); inspector shows `N of M layers` with a fade; empty timeline lanes are 32 px with a `+`; the player hugs the picture (9:16: 410x728 / 353x628, 15 px black; Edit 303x537 / 269x477, 0 black); the transcript sits above the player controls; every scroll area fades while more is below |
+
+## Known limits that shape the next loops
+
+- Media cleanup 2026-11-17: old screenshots, scratch footage/projects and caches removed; analysis retained. `build/` 9.8 → 2.4 GiB; rebuilt app and model packages kept. App-container data untouched. See `docs/MEDIA-CLEANUP.md`.
+
+- The leftover check judges only lines that have a clean layer and steady strokes. A line under
+  5 frames long, or with no steady strokes, is counted as "not checked", never as clean. Text that
+  Check never found has no layer and is not judged.
+- A steady shot cut at both ends of a line: scenery in the box cannot be told from text by time, so
+  the hole there is a little larger than the letters.
+- Render time on this 8 GB Mac varies by a third for one edit (estimate is a range); a 3-clip span measured 171–601 s cold.
+- Three wins are measured and not built: crop the fill decode (35–50 s), share the check's decode
+  (52.8 s), fewer key frames (about a third of the model time, but it changes pixels). Loop 27 takes
+  the first two and the early ink store; fewer key frames stays out.
+- LaMa cannot rebuild a background it never saw. Vietnamese needs the 1.61 GB Whisper pack.
+
+## Open questions for the founder
+
+- Native UI decisions; FFmpeg offer contact address; a Vietnamese clip for the Whisper comparison.
+
+## Request log
+
+- REQ-20261116-02 · Core ML authorized; 11-size package merged; compiler/update/fallback-cache fixes. 3C review rejects promotion: exact drift 5–19/255, padding 169/255, native abort on the 9th function; PyTorch stays default, VERSION 17. See `docs/teams/loop-3c-coreml-review/review.md`.
+
+Open requests only; a new request appends one entry before code, a revision attaches to its request,
+closed entries move to `old_memory.md` with the loop's commit. Open work is in `TODO.md`.
+
+- REQ-20261111-02 · $29 build readiness · PLAN loop 8 (REQ-20261115-02 P4). Loop 26 (2026-11-16, built by the sub-leader after an OpenCode 503): exact size + publisher digest per pack file (Kokoro has none published), FFmpeg source offer in Settings, fill repair line, creator import copy in the core; Whisper table only. Open on the founder: contact address, Vietnamese clip, microphone test.
+- REQ-20261111-11 · ink check · D8, D9, two unchecked lines, cold cost (loop 27). Revised 2026-11-13: fix-01, fix-03.
+- REQ-20261112-04 · Cut · CoreML research open. Revised 2026-11-13: fix-02.
+- REQ-20261112-07 · story · loop 20, local VLM scene captions (roadmap).
+- REQ-20261126-01 · 2026-11-26 · founder: learn from Editroom (MIT, github.com/robbietilton/Editroom) and adopt its scene layout, timeline, icons, waveform, colour grading and LUTs. Read only at `e0cbfd2`, not built. Found: our grade preview (CSS filters) and render (FFmpeg exposure/eq/colorbalance) use different formulas (exposure +50: ×1.25 vs ×2.0). Plan `docs/plans/2026-11-26-editroom-adoption.md`: G1 one baked cube for preview + render + user .cube LUTs + ported looks (MIT notice); W1 core RMS levels shared by waveform and remove-silence (fold into P-D); T1 filmstrip, track headers, blade tool, scene bin; icons: our SVG in Editroom's style, SF Symbols only in native UI. Not taken: cloud Magic/MCP, Sparkle, their FFmpeg. W1 folded into P-D (founder yes).
+- REQ-20261125-03 · 2026-11-25 · founder: check App Store readiness (licensing + completeness), then plan the finish with OpenCode and Codex, who share this folder. Outcome: not ready — blockers: GPL-3 espeak-ng/pcaudio in the bundle (via kokoro_onnx), no FFmpeg in any build since 11-23, ad-hoc signing without sandboxed helpers, Whisper pack cannot run in the app; plan and agent rules in `docs/plans/2026-11-25-app-store-readiness.md`; founder decisions D1–D9 open. 2026-11-26: S0 done (worktrees `ducksuite-codex`/`ducksuite-opencode`, `AGENTS.md` "Three agents"); heavy loops moved to Codex at the founder's word; R1 merged (`f994af4`, FFmpeg back, build fails without it); P-A merged (`758b242`, speech failure plain; Workflows section withdrawn). 394 tests pass on the 2026-11-26 build (1.1 GB), which has FFmpeg 7.1.1 in `Contents/Resources/Helpers`; the check script accepts both helper folders. P-C merged (`6e22b72`): toolbar wraps below 760 px, render goes one column below 980 px, frame timecode on the Edit bar; 399 tests. Footage checks (players, clipboard, Edit at 1024×700) go to the founder hand test. D9 decided (founder "Codex R2"): Kokoro dropped from v1. R2 merged (`d7e7f07`): no espeak/pcaudio, GPL scan before signing, NumPy GCC-exception allowed only without GCC runtime files (founder). User voice folders now need their own `tokenizer.onnx`, so v1 voice is macOS voices in practice. The 2026-11-26 rebuild (1.1 GB) passes the FFmpeg check and the GPL scan; 420 tests. D3 decided (founder chose P-B): whisper.cpp in the app, Codex on `cx/pb-whisper-in-app`. R2 follow-ups merged (`6b0cab2`, OpenCode): fallback notice shown on generate/preview/dub, dub names the voice used, Swift voice precheck matches the core, `kokoro-onnx` out of requirements; 422 tests. P-E queued after P-D (founder yes to both REQ-20261118-01 proposals). D8 decided: split, reorder and remove-silence all in v1 (P-D, Codex after P-B). P-B merged (`4fb6a7b`, Codex): whisper.cpp v1.8.2 with Metal inside the app (`whisper-cli`, system libraries only), the speech pack is GGML large-v3-turbo weights (1.62 GB), an old safetensors pack shows needs-update and is kept, the MLX runner is gone, a runner is never taken from the data root; whisper.cpp gives no no-speech/compression scores, so three transcript guards are idle on Whisper; 436 tests. Vietnamese is the founder's hand test. PO rebuild of the Xcode app after P-B: 1.0 GB (1,030,288 KiB; no Core ML LaMa package in this build, PyTorch GPU fill), `whisper-cli` 2.76 MB signed in `Contents/Resources/Helpers` with `whisper.cpp-MIT.txt`, helper check passed, GPL scan exit 0 (LGPL FFmpeg, libsndfile, NumPy exception only). The PO folder now holds its own copy of Codex's `build/ffmpeg-lgpl`. P-D merged (`0830277`, Codex): split keeps clip properties, drag and Alt+Left/Right reorder, remove-silence previews word-safe spans from the same cached RMS levels the canvas waveform draws (W1; browser memory for waveforms −99.4%), captions/voice/music follow cuts, Clean stays in source time; PO fix at merge: a Blur range behind a clip clamped to 0–0 and blurred its first frame; 451 tests. No general timeline undo. G1 core started (Codex, `cx/g1-grade-cube-core`). P-E merged (`a4da6a1`, OpenCode): Remove layer deletes a Clean layer (detected or manual) and remembers its id in `removed_clean` so Check doesn't bring it back; clicking a drawn box selects its layer, smallest box wins; no fill change; 455 tests. T1 merged (`b821a9a`, OpenCode): `/frame?w=` small cached thumbnails, filmstrip on power-of-two source spacing, clip name tags, V/S/T/A/FX headers (eye = preview only, M/S/dB), blade tool (B, V, Escape), Check scene grid with transcript search, one Lucide stroke style; 459 tests. G1 graded thumbnails plug in at `frameUrl(time, projectId, 96)` in the filmstrip. G1 core merged (`5ad3458`, Codex): one 33³ cube per grade (exposure ±2 stops, contrast, saturation, temperature, tint, 8 Editroom looks + strength, user .cube LUTs in `<data root>/luts`), render via `lut3d`, `/grade/cube` JSON and `/grade/still` PNG for the preview; FFmpeg vs NumPy ≤1/255; temperature now really warms (grey 128 → 143,128,112), so graded renders change and are cold once; 477 tests. G1 preview now uses the same cube in the player and graded filmstrip stills. Native playback and the file picker await the founder check. Hand-test sheet `docs/teams/founder-test-2026-11-26.md`.
+- REQ-20261125-02 · 2026-11-25 · founder: "Yes, build all three" (to: saved fills as lossless PNG, link the fill models to the app instead of a second copy, delete the 111 MB of fill clips from before the Nov 15 re-key). The data folder measured 4.4 GB (saved fills 1.6 GB, Whisper pack 1.5 GB, model copy 0.3 GB). Pixels unchanged, VERSION 17. Outcome: 4.4 GB → 2.8 GB; saved fills PNG (1.59 → 0.48 GB), models linked with content-pinned stamps (0.30 GB → 0), stale clips pruned after 14 days, 111 MB of pre-re-key clips deleted; fixed the saved-fill limits searching `jobs/` instead of `projects/`; 386 tests (`docs/teams/thin-data-folder/review.md`).
+- REQ-20261125-01 · 2026-11-25 · founder: "Do a code refractor for DuckSuite, rebuild & launch it for user test". Read as: a behaviour-preserving cleanup pass (dead code, unused imports, leftover VibeCut modules), no pixel change (VERSION 17), tests green, then rebuild and open the app. Outcome: 56 dead Python functions/classes, 9 dead UI functions, `usage_store` and 24 unused imports removed (1,920 lines, deletions only); 373 tests; splitting `app.js`/`pipeline.py` left for a brief; revision: the dead "Write .srt file" switch is wired (it never had a handler), 375 tests (`docs/teams/refactor-dead-code/review.md`).
+- REQ-20261121-01 · 2026-11-21 · founder: "Can i test on the render phase, where i choose render CoreML or Pytorch. Keep the flag". Read as: a per-render GPU engine choice on the Render screen (default PyTorch, Core ML marked as a test), the env flag still wins, and a fair speed test: each box goes to Core ML when a size fits, else PyTorch for that box only, with the counts shown after the render. Founder note: the earlier Core ML timings ran on a busy Mac. Outcome: built; Render → GPU shows PyTorch / Core ML · test, saved in settings, flag still wins; Core ML routes per box and the finished render counts the boxes per engine; 373 tests; founder speed test open (`docs/teams/render-engine-choice/review.md`).
+- REQ-20261118-02 · 2026-11-18 · founder: "Yes, send it" to the local-only fix for Check speech. Read as: no cloud speech, text, voice or music route can run, whatever the environment holds. Outcome: the stored Check showed `openrouter` twice from the default STT ladder; cloud speech code, key lookups and cloud defaults are deleted, Whisper runs offline, and 8 new tests prove no call with every key set, routes never cloud, slots loopback-only. 361 tests, VERSION 17 (`docs/teams/local-only-stt/review.md`).
+- REQ-20261118-01 · 2026-11-18 · founder: the Clean layer list cannot be selected or removed, and Edit shows no transcript box. Read as: a visible, selectable layer list at every window size and a box that says why there is no transcript. Outcome: 3A pass (`49be5ff`), 3B pass (`6693b3e`), 3C review (`1b36a04`), 3D review (`1942237`); layer removal and box-click selection are founder proposals in TODO.
+- REQ-20261116-01 · 2026-11-16 · "Now try the Core ML with LaMa GPU" → read as: convert the same LaMa weights to a Core ML package and measure speed and pixels against PyTorch GPU, in `build/coreml-lama/` (no app change). Outcome 2026-11-16: converts (99 MB FP16); Core ML CPU+GPU 406 ms vs PyTorch MPS 550 ms per 512 run (1.35×), max diff 3/255; Neural Engine rejects it. Open: flexible sizes, real footage, PyTorch still used by other fill slots (`docs/teams/coreml-lama-test/review.md`).
+
+### REQ-20261115-02 · 2026-11-15
+**Request:** "except the native UI, tell opencode to oneshot from 2 loop to 6 Layout odds and ends"
+**Read as:** five phases: P1 review leftovers, P2 layout odds, P3 PLAN loop 7, P4 PLAN loop 8, P5 fill/check cost.
+**Response:** brief `docs/teams/loop-23-oneshot/BRIEF.md`, then one loop per phase, each verified.
+**Outcome:** P1 closed in loop 24 (`bc1894c`, accepted `b109e45`); P3 closed in loop 25 (`b9ad447`); P4 code shipped in loop 26 (`a20954b`), founder items open. P5 → loop 27, P2 → loop 28 (ordered 2026-11-16 by the Senior PO on the founder's word). 324 tests; VERSION 17.

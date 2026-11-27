@@ -1,0 +1,221 @@
+"""Workflow model-route configuration for DuckSuite.
+
+Each AI worker has an ordered fallback list.  The admin UI edits this shape; the
+runtime resolves it before each provider call.  DuckSuite is local only: a kind
+with no local provider keeps an empty route list, and normalization drops any
+saved cloud route so none can come back.
+"""
+
+from __future__ import annotations
+
+import copy
+from typing import Any, Mapping
+
+MAX_ROUTES = 6
+REASONING_VALUES = ("none", "low", "medium", "high", "max")
+# Text: no local text provider ships, so the rewrite ladder is empty.
+TEXT_PROVIDERS: tuple[str, ...] = ()
+# Voice: the on-device system voice, macOS ``say``.
+TTS_PROVIDERS = ("local",)
+# Music: no local music generator ships, so the ladder is empty.
+MUSIC_PROVIDERS: tuple[str, ...] = ()
+# STT: Apple SpeechAnalyzer and the bundled Whisper pack.
+STT_PROVIDERS = ("apple", "whisper")
+
+#: Engines removed from the product, mapped to the nearest kept local engine.
+TTS_ENGINE_MIGRATIONS = {
+    "kokoro": "say",
+    "piper": "say",
+    "openai": "say",
+    "groq": "say",
+    "deepgram": "say",
+    "cartesia": "say",
+}
+#: Providers that no longer exist in a workflow.
+REMOVED_TEXT_PROVIDERS = ("local-mlx", "ollama")
+REMOVED_TTS_PROVIDERS = ("openai", "groq", "deepgram", "cartesia")
+REMOVED_STT_PROVIDERS = ("auto", "openai")
+#: Local TTS model ids that are no longer offered.
+REMOVED_TTS_MODELS = ("piper", "kokoro")
+#: STT model ids replaced by the Speech Pack.
+STT_MODEL_MIGRATIONS = {
+    "mlx-community/whisper-small-mlx": "mlx-community/whisper-large-v3-turbo",
+    "whisper-1": "whisper-large-v3-turbo",
+}
+
+WORKFLOW_LABELS = {
+    "story_brief": "Story brief",
+    "rewrite": "Script rewrite",
+    "translate": "Translation",
+    "hook_rank": "Hook ranking",
+    "script": "Silent-video script",
+    "tts": "Voice-over",
+    "music": "Music generation",
+    "stt": "Transcription",
+}
+
+WORKFLOW_KIND = {
+    "story_brief": "text",
+    "rewrite": "text",
+    "translate": "text",
+    "hook_rank": "text",
+    "script": "text",
+    "tts": "tts",
+    "music": "music",
+    "stt": "stt",
+}
+
+WORKFLOW_PROVIDERS = {
+    "story_brief": TEXT_PROVIDERS,
+    "rewrite": TEXT_PROVIDERS,
+    "translate": TEXT_PROVIDERS,
+    "hook_rank": TEXT_PROVIDERS,
+    # Reads frames, so it would need a vision model; none runs locally.
+    "script": (),
+    "tts": TTS_PROVIDERS,
+    "music": MUSIC_PROVIDERS,
+    "stt": STT_PROVIDERS,
+}
+
+_TEXT_ROUTES: list[dict[str, str]] = []
+
+DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
+    "story_brief": {
+        "routes": copy.deepcopy(_TEXT_ROUTES),
+        "reasoning": "low",
+        "max_output_tokens": 3200,
+        "timeout_s": 300,
+    },
+    "rewrite": {
+        "routes": copy.deepcopy(_TEXT_ROUTES),
+        "reasoning": "low",
+        "max_output_tokens": 3200,
+        "timeout_s": 300,
+    },
+    "translate": {
+        "routes": copy.deepcopy(_TEXT_ROUTES[:2]),
+        "reasoning": "low",
+        "max_output_tokens": 2500,
+        "timeout_s": 300,
+    },
+    "hook_rank": {
+        "routes": copy.deepcopy(_TEXT_ROUTES[:2]),
+        "reasoning": "low",
+        "max_output_tokens": 1600,
+        "timeout_s": 180,
+    },
+    "script": {
+        "routes": [],
+        "reasoning": "low",
+        "max_output_tokens": 3200,
+        "timeout_s": 240,
+    },
+    "tts": {
+        "routes": [
+            {"provider": "local", "model": "say"},
+        ],
+        "reasoning": "",
+        "max_output_tokens": 0,
+        "timeout_s": 120,
+    },
+    "music": {
+        "routes": [],
+        "reasoning": "",
+        "max_output_tokens": 0,
+        "timeout_s": 600,
+    },
+    "stt": {
+        "routes": [
+            {"provider": "apple", "model": "on-device-3b"},
+            {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
+        ],
+        "reasoning": "",
+        "max_output_tokens": 0,
+        "timeout_s": 300,
+    },
+}
+
+
+def _int(value: Any, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def _normalize_route(workflow: str, raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    allowed = WORKFLOW_PROVIDERS.get(workflow, ())
+    provider = str(raw.get("provider") or "").strip().lower()
+    model = str(raw.get("model") or "").strip()
+    if workflow == "tts" and model.lower() in REMOVED_TTS_MODELS:
+        model = "say"
+    if provider not in allowed:
+        return None
+    if not model or len(model) > 240:
+        return None
+    return {"provider": provider, "model": model}
+
+
+def normalize_workflow(workflow: str, raw: Any) -> dict[str, Any]:
+    default = DEFAULT_WORKFLOWS.get(workflow, {})
+    value = raw if isinstance(raw, Mapping) else {}
+    kind = WORKFLOW_KIND.get(workflow, "text")
+    if kind == "text":
+        default_reasoning = str(default.get("reasoning") or "low")
+        reasoning = str(value.get("reasoning") or default_reasoning).lower()
+        if reasoning not in REASONING_VALUES:
+            reasoning = default_reasoning
+    else:
+        reasoning = ""
+    routes_raw = value.get("routes")
+    if not isinstance(routes_raw, list):
+        routes_raw = default.get("routes") or []
+    routes = []
+    for item in routes_raw[:MAX_ROUTES]:
+        route = _normalize_route(workflow, item)
+        if route and (workflow != "tts" or route not in routes):
+            routes.append(route)
+    # A kind with a local default keeps that ladder. Removed providers and
+    # stale model ids must never leave a local workflow with zero routes; a kind
+    # with no local provider legitimately stays empty.
+    if not routes and default.get("routes"):
+        routes = copy.deepcopy(default["routes"])
+    return {
+        "routes": routes,
+        "reasoning": reasoning,
+        "max_output_tokens": _int(
+            value.get("max_output_tokens"),
+            int(default.get("max_output_tokens") or 3200),
+            64 if kind == "text" else 0,
+            128000,
+        ),
+        "timeout_s": _int(
+            value.get("timeout_s"),
+            int(default.get("timeout_s") or 300),
+            10,
+            3600,
+        ),
+    }
+
+
+def normalize_workflows(raw: Any) -> dict[str, dict[str, Any]]:
+    source = raw if isinstance(raw, Mapping) else {}
+    result: dict[str, dict[str, Any]] = {}
+    for name in DEFAULT_WORKFLOWS:
+        result[name] = normalize_workflow(name, source.get(name))
+    return result
+
+
+def effective(
+    workflows: Mapping[str, Any] | None,
+    workflow: str,
+) -> dict[str, Any]:
+    normalized = normalize_workflows(workflows)
+    return normalized.get(workflow) or normalize_workflow(workflow, {})
+
+
+def routes(workflows: Mapping[str, Any] | None, workflow: str) -> list[dict[str, str]]:
+    return list(effective(workflows, workflow).get("routes") or [])

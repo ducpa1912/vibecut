@@ -1,0 +1,1103 @@
+{
+ "welcome-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 816,
+  "bottomPct": 90.7,
+  "bottomWho": "workspace",
+  "overlaps": [],
+  "overlapCount": 0,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "check-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 798,
+  "bottomPct": 88.7,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:2m 40s · 1920×1080 · 3",
+    "area": 3495,
+    "aCls": "IMG",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:1920×1080",
+    "area": 1393,
+    "aCls": "VIDEO",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00 / 02:40",
+    "area": 965,
+    "aCls": "VIDEO",
+    "bCls": "player-time",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00:00",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:04:22",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:10:01",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:15:11",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:19:18",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:25:08",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 9,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 770,
+   "h": 433,
+   "box": [
+    301,
+    67
+   ]
+  },
+  "pictureShare": 99.7,
+  "stageBlack": 0,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "edit-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 838,
+  "bottomPct": 93.1,
+  "bottomWho": "panel",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:1920×1080",
+    "area": 1393,
+    "aCls": "VIDEO",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00 / 02:40",
+    "area": 965,
+    "aCls": "VIDEO",
+    "bCls": "player-time",
+    "intended": true
+   }
+  ],
+  "overlapCount": 2,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "proof-list",
+    "over": 1320,
+    "head": "Scenes",
+    "count": true,
+    "fade": true
+   },
+   {
+    "cls": "inspector-body",
+    "over": 554,
+    "head": "Scene 01 · 抖骨+2",
+    "count": true,
+    "fade": true
+   }
+  ],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 768,
+   "h": 432,
+   "box": [
+    301,
+    69
+   ]
+  },
+  "pictureShare": 99.5,
+  "stageBlack": 0,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": {
+   "left": 14,
+   "right": 14
+  },
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": {
+   "intersect": 0,
+   "contrast": 14.99,
+   "lines": 1
+  },
+  "listEdges": {
+   "dark": 0,
+   "sample": []
+  },
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null,
+  "layerRows": 6
+ },
+ "clean-focus-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 900,
+  "bottomPct": 100,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033,
+    "aCls": "IMG",
+    "bCls": "split-tag",
+    "intended": true
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755,
+    "aCls": "IMG",
+    "bCls": "small",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 272,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 10,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 354,
+    "head": "Scenes",
+    "count": true,
+    "fade": false
+   },
+   {
+    "cls": "clean-scene-list",
+    "over": 1423,
+    "head": "Scenes",
+    "count": true,
+    "fade": true
+   }
+  ],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "preview-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 832,
+  "bottomPct": 92.4,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "button:1 · Detect",
+    "b": "img:Before",
+    "area": 1776,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "button:2 · Compare",
+    "b": "img:Before",
+    "area": 2117,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "button:3 · Review",
+    "b": "img:Before",
+    "area": 1869,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:Detect · blur area",
+    "area": 2616,
+    "aCls": "IMG",
+    "bCls": "split-tag",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:Layered",
+    "area": 755,
+    "aCls": "IMG",
+    "bCls": "small",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:08",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 14,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 1046,
+   "h": 588,
+   "box": [
+    25,
+    67
+   ]
+  },
+  "pictureShare": 99.8,
+  "stageBlack": 1,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": {
+   "portrait": false,
+   "stage": 1048,
+   "main": 1048,
+   "pct": 100
+  }
+ },
+ "render-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 838,
+  "bottomPct": 93.1,
+  "bottomWho": "workspace",
+  "overlaps": [],
+  "overlapCount": 0,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": {
+   "left": 724,
+   "right": 772,
+   "leftBottomPct": 87.8
+  },
+  "preview": null
+ },
+ "welcome-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 716,
+  "bottomPct": 89.5,
+  "bottomWho": "workspace",
+  "overlaps": [],
+  "overlapCount": 0,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "check-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 698,
+  "bottomPct": 87.3,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:2m 40s · 1920×1080 · 3",
+    "area": 3495,
+    "aCls": "IMG",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:1920×1080",
+    "area": 1393,
+    "aCls": "VIDEO",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00 / 02:40",
+    "area": 965,
+    "aCls": "VIDEO",
+    "bCls": "player-time",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00:00",
+    "area": 678,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:04:22",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:10:01",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:15:11",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:19:18",
+    "area": 1038,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:25:08",
+    "area": 450,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 9,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 664,
+   "h": 374,
+   "box": [
+    277,
+    67
+   ]
+  },
+  "pictureShare": 99.7,
+  "stageBlack": 0,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "edit-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 778,
+  "bottomPct": 97.3,
+  "bottomWho": "panel",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:1920×1080",
+    "area": 1393,
+    "aCls": "VIDEO",
+    "bCls": "media-badge",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00 / 02:40",
+    "area": 965,
+    "aCls": "VIDEO",
+    "bCls": "player-time",
+    "intended": true
+   }
+  ],
+  "overlapCount": 2,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 8,
+    "head": "Scenes",
+    "count": true,
+    "fade": false
+   },
+   {
+    "cls": "proof-list",
+    "over": 1380,
+    "head": "Scenes",
+    "count": true,
+    "fade": true
+   },
+   {
+    "cls": "inspector-body",
+    "over": 614,
+    "head": "Scene 01 · 抖骨+2",
+    "count": true,
+    "fade": true
+   }
+  ],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 612,
+   "h": 344,
+   "box": [
+    299,
+    63
+   ]
+  },
+  "pictureShare": 100,
+  "stageBlack": 0,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": {
+   "left": 14,
+   "right": 14
+  },
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": {
+   "intersect": 0,
+   "contrast": 14.99,
+   "lines": 1
+  },
+  "listEdges": {
+   "dark": 0,
+   "sample": []
+  },
+  "videoBars": [
+   {
+    "hasBar": true,
+    "play": true,
+    "mute": true,
+    "volume": true,
+    "full": true,
+    "muted": true,
+    "vol": 0.35,
+    "fullcall": true
+   }
+  ],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null,
+  "layerRows": 6
+ },
+ "clean-focus-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 800,
+  "bottomPct": 100,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033,
+    "aCls": "IMG",
+    "bCls": "split-tag",
+    "intended": true
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755,
+    "aCls": "IMG",
+    "bCls": "small",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 9,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 462,
+    "head": "Scenes",
+    "count": true,
+    "fade": false
+   },
+   {
+    "cls": "clean-scene-list",
+    "over": 1523,
+    "head": "Scenes",
+    "count": true,
+    "fade": true
+   }
+  ],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": null
+ },
+ "preview-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 742,
+  "bottomPct": 92.7,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "button:1 · Detect",
+    "b": "img:Before",
+    "area": 1776,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "button:2 · Compare",
+    "b": "img:Before",
+    "area": 2117,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "button:3 · Review",
+    "b": "img:Before",
+    "area": 1869,
+    "aCls": "proof-step",
+    "bCls": "IMG",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:Detect · blur area",
+    "area": 2616,
+    "aCls": "IMG",
+    "bCls": "split-tag",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:Before",
+    "b": "text:Layered",
+    "area": 755,
+    "aCls": "IMG",
+    "bCls": "small",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287,
+    "aCls": "IMG",
+    "bCls": "tc",
+    "intended": true
+   }
+  ],
+  "overlapCount": 13,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "picture": {
+   "w": 886,
+   "h": 498,
+   "box": [
+    25,
+    67
+   ]
+  },
+  "pictureShare": 99.8,
+  "stageBlack": 1,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": null,
+  "preview": {
+   "portrait": false,
+   "stage": 888,
+   "main": 888,
+   "pct": 100
+  }
+ },
+ "render-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 790,
+  "bottomPct": 98.8,
+  "bottomWho": "workspace",
+  "overlaps": [],
+  "overlapCount": 0,
+  "layoutOverlaps": [],
+  "layoutOverlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 20,
+    "head": "Render settings",
+    "count": true,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [],
+  "picture": null,
+  "pictureShare": null,
+  "stageBlack": null,
+  "controls": null,
+  "cutText": 0,
+  "cut": [],
+  "filterInsets": null,
+  "nativeControls": 0,
+  "controlOverlaps": 0,
+  "transcript": null,
+  "listEdges": null,
+  "videoBars": [],
+  "stepOverlaps": 0,
+  "renderCols": {
+   "left": 724,
+   "right": 724,
+   "leftBottomPct": 98.8
+  },
+  "preview": null
+ }
+}

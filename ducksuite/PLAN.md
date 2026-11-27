@@ -1,0 +1,189 @@
+# PLAN — DuckSuite build order
+
+Current plan only. Closed loops 1–4 and the ink-check loop are archived in `old_plan.md` (agents do
+not read it). `PRODUCT.md` says what the product is, `TODO.md` holds the open checkboxes,
+`MEMORY.md` the decisions in force, `AGENTS.md` the working contract.
+
+> **2026-11-25:** App Store readiness and the three-agent plan (REQ-20261125-03): `docs/plans/2026-11-25-app-store-readiness.md`. It supersedes the "paused" App Store row once the founder lifts Gate A.
+
+Current dispatch follows the two-PO register in `docs/teams/two-po/operations.md`. Claude and Codex share the original integration folder. OpenCode may use code-only worktrees. Product loops resume after the exact-stack launch gate.
+
+## Where the build stands (2026-11-16; fill and render figures measured 2026-11-12)
+
+| Fact | Value |
+|---|---|
+| Branch / tests | `ducksuite`, last code verification 346 pass (2026-11-17), `node --check` clean |
+| Bundle | ≈ 981 MB (torch 565, GPU LaMa 196, sidecar 136, ffmpeg 41; no ONNX model, onnxruntime importable) |
+| Dev Mac | M1, 8 GB RAM, macOS 26.7.2 |
+| Review project | `prj_e95348a97316`, 160 s, 1080×1920, 35 clips, edit `ed_38a4c36a3aae` |
+| Clean layers | 42 fill · 0 blur; 32 `moving`; one founder layer `auto: false` |
+| Fill | `textfill.VERSION` 17; PyTorch GPU default, Core ML opt-in blocked by measured drift and native abort; CPU optional |
+| Leftover-text check | post-render, per letter against the source, 40 of 42 lines, 68–81 s quiet, 170–190 s under load |
+| Last render | 0 leftover in 2,964 frame checks, 2 lines not checked; cold 620–847 s; estimate 6.7 % low, shown as a range |
+
+## What is still wrong
+
+1. **Fill is weak on moving footage** and that is most of the footage: LaMa fills one frame at a
+   time and cannot rebuild a background it never saw. This is the product's main feature.
+2. **The leftover check sees only lines that have a layer.** Text Check never found is not judged,
+   and a line under 5 frames is reported as not checked.
+3. **Fill and check cost.** Cold render 620–847 s (418 s before the crossing rule); the first
+   estimate of a project is 144.8 s of background work; the leftover check is 68–81 s quiet. Loop 27.
+4. **Layout at small sizes is unmeasured.** 1024×700 and 200 % zoom were never measured; the story
+   and render players were never opened; frame timecode is a tooltip only. Loop 28. (Layout balance
+   at 1440×900 and 1280×800 is closed, loop 10.)
+
+## Rule for ordering
+
+Every change to fill output bumps `textfill.VERSION` and makes the next full render cold. Finish
+fill-changing decisions first, then pay for one render. Do not run a full render to prove a small
+fix; render the span that shows it.
+
+One loop = PO brief → engineer + tester → creator → PO sign-off → one commit with `MEMORY.md`,
+`TODO.md`, a report row and `docs/teams/<loop>/review.md`.
+
+## Loops
+
+Two numbers are in use and they are not the same scale. **Brief loops** are the design/brief rounds
+that arrived as `docs/teams/<loop>/BRIEF.md` (… 8 moving fill, 9 rules, 10 layout balance, 11
+proofs, 12 transcript, 13 timeline zoom, 14 Cut). **Build loops** are this file's own order
+(PLAN loop 7 local model slots, PLAN loop 8 $29 readiness). A heading below names the brief loop.
+
+Brief loops 7 (ink check), 8 (moving fill), 9 (rules) and **10 (layout balance)** are closed; PLAN
+loop 7 closed in loop 25 (2026-11-15); PLAN loop 8 ($29 readiness) shipped its code in loop 26 and
+waits on the founder. Next, in order: loop 27 (fill and check cost, no pixel change), loop 28 (layout
+odds), then stop for the founder (`docs/teams/founder-test-all.md`, Vietnamese clip, contact address,
+Native UI decisions).
+
+### Loops 21–28 — review fixes and the loop 23 one-shot (REQ-20261115-01, REQ-20261115-02)
+
+| Loop | Work | State |
+|---|---|---|
+| 21–22 | Check inks per Cut, cropped-out lines, fill span keys, check under grade, fps rule | **closed** (`72b1756`) |
+| 23 | One-shot P1–P5: partial (timecode tooltip, provider contract, missing renders, unchecked reasons) | **closed partial** (`0c4e7f8`) |
+| 24 | P1 review leftovers #6 #7 #9 #10 #11 | **closed** (`b109e45`) |
+| 25 | P3 = PLAN loop 7, local model slots | **closed** (`b9ad447`) |
+| 26 | P4 = PLAN loop 8 code: pack digests, FFmpeg offer, fill repair, import copy | **code shipped** (`a20954b`); founder items open |
+| 27 | P5: early ink store, shared check decode, cropped fill decode (with proof) | next |
+| 28 | P2: 1024×700, 200 % zoom, players captured, frame timecode, clipboard | after 27 |
+
+Loop 10 had been mislabelled "Loop 9" in this file and in `old_todo.md`; corrected 2026-11-12. The
+layout evidence is `docs/teams/loop-10-layout-balance/review.md` (revisions 1–3).
+
+### Loops 11–20 — founder UX and workflow (opened 2026-11-12)
+
+| Loop | Work | Request | State |
+|---|---|---|---|
+| 11 | Proofs: blur not fill, opt-in, three steps, Re-clean → Clean Focus | REQ-20261112-01 | **closed 2026-11-12** |
+| 12 | Transcript opacity + never blocks player time/volume | REQ-20261112-02 | **closed 2026-11-12** |
+| 13 | Timeline zoom for beats and scenes | REQ-20261112-03 | **closed 2026-11-12** |
+| 14 | Cut Focus phase 1: crop, aspect, resize, look presets moved | REQ-20261112-04 | **closed 2026-11-12** |
+| 15 | Safe zones on Preview, on the Cut output frame | REQ-20261112-05 | **closed 2026-11-12** |
+| 16 | Preview sequence: all scenes, or the story order | REQ-20261112-06 | **closed 2026-11-12** |
+| 17 | Story v1: whole-context thesis and non-contiguous beats on FoundationModels | REQ-20261112-07 | **closed 2026-11-12** |
+| 18 | Cut phase 2: grading sliders | REQ-20261112-04 | **closed 2026-11-12** |
+| 19 | Cut phase 3: enhance (lanczos, optional CoreML pack) | REQ-20261112-04 | **closed 2026-11-12** |
+| 20 | Optional local VLM scene captions for story | REQ-20261112-07 | roadmap |
+
+Cut is one visual-treatment block, not a scene cut: output size, aspect, crop, resize, look,
+enhance. Rules: crop normalised to the source frame; clean boxes stay source-normalised; fill runs
+before crop/scale, so `textfill.VERSION` stays 17 and the fill cache stays valid.
+
+Research, 2026-11-12: on macOS 26 the on-device model is text-only with 4,096 tokens; OS 27 adds
+image input, not video; the 32K model is Private Cloud Compute, out of scope. Story must use the
+transcript and chunk. Local video VLMs exist (Qwen3-VL on MLX) but are multi-GB and minutes per
+clip, so they are an optional pack, never a default. Upscale: ffmpeg lanczos invents no detail;
+Real-ESRGAN via CoreML is the plug-and-play candidate after a licence check and an M1/8 GB
+benchmark.
+
+### QA repair — 2026-11-13
+
+`docs/reviews/independent-qa-2026-11-13.md` found 0 P0, 0 P1, 7 P2, 2 P3. All nine are fixed in
+`docs/teams/qa-repair-2026-11-13/review.md`: stale proofs after a Cut change, crop offsets, estimate
+unit keys, atomic enqueue, focus across a queue refresh, sidecar reap, proof source generation,
+always-on layers, and the documents. 219 tests. Two UI fixes are code-verified only.
+
+### Loops 5 and 6 — closed 2026-11-12
+
+- Loop 5 (moving fill): `docs/teams/loop-08-moving-fill/review.md`. No licensed engine; a user fill
+  slot ships; bench in the review.
+- Loop 6 (rules): `docs/teams/loop-09-rules/review.md`. Rewrite order fixed, dead settings removed,
+  no cloud call with every key set, no model name in the UI, the Whisper loop cue dropped.
+
+### Loop 7 — local model slots — **closed 2026-11-15** (loop 25; `docs/teams/loop-25-model-slots/`)
+
+v1 is completely local: the user plugs in local models, no keys. Order: `providers.py` registry with
+no behaviour change → Whisper folder, LLM base URL on this Mac, ONNX voice, ONNX fill. User keys stay
+planned in `BYOK-PLAN.md` and are **not v1**.
+
+### Loop 8 — $29 build readiness — code shipped in loop 26 (2026-11-16, `a20954b`)
+
+Shipped: exact size and publisher digest per pack file, LGPL written source offer for ffmpeg in
+Settings, fill repair instruction, creator-readable import errors, a Whisper options table. Waiting on
+the founder: the offer's contact address, a Vietnamese clip for the Whisper comparison, the manual
+microphone test. Kokoro files have no publisher hash (exact size only).
+
+### Loop 10 — layout balance (brief loop 10) — **closed 2026-11-12**
+
+Review: `docs/teams/loop-10-layout-balance/review.md`. 9/9 acceptance; six screens measured at
+1440×900 and 1280×800 (bottoms 87.3–100 %, 0 layout overlaps, no horizontal scroll, 0 clipped
+buttons, portrait stage 70 % / 64.6 %), 16:9 fixture measured the same. Nothing left open here.
+
+## Native UI track (N1–N8) — planned 2026-11-12
+
+**Goal:** the app ships a real SwiftUI/AppKit UI. No WKWebView, no browser engine in the product or
+in the test loop. The Python core stays; the token-gated local HTTP API stays until cutover.
+
+```text
+SwiftUI app
+  screens: Welcome · Check · Edit · Clean · Preview · Render
+  player: AVPlayer / AVPlayerLayer (mute, volume, full screen native)
+  timeline: AppKit NSView lanes (1x-16x, playhead, trim/split/slip, audio)
+  models: Check, Edit, Scene, Layer, Cut, Story mirror the JSON
+  client: URLSession + polling, launch token from the shell
+duckcore sidecar (unchanged): FastAPI, fill, render, ink check
+```
+
+| Loop | Ships | Gate |
+|---|---|---|
+| N1 | Shell: window, toolbar, navigation, design tokens, Settings, Welcome/projects, API client, models; old UI behind a flag | Opens a project and lists projects; snapshots at 1024×700, 1280×800, 1440×900 |
+| N2 | Check: native player, scene strip, progress, transcript/OCR tables, cut stills | XCUITest: scenes appear; play/pause/seek |
+| N3 | Edit desk: three panes, AVPlayer, transcript + opacity, inspector tabs (Cut/Clean/Script/Audio/SFX), Cut Focus | 9:16 Cut changes the player frame; the output rect exists for safe zones |
+| N4 | Edit timeline: AppKit lanes, 1x-16x, scroll, playhead, trim/split/slip, audio, zoom | Zoom ratio and label spacing measured from XCUITest frames |
+| N5 | Clean: before/after compare, layer list, box fields, brush canvas, proof steps, Re-clean route | Proof under 1 s; box edit moves the blur |
+| N6 | Preview: sequence player (all scenes / story order), safe zones, proofs, story picker | Guides redraw on Cut aspect; the sequence crosses clip boundaries |
+| N7 | Render: two-column queue, estimate, live progress, leftover report, playback | Queue runs a short render; the report matches |
+| N8 | Cutover: delete the web UI and WKWebView, remove static hosting, final parity audit | No `WKWebView` in the app; every screen has an XCUITest |
+
+Rules:
+- One loop, one commit, parity checklist per screen; Python tests and `node --check` stay until N8.
+- XCUITest owns measurement: window sizes, `XCUIElement.frame`, accessibility identifiers,
+  screenshots. No headless Chrome.
+- Crop geometry is computed once in Swift and the same numbers go to ffmpeg. No CSS crop.
+- Hard parts: the timeline (AppKit drawing at 16x), clip-boundary frame accuracy, SwiftUI text
+  layout replacing CSS line rules, and two UIs while migrating.
+- Feature freeze on the web UI is recommended while N1–N8 run; open decisions are listed in
+  `TODO.md` under **Native UI**.
+
+## Not in this plan
+
+- App Store, signing, TestFlight, StoreKit: paused by decision.
+- Cloud render plans ($5 / $20), render broker: deferred; nothing in the build uploads.
+- User keys: planned, not v1.
+- DuckClean, DuckClassic, DuckStudio: other lanes.
+- Timeline split/reorder/remove-silence and auto-frame: later. (Aspect switching shipped in loop 14.)
+
+## Document map
+
+| File | Role | Rule |
+|---|---|---|
+| `AGENTS.md` | contract, team, invariants | read first |
+| `MEMORY.md` | direction and decisions in force | current only, < 80 lines |
+| `TODO.md` | open checkboxes | current only |
+| `PLAN.md` | build order for open loops | this file |
+| `PRODUCT.md` | what DuckSuite is, shipped vs planned | current only |
+| `old_memory.md`, `old_todo.md`, `old_plan.md` | frozen history | **agents do not read** |
+| `docs/teams/*/review.md`, `BRIEF.md` | loop evidence | read the current loop's brief/review only |
+| `docs/reports/*.html` | the human's progress record | **agents append, never read into context** |
+| `docs/duck/BYOK-PLAN.md`, `GPU-FILL-PLAN.md` | design for loops 5–7 | active |
+| `ROADMAP.md`, `docs/handoff/*` | 7 Nov plan | historical |
