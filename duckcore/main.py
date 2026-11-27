@@ -2181,6 +2181,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/grade/luts/file")
+    async def import_lut_file(request: Request, name: str, _: None = Depends(require_token)) -> dict:
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > grade.MAX_BYTES:
+                raise HTTPException(413, "The LUT file exceeds 20 MB.")
+            data.extend(chunk)
+        try:
+            return await run_in_threadpool(grade.import_bytes, name, bytes(data), data_root)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     def edit_cube(project_id: str, edit_id: str):
         try:
             edit = edits.get_edit(data_root, project_id, edit_id)
@@ -2195,7 +2207,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         return grade.payload(edit_cube(project_id, edit_id))
 
     @app.get("/api/projects/{project_id}/edits/{edit_id}/grade/still")
-    def grade_frame(project_id: str, edit_id: str, request: Request, time: float = 0,
+    def grade_frame(project_id: str, edit_id: str, request: Request, time: float = 0, w: int = 0,
                     t: str | None = None) -> Response:
         require_media(request, t)
         if not 0 <= time < float("inf"):
@@ -2207,12 +2219,25 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         cube = edit_cube(project_id, edit_id)
         command = [media.ffmpeg(), "-nostdin", "-v", "error", "-ss", str(time),
                    "-i", str(project["source_path"]), "-map", "0:v:0", "-frames:v", "1"]
-        if cube is not None:
-            command += ["-vf", grade.filter_for(cube)]
+        filters = [grade.filter_for(cube)] if cube else []
+        thumbnail = None
+        if w:
+            if not 16 <= w <= 512:
+                raise HTTPException(400, "Thumbnail width must be between 16 and 512.")
+            stat = Path(project["source_path"]).stat()
+            key = f"{cube.stem if cube else 'plain'}-{stat.st_size}-{stat.st_mtime_ns}-{float(time).hex()}-{w}"
+            thumbnail = data_root / "projects" / project_id / "frames" / f"grade-{key}.png"
+            if thumbnail.is_file():
+                return FileResponse(thumbnail, media_type="image/png")
+            filters.append(f"scale={w}:-1")
+        if filters:
+            command += ["-vf", ",".join(filters)]
         result = subprocess.run(command + ["-pix_fmt", "rgb24", "-c:v", "png", "-f", "image2pipe", "-"],
                                 capture_output=True)
         if result.returncode or not result.stdout:
             raise HTTPException(400, "Could not read a frame at this source time.")
+        if thumbnail:
+            grade._atomic(thumbnail, lambda dest: dest.write_bytes(result.stdout))
         return Response(result.stdout, media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/cut")

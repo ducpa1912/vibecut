@@ -199,7 +199,15 @@ def _atomic(path, write):
 
 def import_lut(path, root):
     path = Path(path)
-    data = _read(path)
+    return import_bytes(path.name, _read(path), root)
+
+
+def import_bytes(name, data, root):
+    path = Path(name)
+    if path.name != name or path.suffix.lower() != ".cube" or len(name.encode()) > 255:
+        raise ValueError("Choose a .cube file.")
+    if len(data) > MAX_BYTES:
+        raise ValueError("The LUT file exceeds 20 MB.")
     parse(data)
     identifier = "lut_" + hashlib.sha256(path.name.encode() + b"\0" + data).hexdigest()
     dest = Path(root)/"luts"/identifier/path.name

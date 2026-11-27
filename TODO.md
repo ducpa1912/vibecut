@@ -20,7 +20,7 @@ Order follows `PLAN.md`. Reserve work in order, one independent loop per lane. E
 
 Plan: `docs/plans/2026-11-26-editroom-adoption.md`. Order after P-B: P-D (+W1) → P-E → G1 → T1.
 
-- [ ] REQ-20261126-01 · G1 preview: WebGL pass with the same cube, still-frame fallback, look menu and LUT picker in the inspector (G1 core merged `5ad3458`; review existing `cx/g1-grade-preview` commit `6feacb7` in the original folder before integration; also swap the filmstrip to the graded still)
+- [ ] REQ-20261126-01 · Founder hand test for G1 preview on native WKWebView: compare player, filmstrip and export on real footage, then reopen an imported LUT. Steps in `docs/teams/g1-grade-preview/review.md`.
 - [ ] REQ-20261126-01 · T1 founder hand test (8 steps in `docs/teams/t1-timeline-picture/review.md`); story video beats get no filmstrip (`/frame` reads the project source only); no track lock model
 
 ## REQ-20261125-03 — App Store readiness plan (2026-11-25)
