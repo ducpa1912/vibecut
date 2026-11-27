@@ -1,0 +1,397 @@
+from __future__ import annotations
+
+import numpy as np
+
+from duckcore import clean
+from duckcore.engine.textfill import mask as masks
+
+
+def _layer(track: list[dict], box: dict | None = None) -> dict:
+    return {
+        "id": "cl_test",
+        "tracklet_id": "trk_test",
+        "kind": "fill",
+        "box": box or {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.2},
+        "ranges": [{"start": 0.0, "end": 2.0}],
+        "track": track,
+    }
+
+
+def test_layer_rects_at_follows_track() -> None:
+    layer = _layer([
+        {"t": 1.0, "box": {"x": 0.10, "y": 0.10, "w": 0.20, "h": 0.10}},
+        {"t": 2.0, "box": {"x": 0.55, "y": 0.10, "w": 0.20, "h": 0.10}},
+    ])
+    first = masks.layer_rects_at(layer, 1.05, 1000, 1000)
+    second = masks.layer_rects_at(layer, 1.95, 1000, 1000)
+    assert first and second
+    assert first != second
+    assert first[0][0] < second[0][0]
+
+
+def test_layer_rects_at_returns_empty_outside_track() -> None:
+    layer = _layer([
+        {"t": 1.0, "box": {"x": 0.10, "y": 0.10, "w": 0.20, "h": 0.10}},
+    ])
+    assert masks.layer_rects_at(layer, 10.0, 1000, 1000) == []
+
+
+def test_layers_from_report_preserves_track_and_fill_keys() -> None:
+    track = [
+        {"t": 1.0, "box": {"x": 0.10, "y": 0.10, "w": 0.20, "h": 0.10}},
+        {"t": 1.5, "box": {"x": 0.11, "y": 0.10, "w": 0.20, "h": 0.10}},
+    ]
+    report = {
+        "tracklets": [
+            {
+                "id": "trk_test",
+                "kind": "title",
+                "box": {"x": 0.10, "y": 0.10, "w": 0.21, "h": 0.10},
+                "ranges": [{"start": 1.0, "end": 1.5}],
+                "text_sample": "obviously",
+                "confidence": 0.9,
+                "track": track,
+                "large": True,
+                "fill_plan": {"keys": 4.0, "motion": 1.2, "noise": 0.2},
+            }
+        ]
+    }
+    layers = clean.layers_from_report(report)
+    assert len(layers) == 1
+    assert layers[0]["track"] == track
+    assert layers[0]["large"] is True
+    assert layers[0]["fill_keys"] == 4.0
+
+
+def test_span_key_changes_with_track() -> None:
+    from duckcore.engine import textfill
+
+    meta = {"fingerprint": "test", "size": 100, "duration": 10.0, "width": 100, "height": 100, "fps": 24.0}
+    tracked = _layer([{"t": 1.0, "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}}])
+    static = {**tracked}
+    static.pop("track")
+    first = textfill.span_key(
+        meta=meta, start=0.0, duration=2.0, layers=[tracked],
+        method="lama", model_stamp="test-model",
+    )
+    second = textfill.span_key(
+        meta=meta, start=0.0, duration=2.0, layers=[static],
+        method="lama", model_stamp="test-model",
+    )
+    assert first != second
+
+
+def test_text_in_region_finds_dense_glyph() -> None:
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    image[:, :] = (40, 80, 50)
+    image[16:64, 16:64] = (245, 245, 245)
+    found = masks.text_in_region(image, 4)
+    assert found is not None
+    assert float(found.mean()) > 0.3
+
+
+def test_frame_rects_follow_track() -> None:
+    layer = _layer([
+        {"t": 1.0, "box": {"x": 0.10, "y": 0.10, "w": 0.20, "h": 0.10}},
+        {"t": 1.9, "box": {"x": 0.55, "y": 0.10, "w": 0.20, "h": 0.10}},
+    ])
+    table = masks.frame_rects([layer], start=1.0, fps=4, frames=4, width=1000, height=1000)
+    assert table[0] and table[3]
+    assert table[0] != table[3]
+
+
+def test_large_layer_gets_more_padding() -> None:
+    small = {"box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.04}, "tracklet_id": "trk"}
+    large = {"box": {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.2}, "tracklet_id": "trk"}
+    small_rect = masks.layer_rect(small, 1000, 1000)
+    large_rect = masks.layer_rect(large, 1000, 1000)
+    small_pad = int(0.1 * 1000) - small_rect[1]
+    large_pad = int(0.1 * 1000) - large_rect[1]
+    assert large_pad > small_pad
+
+
+def test_span_key_changes_with_fill_keys() -> None:
+    from duckcore.engine import textfill
+
+    meta = {"fingerprint": "test", "size": 100, "duration": 10.0, "width": 100, "height": 100, "fps": 24.0}
+    layer = _layer([])
+    layer["fill_keys"] = 0.0
+    first = textfill.span_key(meta=meta, start=0.0, duration=2.0, layers=[layer], method="lama", model_stamp="test-model")
+    layer["fill_keys"] = 4.0
+    second = textfill.span_key(meta=meta, start=0.0, duration=2.0, layers=[layer], method="lama", model_stamp="test-model")
+    assert first != second
+
+
+def test_text_in_region_finds_bright_text_on_bright_background() -> None:
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    image[:, :] = (120, 180, 210)
+    image[20:60, 12:68] = (246, 246, 246)
+    found = masks.text_in_region(image, 4)
+    assert found is not None
+    assert float(found.mean()) > 0.3
+
+
+def _report(motion: float, kind: str = "subtitle") -> dict:
+    return {
+        "tracklets": [
+            {
+                "id": "trk_motion",
+                "kind": kind,
+                "box": {"x": 0.3, "y": 0.48, "w": 0.4, "h": 0.04},
+                "ranges": [{"start": 1.0, "end": 3.0}],
+                "text_sample": "words",
+                "confidence": 0.9,
+                "fill_plan": {"keys": 6.0, "motion": motion, "noise": 1.0},
+            }
+        ]
+    }
+
+
+def test_still_line_keeps_ai_fill() -> None:
+    layer = clean.layers_from_report(_report(2.0))[0]
+    assert layer["kind"] == "fill"
+    assert layer["method"] == "lama"
+    assert layer["quality"] == "steady"
+    assert layer["auto"] is True
+
+
+def test_moving_line_keeps_fill_and_is_flagged() -> None:
+    layer = clean.layers_from_report(_report(31.0))[0]
+    assert layer["kind"] == "fill"
+    assert layer["method"] == "lama"
+    assert layer["quality"] == "moving"
+    assert layer["motion"] == 31.0
+
+
+def _short_report() -> dict:
+    report = _report(4.0)
+    report["tracklets"][0]["ranges"] = [{"start": 0.0, "end": 0.25}]
+    return report
+
+
+def test_flash_of_text_defaults_to_blur() -> None:
+    layer = clean.layers_from_report(_short_report())[0]
+    assert layer["kind"] == "blur"
+    assert layer["method"] == ""
+
+
+def test_clean_all_keeps_a_user_choice_and_replans_its_own() -> None:
+    fresh = clean.layers_from_report(_short_report())
+    planned = clean.layers_from_report(_report(4.0))[0]
+    merged = clean.merge_layers(
+        [
+            {**planned, "id": "cl_picked", "auto": False, "kind": "fill", "method": "lama"},
+            {**planned, "id": "cl_planned", "auto": True},
+        ],
+        [{**fresh[0], "id": "cl_picked"}, {**fresh[0], "id": "cl_planned"}],
+    )
+    by_id = {layer["id"]: layer for layer in merged}
+    assert by_id["cl_picked"]["kind"] == "fill"
+    assert by_id["cl_picked"]["auto"] is False
+    assert by_id["cl_planned"]["kind"] == "blur"
+
+
+def test_patch_layer_marks_the_choice_as_the_users() -> None:
+    edit = {"clean": [{"id": "cl_one", "kind": "blur", "method": "", "enabled": True, "auto": True}]}
+    clean.patch_layer(edit, "cl_one", "fill")
+    assert edit["clean"][0]["kind"] == "fill"
+    assert edit["clean"][0]["auto"] is False
+
+
+def test_plan_summary_counts_fill_blur_and_off() -> None:
+    edit = {"clean": [
+        {"kind": "fill", "enabled": True, "quality": "steady"},
+        {"kind": "blur", "enabled": True, "quality": "moving"},
+        {"kind": "fill", "enabled": False, "quality": "moving", "auto": False},
+    ]}
+    assert clean.plan_summary(edit) == {"fill": 1, "blur": 1, "off": 1, "moving": 2, "mine": 1}
+
+
+def test_top_display_type_reads_as_a_title() -> None:
+    """A card near the top of the frame is a title, not a word-pop caption."""
+    from duckcore.engine import detect
+
+    tracklet = {
+        "box": {"x": 0.227, "y": 0.321, "w": 0.535, "h": 0.063},
+        "text_sample": "人吃啥咪吃啥",
+        "confidence": 1.0,
+        "samples": 1,
+        "duration": 0.25,
+        "track": [{"t": 0.0, "box": {"x": 0.227, "y": 0.321, "w": 0.535, "h": 0.063}}],
+    }
+    kind, rule = detect.classify(tracklet, 160.0)
+    assert kind == "title"
+    assert rule >= 0.7
+
+
+def test_fill_hole_is_tighter_than_the_blur_hole() -> None:
+    box = {"x": 0.30, "y": 0.48, "w": 0.40, "h": 0.04}
+    fill = masks.layer_rect(
+        {"box": box, "tracklet_id": "trk", "kind": "fill"}, 1080, 1920,
+    )
+    blur = masks.layer_rect(
+        {"box": box, "tracklet_id": "trk", "kind": "blur"}, 1080, 1920,
+    )
+    fill_w, fill_h = fill[2] - fill[0], fill[3] - fill[1]
+    blur_w, blur_h = blur[2] - blur[0], blur[3] - blur[1]
+    assert fill_w < blur_w and fill_h < blur_h
+    # The hole still covers the box and the smallest shadow margin.
+    assert fill[0] < int(box["x"] * 1080)
+    assert fill[1] <= int(box["y"] * 1920) - masks.TEXT_SHADOW_MIN_PX
+    assert fill_h >= int(box["h"] * 1920) + 2 * masks.TEXT_SHADOW_MIN_PX
+
+
+def test_a_sampled_line_is_covered_on_both_sides_of_its_readings() -> None:
+    """Loop 2: a 3 s render leaked a line for two frames before its layer and one after.
+
+    A reading says the text was there at that moment. It came on some time after
+    the reading before, and the sampler can be a frame or two late, so the layer
+    reaches back a whole step and a little past the last reading.
+    """
+    from duckcore.engine import detect
+
+    run = [
+        {"start": 0.25, "end": 0.5, "source": "sample"},
+        {"start": 0.5, "end": 0.75, "source": "sample"},
+        {"start": 1.0, "end": 1.25, "source": "sample"},
+    ]
+    span = detect._run_range(run, 160.0)
+    # Seen first at 0.25 s, not at 0.0 s: it may have come on right after 0.0 s.
+    assert span["start"] == 0.0
+    # Seen last at 1.0 s, so it left before 1.25 s give or take the sampler's slack.
+    assert span["end"] == round(1.25 + detect.SAMPLE_SLACK, 3)
+
+    later = detect._run_range([{"start": 10.0, "end": 10.25, "source": "sample"}], 160.0)
+    assert later == {"start": 9.75, "end": round(10.25 + detect.SAMPLE_SLACK, 3)}
+
+    last = detect._run_range([{"start": 159.9, "end": 160.0, "source": "sample"}], 160.0)
+    assert last["end"] == 160.0
+
+
+def test_one_reading_is_a_flash_and_two_readings_are_not() -> None:
+    """The widened ranges must not turn a line read once into a fill."""
+    from duckcore.engine import detect
+
+    once = _report(4.0)
+    once["tracklets"][0]["ranges"] = [
+        detect._run_range([{"start": 107.25, "end": 107.5, "source": "sample"}], 160.0),
+    ]
+    twice = _report(4.0)
+    twice["tracklets"][0]["ranges"] = [
+        detect._run_range(
+            [
+                {"start": 107.25, "end": 107.5, "source": "sample"},
+                {"start": 107.5, "end": 107.75, "source": "sample"},
+            ],
+            160.0,
+        ),
+    ]
+    assert clean.layers_from_report(once)[0]["kind"] == "blur"
+    assert clean.layers_from_report(twice)[0]["kind"] == "fill"
+
+
+def test_the_last_frame_inside_a_range_gets_a_hole() -> None:
+    """A range that ends mid-frame must cover the frame that starts before it."""
+    # 4.7 s is on the 30 fps grid, so the decoded grid starts there too.
+    start, fps = 4.7, 30.0
+    end = 7.317  # frame 78 starts at 7.3 and still shows the line
+    layer = {
+        "box": {"x": 0.3, "y": 0.48, "w": 0.4, "h": 0.04},
+        "ranges": [{"start": 5.75, "end": end}],
+        "track": [],
+    }
+    table = masks.frame_rects([layer], start=start, fps=fps, frames=80, width=1080, height=1920)
+    assert table[78], "the frame at 7.3 starts before the range end and must be filled"
+    assert not table[79], "the next frame starts after the range end"
+
+
+def test_a_cut_between_frames_does_not_hand_the_next_line_the_wrong_hole() -> None:
+    """Loop 7: 93.733 s leaked one frame because the hole was planned 0.008 s off."""
+    fps = 30.0
+    early = {
+        "id": "early", "box": {"x": 0.269, "y": 0.48, "w": 0.444, "h": 0.035},
+        "ranges": [{"start": 92.133, "end": 93.733}], "track": [],
+    }
+    late = {
+        "id": "late", "box": {"x": 0.228, "y": 0.48, "w": 0.542, "h": 0.035},
+        "ranges": [{"start": 93.733, "end": 95.6}], "track": [],
+    }
+    table = masks.frame_rects(
+        [early, late], start=93.625, fps=fps, frames=6, width=1080, height=1920,
+    )
+    # The seek lands on 93.6333, so the frame that shows the new line is index 3.
+    assert len(table[3]) == 1
+    rect = table[3][0]
+    assert rect[0] <= int(0.228 * 1080) + 2, "the new line's own hole must cover its first frame"
+
+
+def test_patch_box_normalizes_and_marks_the_layer() -> None:
+    edit = {"clean": [{"id": "cl_box", "kind": "fill", "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}}]}
+    out = clean.patch_box(edit, "cl_box", {"x": 0.95, "y": -0.2, "w": 0.4, "h": 0.05})
+    layer = out["clean"][0]
+    assert layer["auto"] is False
+    assert layer["box"] == {"x": 0.6, "y": 0.0, "w": 0.4, "h": 0.05}
+
+
+def test_patch_box_rejects_missing_numbers() -> None:
+    edit = {"clean": [{"id": "cl_box", "kind": "fill"}]}
+    try:
+        clean.patch_box(edit, "cl_box", {"x": 0.1})
+    except ValueError as exc:
+        assert "four numbers" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("a missing box should fail")
+
+
+def test_proof_layers_blur_every_enabled_layer_and_skip_off() -> None:
+    from duckcore.preview import proof_layers
+    from duckcore.render import _fill_layers
+
+    active = [
+        {"id": "a", "kind": "fill", "enabled": True},
+        {"id": "b", "kind": "blur", "enabled": True},
+        {"id": "c", "kind": "fill", "enabled": False},
+    ]
+    layers = proof_layers(active, "blur")
+    assert [layer["kind"] for layer in layers] == ["blur", "blur"]
+    assert active[0]["kind"] == "fill"  # the source is not mutated
+    assert _fill_layers({"clean": layers}) == []
+    assert proof_layers(active, "clean") == active
+
+
+def test_a_manual_box_survives_a_replan() -> None:
+    fresh = [{"id": "cl_box", "kind": "fill", "method": "lama", "enabled": True, "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, "track": [{"t": 0.0, "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}}]}]
+    previous = [{"id": "cl_box", "kind": "blur", "enabled": True, "auto": False, "box": {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2}}]
+    merged = clean.merge_layers(previous, fresh)
+    assert merged[0]["kind"] == "blur"
+    assert merged[0]["box"] == {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2}
+    assert merged[0]["track"] is None
+
+
+def test_patch_box_route_updates_and_rejects_the_unknown_layer(tmp_path: Path) -> None:
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from duckcore.main import create_app
+
+    edit_dir = tmp_path / "projects" / "prj_box" / "edits"
+    edit_dir.mkdir(parents=True)
+    edit = {"id": "ed_box", "project_id": "prj_box", "clean": [{"id": "cl_box", "kind": "fill", "enabled": True}]}
+    (edit_dir / "ed_box.json").write_text(json.dumps(edit), encoding="utf-8")
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+    with TestClient(app) as client:
+        ok = client.patch(
+            "/api/projects/prj_box/edits/ed_box/clean/cl_box/box",
+            headers=headers,
+            json={"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["edit"]["clean"][0]["box"] == {"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1}
+        missing = client.patch(
+            "/api/projects/prj_box/edits/ed_box/clean/nope/box",
+            headers=headers,
+            json={"x": 0.2, "y": 0.3, "w": 0.4, "h": 0.1},
+        )
+        assert missing.status_code == 404

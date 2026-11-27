@@ -1,0 +1,2193 @@
+"""AI text fill for Edit Clean layers of kind ``fill``.
+
+The render calls :func:`prepare_span` once per beat that has an active fill
+layer. It decodes that span of the source, fills the masked text with STTN
+(video, subtitle-tuned) or LaMa (per frame), and writes a cached clip at the
+source size and frame rate. The beat then reads that clip instead of the
+source; every other Clean layer, the crop and the motion apply on top as
+before.
+
+Models live in ``<data>/models/fill`` (or ``VIBECUT_FILL_MODELS``). They are
+never downloaded here: a missing model is a clear error.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import uuid
+import importlib.util
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Callable, Iterable
+
+import numpy as np
+from PIL import Image
+
+from . import mask as masks
+
+METHODS = ("lama",)
+# Engines that run on key frames, with a plan, saved results and a choice of chip.
+KEYED_METHODS = ("lama",)
+DEVICES = ("cpu", "gpu")
+DEFAULT_DEVICE = "gpu"
+# DuckSuite launches with LaMa only. Blur is a separate explicit Clean action.
+CLASSIC_METHODS = ()
+DEFAULT_METHOD = "lama"
+# 17: the default GPU output is still PyTorch's. A Core ML clip carries its own
+# `:coreml-gpu` stamp, so VERSION changes only when a fill's pixels change for
+# the default engine (or Core ML is promoted and its output differs).
+VERSION = 17
+MODEL_FILES = {"lama": "lama_fp32.onnx"}
+# The file an engine reads on the GPU through PyTorch, and through Core ML.
+GPU_MODEL_FILES = {"lama": "big-lama.pt"}
+COREML_MODEL_FILES = {"lama": "lama_fill.mlpackage"}
+# Core ML remains opt-in until its multi-function native abort is resolved.
+GPU_ENGINES = ("coreml", "pytorch")
+DEFAULT_GPU_ENGINE = "pytorch"
+MODEL_PACKAGES = {"lama": "onnxruntime"}
+METHOD_COPY = {
+    "lama": "AI fill (per frame)",
+}
+# Share of the previous frame's fill kept on LaMa output, to calm flicker.
+LAMA_CARRY = 0.3
+# LaMa fills about this many frames a second of video. The frames between blend
+# two fills, since text sits still over a slow background. 0 fills every frame.
+LAMA_KEYS_PER_SECOND = 3.0
+# Mean change around the text (0..255) that stops a blend: the picture moved.
+LAMA_MOTION_LIMIT = 6.0
+# Fills a second a box with no scan plan needs at most, however much the picture
+# moves. Without this floor, a moving shot ran the model on nearly every frame.
+LAMA_UNPLANNED_KEYS = 6.0
+# Bump when the run rule changes what a fill looks like, so a cut made under the
+# old rule is not reused.
+LAMA_RUN_RULE = 3
+# A line planned by the scan needs no motion check, only a stop at a sudden change.
+LAMA_CUT_LIMIT = 30.0
+# Pixels around the text that the motion check reads.
+LAMA_RING_PX = 24
+# Something crossed the text: this share of the picture beside it changed by
+# more than this many levels. No fill from another frame is used across that.
+LAMA_CROSS_LEVEL = 48
+LAMA_CROSS_SHARE = 0.10
+# Cost of one LaMa run per pixel it reads, as a share of a 512 square, and of
+# reading, pasting and writing one frame.
+LAMA_FRAME_UNITS = 0.02
+# Seconds per unit before this machine has its own reading. A unit is one
+# strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
+# render on an M1 8 GB Mac under swap, the OpenCV figures are real frames on that
+# Mac during a render, and LaMa's is a full square on that Mac.
+SEED_RATES = {"lama": 4.0}
+# On the GPU: arrays on an M1 8 GB Mac, plus room for heat.
+SEED_GPU_RATES = {"lama": 0.8}
+# Reading, pasting and writing one frame, whichever engine runs.
+FRAME_SECONDS = 0.08
+# LaMa's unit is one run on a full 512 square, so its figure no longer depends on
+# how much a video moves. Earlier figures were per frame and stay out of this.
+RATE_KEYS = {"lama": "lama_run"}
+RATE_MIN_FRAMES = 60
+# How many finished fills the stored rate is the middle of.
+RATE_RECENT = 3
+RATES_FILE = "fill_rates.json"
+
+Progress = Callable[[float, str], None]
+LOGGER = logging.getLogger(__name__)
+
+_LOCK = threading.Lock()
+_FILLERS_LOCK = threading.Lock()
+_FILLERS: dict[tuple[str, str], object] = {}
+
+
+class FillError(RuntimeError):
+    """A fill cannot run (missing model, bad source, ffmpeg failure)."""
+
+
+class FillCancelled(FillError):
+    pass
+
+
+def models_dir(data_root: Path | str) -> Path:
+    """Where fill models live: app data when seeded, else the read-only bundle."""
+    data = Path(data_root) / "models" / "fill"
+    names = {*MODEL_FILES.values(), *GPU_MODEL_FILES.values()}
+    if any((data / name).is_file() for name in names):
+        return data
+    if any((data / name / "Manifest.json").is_file() for name in COREML_MODEL_FILES.values()):
+        return data
+    override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
+    if override:
+        return Path(override).expanduser()
+    return data
+
+
+def custom_fill_model(data_root: Path | str) -> tuple[Path | None, str | None]:
+    """The user's fill model file and, when it is unusable, a plain reason."""
+    from duckcore import app_settings
+
+    folder = str(app_settings.load(data_root).get("fill_model_path") or "").strip()
+    if not folder:
+        return None, None
+    from . import custom
+
+    reason = custom.problem(folder)
+    if reason:
+        return None, reason
+    return custom.find_model(folder), None
+
+
+def custom_fill_path(data_root: Path | str) -> Path | None:
+    return custom_fill_model(data_root)[0]
+
+
+from duckcore.providers import local_step
+
+
+@local_step('fill')
+def engine_choice(data_root: Path | str) -> tuple[Path | None, str]:
+    """The engine both the estimate and the render will use.
+
+    Inspect only the file header here. Loading belongs to the fill path, so
+    estimating a custom model does not allocate a model session.
+    """
+    path, reason = custom_fill_model(data_root)
+    if path is None:
+        return None, reason or ""
+    with path.open("rb") as stream:
+        header = stream.read(4)
+    if path.suffix == ".pt" and not header.startswith(b"PK\x03\x04"):
+        return None, "Your fill model did not load: expected a TorchScript archive."
+    if path.suffix == ".onnx" and not header.startswith(b"\x08"):
+        return None, "Your fill model did not load: expected an ONNX model header."
+    return path, ""
+
+
+def seed_models(data_root: Path | str) -> None:
+    """Point app data at the bundle's fill models, so packs share one folder.
+
+    REQ-20261125-02: a link, not a copy. The models ship inside the app; a
+    second copy in app data cost 0.3 GB. An identical older copy is replaced by
+    a link after its cache stamp is pinned, so no fill cache goes cold. Where a
+    link cannot be made the old copy stays (or one is made).
+    """
+    override = os.environ.get("DUCK_FILL_MODELS") or os.environ.get("VIBECUT_FILL_MODELS")
+    if not override:
+        return
+    source = Path(override).expanduser()
+    target = Path(data_root) / "models" / "fill"
+    if not source.is_dir():
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for name in {*MODEL_FILES.values(), *GPU_MODEL_FILES.values()}:
+        origin = source / name
+        if not origin.is_file():
+            continue
+        destination = target / name
+        if destination.is_symlink():
+            if os.path.realpath(destination) != os.path.realpath(origin):
+                _link_model(origin, destination)  # the app moved: follow it
+            continue
+        if destination.is_file() and destination.stat().st_size == origin.stat().st_size:
+            if _file_digest(destination) != _file_digest(origin):
+                continue  # same size, other content: leave it alone
+            # Keep the stamp every cached fill was made under, then drop the copy.
+            _pin_stamp(destination, _model_stamp(destination), _file_digest(destination))
+        _link_model(origin, destination)
+    for name in COREML_MODEL_FILES.values():
+        _seed_package(source / name, target / name)
+
+
+def _link_model(origin: Path, destination: Path) -> None:
+    """Make ``destination`` a link to ``origin``; a hard link or a copy if not."""
+    part = destination.with_name(f".{destination.name}.part")
+    _remove_tree(part)
+    try:
+        os.symlink(origin, part)
+    except OSError:
+        try:
+            if origin.is_dir():
+                raise OSError("directories need a symlink")
+            os.link(origin, part)  # same volume: no copy, no extra bytes
+        except OSError:
+            if origin.is_dir():
+                shutil.copytree(origin, part)
+            else:
+                shutil.copy2(origin, part)
+    if destination.is_dir() and not destination.is_symlink():
+        old = destination.with_name(f".{destination.name}.old")
+        _remove_tree(old)
+        os.replace(destination, old)
+        os.replace(part, destination)
+        _remove_tree(old)
+    else:
+        os.replace(part, destination)
+
+
+def _remove_tree(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _seed_package(origin: Path, destination: Path) -> None:
+    """Link a Core ML package folder to the bundle, pinning an identical copy's stamp."""
+    from .coreml_fill import package_digest, package_stamp
+
+    if not (origin / "Manifest.json").is_file():
+        return
+    if destination.is_symlink():
+        if os.path.realpath(destination) != os.path.realpath(origin):
+            _link_model(origin, destination)
+        return
+    if (destination / "Manifest.json").is_file():
+        digest = package_digest(destination)
+        if digest == package_digest(origin):
+            _pin_stamp(destination, package_stamp(destination), digest)
+    _link_model(origin, destination)
+
+
+# Cache stamps of linked models, pinned to their content (REQ-20261125-02). A
+# model's stamp was its size and file time; the bundle's file time moves with
+# every build or update, so a linked model keeps the stamp it was first seen
+# with for as long as its content is the same.
+PINS_FILE = "stamps.json"
+_PINS_LOCK = threading.Lock()
+
+
+def _pins_path(model: Path) -> Path:
+    return Path(model).parent / PINS_FILE
+
+
+def _read_pins(model: Path) -> dict:
+    try:
+        data = json.loads(_pins_path(model).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"stamps": {}, "seen": {}}
+    data.setdefault("stamps", {})
+    data.setdefault("seen", {})
+    return data
+
+
+def _write_pins(model: Path, data: dict) -> None:
+    path = _pins_path(model)
+    part = path.with_name(f".{path.name}.{os.getpid()}.part")
+    try:
+        part.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+        os.replace(part, path)
+    except OSError:
+        part.unlink(missing_ok=True)
+
+
+def _file_digest(path: Path) -> str:
+    """The content hash of a model file, remembered by path, size and time."""
+    real = Path(os.path.realpath(path))
+    stat = real.stat()
+    seen = f"{real}:{stat.st_size}:{stat.st_mtime_ns}"
+    with _PINS_LOCK:
+        known = _read_pins(path)["seen"].get(seen)
+    if known:
+        return known
+    digest = hashlib.sha256()
+    with real.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    value = digest.hexdigest()
+    with _PINS_LOCK:
+        data = _read_pins(path)
+        data["seen"] = {k: v for k, v in data["seen"].items() if not k.startswith(f"{real}:")}
+        data["seen"][seen] = value
+        _write_pins(path, data)
+    return value
+
+
+def _package_digest(path: Path, metadata: str) -> str:
+    """A Core ML package's content hash, remembered by its file metadata."""
+    from .coreml_fill import package_digest
+
+    seen = f"{os.path.realpath(path)}:{metadata}"
+    with _PINS_LOCK:
+        known = _read_pins(path)["seen"].get(seen)
+    if known:
+        return known
+    value = package_digest(path)
+    with _PINS_LOCK:
+        data = _read_pins(path)
+        data["seen"] = {k: v for k, v in data["seen"].items() if not k.startswith(f"{os.path.realpath(path)}:")}
+        data["seen"][seen] = value
+        _write_pins(path, data)
+    return value
+
+
+def _pin_stamp(model: Path, stamp: str, digest: str) -> None:
+    with _PINS_LOCK:
+        data = _read_pins(model)
+        data["stamps"][Path(model).name] = {"digest": digest, "stamp": stamp}
+        _write_pins(model, data)
+
+
+def _pinned(model: Path, live: str, digest: str) -> str:
+    """The stamp pinned to this content, or pin the live one now."""
+    with _PINS_LOCK:
+        data = _read_pins(model)
+        row = data["stamps"].get(Path(model).name)
+        if isinstance(row, dict) and row.get("digest") == digest and row.get("stamp"):
+            return str(row["stamp"])
+        data["stamps"][Path(model).name] = {"digest": digest, "stamp": live}
+        _write_pins(model, data)
+    return live
+
+
+# The engine the user picked on the Render screen (REQ-20261121-01). One core
+# serves one data root, so the choice is process-wide; the env flag still wins.
+_PREFERRED_GPU_ENGINE = DEFAULT_GPU_ENGINE
+
+
+def prefer_gpu_engine(name: str | None) -> str:
+    """Remember the user's GPU engine choice; anything unknown is PyTorch."""
+    global _PREFERRED_GPU_ENGINE
+    wanted = str(name or "").strip().lower()
+    _PREFERRED_GPU_ENGINE = wanted if wanted in GPU_ENGINES else DEFAULT_GPU_ENGINE
+    return _PREFERRED_GPU_ENGINE
+
+
+def gpu_engine(method: str, directory: Path | str) -> str:
+    """Select Core ML only when asked for (flag or choice) and installed."""
+    wanted = (os.environ.get("DUCK_FILL_GPU_ENGINE") or _PREFERRED_GPU_ENGINE or DEFAULT_GPU_ENGINE).strip().lower()
+    if wanted == "coreml" and coreml_problem(method, directory) is None:
+        return "coreml"
+    return "pytorch"
+
+
+def coreml_problem(method: str, directory: Path | str) -> str | None:
+    """Why the Core ML GPU engine cannot run here, or None."""
+    if method not in COREML_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no Core ML option."
+    from .coreml_fill import possible
+
+    if not possible():
+        return "The GPU option needs Core ML on an Apple Silicon Mac."
+    if not (Path(directory) / COREML_MODEL_FILES[method] / "Manifest.json").is_file():
+        return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
+    return None
+
+
+def torch_problem(method: str, directory: Path | str) -> str | None:
+    """Why the PyTorch GPU engine cannot run here, or None."""
+    if method not in GPU_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no GPU option."
+    from .torch_fill import gpu_possible
+
+    if not gpu_possible():
+        return "The GPU option needs PyTorch on an Apple Silicon Mac."
+    path = Path(directory) / GPU_MODEL_FILES[method]
+    if path.is_file() and path.stat().st_size > 0:
+        return None
+    return "The GPU fill engine is not installed on this Mac. Reinstall DuckSuite to restore it."
+
+
+def model_path(method: str, directory: Path, device: str = DEFAULT_DEVICE) -> Path:
+    if method not in METHODS:
+        raise FillError(f"Unknown fill method: {method}.")
+    if device == "gpu" and method in GPU_MODEL_FILES:
+        if gpu_engine(method, directory) == "coreml":
+            return Path(directory) / COREML_MODEL_FILES[method]
+        return Path(directory) / GPU_MODEL_FILES[method]
+    return Path(directory) / MODEL_FILES.get(method, "opencv")
+
+
+def gpu_problem(method: str, directory: Path) -> str | None:
+    """Why an engine cannot run on the GPU here, or None."""
+    if method not in GPU_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no GPU option."
+    if gpu_engine(method, directory) == "coreml":
+        return None
+    return torch_problem(method, directory)
+
+
+def device_problem(method: str, directory: Path, device: str) -> str | None:
+    """Why fill cannot run on this chip here, or None."""
+    if device == "gpu":
+        return gpu_problem(method, directory)
+    return method_problem(method, directory)
+
+
+def chosen_device(method: str, device: str | None, directory: Path) -> str:
+    """The chip a fill really uses. GPU is the default; CPU only when installed."""
+    wanted = "gpu" if str(device or DEFAULT_DEVICE).lower() != "cpu" else "cpu"
+    if device_problem(method, Path(directory), wanted) is None:
+        return wanted
+    other = "cpu" if wanted == "gpu" else "gpu"
+    if device_problem(method, Path(directory), other) is None:
+        return other
+    return wanted
+
+
+def follow_problem() -> str | None:
+    """Why a fill cannot follow the camera here, or None."""
+    from .follow import problem
+
+    return problem()
+
+
+def missing_model(method: str, directory: Path) -> str | None:
+    """A plain message when the method's model file is absent, else None."""
+    if method in CLASSIC_METHODS:
+        return None
+    # This check is the CPU engine's; do not follow the new GPU default here.
+    path = Path(directory) / MODEL_FILES[method]
+    if path.is_file() and path.stat().st_size > 0:
+        return None
+    return (
+        "The AI fill model is missing. Reinstall DuckSuite to restore it."
+    )
+
+
+def method_problem(method: str, directory: Path) -> str | None:
+    """Why an engine cannot run here, or None. Ready needs model and package."""
+    problem = missing_model(method, directory)
+    if problem:
+        return problem
+    package = MODEL_PACKAGES[method]
+    if importlib.util.find_spec(package) is None:
+        return f"{METHOD_COPY.get(method, method)} fill needs the {package} package on this Mac."
+    return None
+
+
+def text_mask_enabled() -> bool:
+    """Narrow scan layers to the glyphs. Off by default.
+
+    A tight glyph mask leaves anti-aliased edges and shadows in the model's
+    context, so LaMa can paint dark halos or a hole inside a seat or a face.
+    The whole detected line box is the safer hole; set this to ``1`` only to
+    compare a tighter mask.
+    """
+    value = os.environ.get("VIBECUT_FILL_TEXT_MASK", "off").strip().lower()
+    return value in {"1", "on", "true", "yes"}
+
+
+def _rate_key(method: str, device: str = DEFAULT_DEVICE) -> str:
+    key = RATE_KEYS.get(method, method)
+    return f"{key}_gpu" if device == "gpu" else key
+
+
+def _seed_rate(method: str, device: str = DEFAULT_DEVICE) -> float | None:
+    if device == "gpu" and method in SEED_GPU_RATES:
+        return SEED_GPU_RATES[method]
+    return SEED_RATES.get(method)
+
+
+def frame_units(method: str, device: str = DEFAULT_DEVICE) -> float:
+    """The per-frame work as a share of a model run, in that engine's units."""
+    seed = _seed_rate(method, device)
+    return FRAME_SECONDS / seed if seed else LAMA_FRAME_UNITS
+
+
+def fill_rate(data_root: Path | str, method: str, device: str = DEFAULT_DEVICE) -> dict:
+    """Seconds per unit for an engine: this machine's own, else the seed."""
+    try:
+        stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
+        item = stored[_rate_key(method, device)]
+        # Old files held a running average that one starved run could poison for
+        # many renders. Only a rate from the current rule (a median with its
+        # samples) is trusted; anything else is a first guess.
+        if isinstance(item, dict) and item.get("recent"):
+            seconds = float(item["seconds"])
+            recent = [float(value) for value in item.get("recent") or [] if float(value) > 0]
+            if seconds > 0:
+                return {"seconds": seconds, "measured": True, "recent": recent}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return {"seconds": _seed_rate(method, device), "measured": False, "recent": []}
+
+
+def record_rate(
+    data_root: Path | str, method: str, units: int, seconds: float, device: str = DEFAULT_DEVICE,
+) -> None:
+    """Remember how fast a finished fill ran. Short runs are mostly model load."""
+    if units <= 0 or seconds <= 0:
+        return
+    path = Path(data_root) / RATES_FILE
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict):
+            stored = {}
+    except (OSError, ValueError):
+        stored = {}
+    rate = seconds / units
+    method = _rate_key(method, device)
+    previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
+    old = previous.get("seconds")
+    # The middle of the last few fills. One fill made while the Mac was short of
+    # memory used to sit in a running average for many renders and made every
+    # estimate several times too long.
+    recent = [float(value) for value in previous.get("recent") or [] if float(value) > 0]
+    if not recent and old:
+        recent = [float(old)]
+    recent = [*recent, rate][-RATE_RECENT:]
+    stored[method] = {
+        "seconds": round(sorted(recent)[len(recent) // 2], 4),
+        "runs": int(previous.get("runs") or 0) + 1,
+        "recent": [round(value, 4) for value in recent],
+    }
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(stored), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+
+
+def _span_units(rect_table: list, frames: int, width: int, height: int, method: str) -> tuple[int, int]:
+    """(frames with something to fill, model units) for a span."""
+    active = [rects for rects in rect_table[:frames] if rects]
+    if method != "sttn":
+        return len(active), len(active)
+    every = [rect for rects in active for rect in rects]
+    return len(active), len(active) * len(masks.sttn_strips(every, width, height))
+
+
+def _run_units(method: str, height: int, width: int) -> float:
+    """One model run's work. MI-GAN always reads a full square."""
+    if method != "lama":
+        return 1.0
+    from . import lama
+
+    return lama.run_units(height, width)
+
+
+def _planned_units(
+    rect_table: list, layers, *, start: float, fps: float, frames: int, width: int, height: int,
+    method: str = "lama", device: str = DEFAULT_DEVICE,
+) -> float:
+    """What the fill will cost: its planned model runs, on the areas they read."""
+    plan_for = lama_plan(layers, start=start, fps=fps, frames=frames)
+    total = 0.0
+    index = 0
+    frames = min(frames, len(rect_table))
+    while index < frames:
+        rects = tuple(sorted(masks.without_contained(rect_table[index])))
+        end = index + 1
+        while end < frames and tuple(sorted(masks.without_contained(rect_table[end]))) == rects:
+            end += 1
+        if rects:
+            run_step, _limit, still, *shortest = plan_for(index)
+            # A box with no plan: the most it can need, on a moving shot.
+            run_step = shortest[0] if shortest else run_step
+            runs = 1 if still else (end - index) / run_step + 1
+            area_cost = sum(
+                _run_units(method, spot[3] - spot[1], spot[2] - spot[0])
+                for spot in masks.lama_areas(rects, width, height)
+            )
+            total += runs * area_cost + (end - index) * frame_units(method, device)
+        index = end
+    return round(total, 2)
+
+
+def units_key(
+    meta: dict, layers: Iterable[dict], start: float, duration: float,
+    *, method: str = "", device: str = "", source_key: str = "",
+) -> str:
+    """What identifies a span's fill work, for a cache of estimated units.
+
+    Every input the dry planner reads is in the key: geometry, track, mask,
+    method, device and a source stamp. Only layers on screen in this span are
+    included, so a changed layer re-plans the spans it touches.
+    """
+    end = float(start) + float(duration)
+    active = [
+        layer for layer in layers
+        if not (layer.get("ranges") or []) or any(
+            float(item.get("start") or 0.0) < end and float(item.get("end") or 0.0) > float(start)
+            for item in layer.get("ranges") or []
+        )
+    ]
+    payload = {
+        "version": VERSION,
+        "start": round(float(start), 3),
+        "duration": round(float(duration), 3),
+        "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
+        "fps": float(meta.get("fps") or 0.0),
+        "method": method,
+        "device": device,
+        "source": source_key,
+        "layers": [
+            {"id": layer.get("id"), "kind": layer.get("kind"),
+             "method": layer.get("method"), "enabled": layer.get("enabled"),
+             "box": layer.get("box"), "track": layer.get("track"),
+             "mask": layer.get("mask"), "ranges": layer.get("ranges") or [],
+             "ink_key": layer.get("ink_key"), "ink_rect": layer.get("ink_rect"),
+             "fill_keys": layer.get("fill_keys")}
+            for layer in active
+        ],
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def estimate_span(
+    *,
+    meta: dict,
+    start: float,
+    duration: float,
+    layers: list[dict],
+    method: str,
+    cache_dir: Path,
+    data_root: Path,
+    device: str = DEFAULT_DEVICE,
+    follow_motion: bool = False,
+    strokes: dict | None = None,
+    source: str = "",
+    units_override: float | None = None,
+) -> dict:
+    """What one beat's fill will cost, without running anything.
+
+    This is an upper figure: frames and strips with no text skip the model.
+    """
+    method = method if method in METHODS else DEFAULT_METHOD
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    directory = models_dir(data_root)
+    device = chosen_device(method, device, directory)
+    follow_motion = _follow_on(method, follow_motion)
+    row = {"method": method, "device": device, "frames": 0, "units": 0,
+           "cached": False, "start": round(float(start), 3),
+           "duration": round(float(duration), 3)}
+    if width < 2 or height < 2 or fps <= 0:
+        return row
+    expected = max(1, int(round(duration * fps)))
+    active_layers: list[dict] = []
+    table = masks.frame_rects(layers, start=start, fps=fps, frames=expected + 1,
+                             width=width, height=height, active_layers=active_layers)
+    row["frames"], row["units"] = _span_units(table, expected, width, height, method)
+    if units_override is not None:
+        row["units"] = float(units_override)
+    elif strokes is not None and source and method in KEYED_METHODS:
+        # The same walk the render does, with a filler that only counts.
+        runs, units = dry_units(
+            meta, layers, source=source, start=start, duration=duration,
+            strokes=strokes, method=method, device=device,
+        )
+        row["units"] = round(
+            units + int(row.get("frames") or 0) * frame_units(method, device), 2,
+        )
+        row["runs"] = int(runs)
+    else:
+        if method in KEYED_METHODS:
+            row["units"] = _planned_units(
+                table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
+                method=method, device=device,
+            )
+    if not device_problem(method, directory, device):
+        key = span_key(
+            meta=meta, start=start, duration=duration, layers=active_layers,
+            method=method,
+            model_stamp=method_stamp(
+                method, directory, device, custom=engine_choice(data_root)[0],
+            ),
+            follow_motion=follow_motion,
+        )
+        output = Path(cache_dir) / f"{key}.mp4"
+        row["cached"] = output.is_file() and output.stat().st_size > 1024
+    return row
+
+
+def duration_text(seconds: float) -> str:
+    """Rough, because the figure is rough: "about 40 min"."""
+    minutes = int(round(float(seconds) / 60.0))
+    if minutes < 1:
+        return "under a minute"
+    if minutes < 60:
+        return f"about {minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"about {hours} h {rest} min" if rest else f"about {hours} h"
+
+
+def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
+    """Add up beat estimates into one honest sentence for the panel."""
+    planned = [row for row in rows if row.get("frames")]
+    to_run = [row for row in planned if not row.get("cached")]
+    seconds = 0.0
+    unknown = []
+    measured = True
+    spread: list[tuple[float, float, float]] = []
+    for method in METHODS:
+        for device in DEVICES:
+            units = sum(
+                row["units"] for row in to_run
+                if row["method"] == method and row.get("device", DEFAULT_DEVICE) == device
+            )
+            if not units:
+                continue
+            rate = fill_rate(data_root, method, device)
+            if rate["seconds"] is None:
+                unknown.append(METHOD_COPY[method])
+                continue
+            seconds += units * rate["seconds"]
+            measured = measured and rate["measured"]
+            recent = [float(value) for value in rate.get("recent") or [] if float(value) > 0]
+            if len(recent) > 1:
+                # This Mac measured the same edit at both ends of this spread.
+                spread.append((float(units), min(recent), max(recent)))
+    frames = sum(row["frames"] for row in to_run)
+    if not planned:
+        text = ""
+    elif not to_run:
+        text = "AI fill is already done for this. It adds no time."
+    else:
+        parts = []
+        if seconds:
+            parts.append(f"AI fill adds up to {duration_text(seconds)} on this Mac ({frames} frames).")
+            if not measured:
+                parts.append("That is a first guess until a render finishes here.")
+        if unknown:
+            parts.append(f"{' and '.join(unknown)} time is not measured yet, and it may be slower.")
+        text = " ".join(parts)
+    return {
+        "beats": len(planned),
+        "beats_cached": len(planned) - len(to_run),
+        "frames": frames,
+        "seconds": round(seconds, 1),
+        "measured": measured,
+        "rate_spread": spread,
+        "unmeasured": unknown,
+        "text": text,
+    }
+
+
+def _model_stamp(path: Path) -> str:
+    stat = path.stat()
+    live = f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
+    if Path(path).is_symlink():
+        return _pinned(Path(path), live, _file_digest(Path(path)))
+    return live
+
+
+def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVICE,
+                 custom: Path | None = None) -> str:
+    """What identifies an engine's pixels: its model file, or OpenCV's version."""
+    if custom is not None:
+        # The user's file decides the pixels; the chip is its own business.
+        return f"{Path(custom).resolve()}:{_model_stamp(Path(custom))}:custom"
+    if device == "gpu" and method in GPU_MODEL_FILES:
+        path = model_path(method, Path(directory), "gpu")
+        if path.suffix == ".mlpackage":
+            from .coreml_fill import package_stamp
+
+            stamp = package_stamp(path)
+            if Path(path).is_symlink():
+                stamp = _pinned(Path(path), stamp, _package_digest(Path(path), stamp))
+            return f"{stamp}:coreml-gpu"
+        return f"{_model_stamp(path)}:gpu"
+    if method in CLASSIC_METHODS:
+        try:
+            import cv2
+        except ImportError:
+            return "opencv:missing"
+        return f"opencv:{cv2.__version__}"
+    return _model_stamp(model_path(method, Path(directory)))
+
+
+def span_key(
+    *,
+    meta: dict,
+    start: float,
+    duration: float,
+    layers: Iterable[dict],
+    method: str,
+    model_stamp: str,
+    follow_motion: bool = False,
+) -> str:
+    layers = list(layers)
+    payload = {
+        "version": VERSION,
+        "lama_keys": lama_keys_per_second() if method in KEYED_METHODS else None,
+        "layer_scope": "span-rects-v1",
+        "areas": "tight" if method in KEYED_METHODS or method in CLASSIC_METHODS else None,
+        "plan": "scan" if method in KEYED_METHODS else None,
+        "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
+        "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
+        "fps": round(float(meta.get("fps") or 0.0), 6),
+        "start": round(float(start), 6),
+        "duration": round(float(duration), 6),
+        "method": method,
+        "model": model_stamp,
+        "text_mask": text_mask_enabled(),
+        "layers": [
+            {
+                "box": layer.get("box"),
+                "ink_rect": layer.get("ink_rect"),
+                "ink_key": layer.get("ink_key"),
+                "ranges": layer.get("ranges") or [],
+                "tracklet": layer.get("tracklet_id"),
+                "mask": layer.get("mask"),
+                "keys": layer.get("fill_keys"),
+                "track": layer.get("track") or [],
+                "large": bool(layer.get("large")),
+            }
+            for layer in layers
+        ],
+    }
+    # Only a box with no plan changed with this rule, so planned clips stay valid.
+    if method in KEYED_METHODS and any(layer.get("fill_keys") is None for layer in layers):
+        payload["unplanned"] = LAMA_UNPLANNED_KEYS
+    if follow_motion:
+        payload["follow"] = True
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def _follow_on(method: str, follow_motion: bool) -> bool:
+    return bool(follow_motion) and method in KEYED_METHODS and follow_problem() is None
+
+
+def _filler(method: str, path: Path, device: str = DEFAULT_DEVICE):
+    key = (method, str(path), device)
+    with _FILLERS_LOCK:
+        filler = _FILLERS.get(key)
+        if filler is None:
+            try:
+                if method == "sttn":
+                    from .sttn import SttnFiller
+                    filler = SttnFiller(path)
+                elif method in CLASSIC_METHODS:
+                    from .classic import ClassicFiller
+                    filler = ClassicFiller(method)
+                elif method == "migan":
+                    from .torch_fill import MiganFiller
+                    filler = MiganFiller(path, device)
+                elif device == "gpu" and Path(path).suffix == ".mlpackage":
+                    from .coreml_fill import LamaCoreMLFiller
+                    filler = LamaCoreMLFiller(path)
+                elif device == "gpu":
+                    from .torch_fill import LamaGpuFiller
+                    filler = LamaGpuFiller(path)
+                else:
+                    from .lama import LamaFiller
+                    filler = LamaFiller(path)
+            except ImportError as exc:
+                package = MODEL_PACKAGES[method]
+                raise FillError(
+                    f"{METHOD_COPY[method]} fill needs the {package} package on this Mac."
+                ) from exc
+            _FILLERS[key] = filler
+        return filler
+
+
+def _fallback_filler(method: str, directory: Path, gpu_path: Path):
+    """What runs when the GPU engine fails: PyTorch after Core ML, else the CPU."""
+    if Path(gpu_path).suffix == ".mlpackage" and torch_problem(method, directory) is None:
+        LOGGER.warning("AI fill moved from Core ML to PyTorch on the GPU.")
+        return _GpuOrCpu(
+            lambda: _filler(method, Path(directory) / GPU_MODEL_FILES[method], "gpu"),
+            lambda: _filler(method, model_path(method, directory, "cpu"), "cpu"),
+        )
+    return _filler(method, model_path(method, directory, "cpu"), "cpu")
+
+
+def _custom_filler(path: Path):
+    """The user's model, loaded once. A bad file is a plain FillError."""
+    from . import custom
+
+    try:
+        stat = Path(path).stat()
+        key = ("custom", str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError as exc:
+        raise FillError(f"Your fill model cannot be read: {exc}.") from exc
+    with _FILLERS_LOCK:
+        filler = _FILLERS.get(key)
+        if filler is None:
+            try:
+                filler = custom.open_filler(Path(path).parent)
+            except Exception as exc:  # noqa: BLE001 - any bad file is one plain message
+                raise FillError(f"Your fill model did not load: {exc}.") from exc
+            for old in list(_FILLERS):
+                if old[0] == "custom":
+                    del _FILLERS[old]
+            _FILLERS[key] = filler
+        return filler
+
+
+def _learn_rate(data_root: Path | str, method: str, units: float, took: float,
+                device: str, *, custom: Path | None = None, reused: bool = False) -> None:
+    """Teach the fill rate, unless a user model or a resumed clip did this run."""
+    if custom is not None or reused:
+        return
+    record_rate(data_root, method, units, took, device)
+
+
+def busy() -> bool:
+    """True while a fill is running on this machine."""
+    return _LOCK.locked()
+
+
+def _check_cancel(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise FillCancelled("Render cancelled.")
+
+
+class _Reader:
+    def __init__(self, ffmpeg: str, source: str, start: float, duration: float,
+                 fps: float, width: int, height: int):
+        self.size = width * height * 3
+        self.shape = (height, width, 3)
+        self.proc = subprocess.Popen(
+            [
+                ffmpeg, "-v", "error", "-nostdin",
+                "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
+                "-an", "-sn",
+                "-vf", f"fps={fps:.6f},scale={width}:{height}",
+                "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+
+    def read(self) -> np.ndarray | None:
+        data = self.proc.stdout.read(self.size)
+        if not data or len(data) < self.size:
+            return None
+        return np.frombuffer(data, dtype=np.uint8).reshape(self.shape).copy()
+
+
+def _writer_codec() -> list[str]:
+    """Intermediate fill codec.
+
+    The Mac app uses VideoToolbox so an LGPL ffmpeg build is enough. The Linux
+    worker keeps libx264 because it is not distributed to the user.
+    """
+    override = os.environ.get("DUCK_FILL_ENCODER", "").strip().lower()
+    if override in {"h264_videotoolbox", "videotoolbox"}:
+        return ["-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p"]
+    if override in {"libx264", "x264"}:
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
+    if sys.platform == "darwin":
+        return ["-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
+
+
+class _Writer:
+    def __init__(self, ffmpeg: str, output: Path, fps: float, width: int, height: int):
+        self.stderr_tail = ""
+        self.proc = subprocess.Popen(
+            [
+                ffmpeg, "-y", "-v", "error", "-nostdin",
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-s", f"{width}x{height}", "-r", f"{fps:.6f}", "-i", "pipe:0",
+                "-an", *_writer_codec(), "-movflags", "+faststart",
+                str(output),
+            ],
+            stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def _drain(self) -> None:
+        if self.proc.stderr is None:
+            return
+        try:
+            for line in self.proc.stderr:
+                self.stderr_tail = (self.stderr_tail + line.decode("utf-8", "replace"))[-2000:]
+        except (OSError, ValueError):
+            pass
+
+    def write(self, frame: np.ndarray) -> None:
+        self.proc.stdin.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
+
+
+def _stop(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.stdin and not proc.stdin.closed:
+            proc.stdin.close()
+    except OSError:
+        pass
+    if proc.poll() is None:
+        proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    for stream in (proc.stdout, proc.stderr):
+        try:
+            if stream:
+                stream.close()
+        except OSError:
+            pass
+
+
+def _local(rects: list[masks.Rect], x0: int, y0: int, x1: int, y1: int) -> list[masks.Rect]:
+    out = []
+    for rx0, ry0, rx1, ry1 in rects:
+        cx0, cy0 = max(rx0, x0), max(ry0, y0)
+        cx1, cy1 = min(rx1, x1), min(ry1, y1)
+        if cx1 > cx0 and cy1 > cy0:
+            out.append((cx0 - x0, cy0 - y0, cx1 - x0, cy1 - y0))
+    return out
+
+
+def lama_keys_per_second() -> float:
+    """``VIBECUT_FILL_LAMA_KEYS`` overrides it; 0 runs the model on every frame."""
+    try:
+        value = float(os.environ.get("VIBECUT_FILL_LAMA_KEYS", LAMA_KEYS_PER_SECOND))
+    except ValueError:
+        return LAMA_KEYS_PER_SECOND
+    return max(0.0, value)
+
+
+def lama_plan(layers, *, start: float, fps: float, frames: int):
+    """``plan_for``: the scan's plan per frame, or the default where a layer has none.
+
+    Setting ``VIBECUT_FILL_LAMA_KEYS`` overrides the plan, to compare results.
+    A box with no plan, such as a drawn one, adapts as it runs: the default number
+    of fills when the picture holds still, up to ``LAMA_UNPLANNED_KEYS`` when it
+    moves, and more only at a cut. The fourth value is that shortest run.
+    """
+    default = (lama_step(fps), LAMA_MOTION_LIMIT, False)
+    if os.environ.get("VIBECUT_FILL_LAMA_KEYS"):
+        return lambda _index: default
+    shortest = max(1, min(default[0], int(round(fps / LAMA_UNPLANNED_KEYS))))
+    default = (*default, shortest)
+    table = masks.frame_keys(layers, start=start, fps=fps, frames=frames)
+
+    def plan_for(index: int):
+        keys = table[min(index, len(table) - 1)] if table else None
+        if keys is None:
+            return default
+        if keys <= 0:
+            return (lama_step(fps), LAMA_CUT_LIMIT, True)
+        return (max(1, int(round(fps / keys))), LAMA_CUT_LIMIT, False)
+
+    return plan_for
+
+
+# Model results kept on disk, so a stopped render or a small edit needs fewer runs.
+SAVED_DIR = "saved"
+# Level 3 measured on 40 real fills: 0.30 of raw, 16 ms to write, 13 ms to read.
+SAVED_PNG_LEVEL = 3
+SAVED_MAX_AGE = 14 * 24 * 3600
+# Across every video in this data folder.
+SAVED_MAX_BYTES = 2 * 1024 ** 3
+# Saved fills give way, and stop being written, below this much free disk.
+SAVED_MIN_FREE = 10 * 1024 ** 3
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        LOGGER.warning("could not remove %s: %s", path.name, exc)
+
+
+class _SavedFills:
+    """Keeps each model result on disk, so a stopped render does not lose it.
+
+    A fill is named by what went in: the model, the crop's pixels and the hole.
+    The same frames and boxes ask the same questions in the same order, so after
+    a stop the run replays and only the fills still missing reach the model. A
+    later edit reuses every fill it still asks for. A result that does not match
+    is simply a miss, so nothing here can reuse a wrong picture. Old results go in
+    :func:`_prune_saved`.
+    """
+
+    def __init__(self, filler, directory: Path, stamp: str):
+        self.filler = filler
+        self.directory = Path(directory)
+        self.stamp = stamp
+        # Fills from before this run. A frame that repeats in this run is no resume.
+        self.hits = 0
+        self.used: set[Path] = set()
+        self.writable = True
+        # A hit on an older `.npy` fill: touched like any hit, never rewritten.
+        self.legacy: Path | None = None
+
+    def _path(self, area: np.ndarray, mask: np.ndarray) -> Path:
+        digest = hashlib.sha1(f"{VERSION}|{self.stamp}|{area.shape}".encode())
+        digest.update(area.tobytes())
+        digest.update(mask.tobytes())
+        # Lossless PNG (REQ-20261125-02): the same pixels in about 30 % of the
+        # raw `.npy` bytes. Older `.npy` fills of the same name are still read.
+        return self.directory / f"{digest.hexdigest()}.png"
+
+    def _read(self, path: Path, shape: tuple) -> np.ndarray | None:
+        for candidate in (path, path.with_suffix(".npy")):
+            try:
+                if candidate.suffix == ".png":
+                    with Image.open(candidate) as image:
+                        found = np.asarray(image)
+                else:
+                    found = np.load(candidate, allow_pickle=False)
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError):
+                _remove_quietly(candidate)
+                continue
+            if found.shape == shape:
+                if candidate is not path:
+                    self.legacy = candidate
+                return found
+        return None
+
+    def _write(self, path: Path, result: np.ndarray) -> None:
+        if not self.writable or _free_disk(self.directory) < SAVED_MIN_FREE:
+            return
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            pixels = np.ascontiguousarray(result)
+            if pixels.dtype != np.uint8 or not (pixels.ndim == 2 or (pixels.ndim == 3 and pixels.shape[2] in (3, 4))):
+                return  # never a LaMa result; not worth a format of its own
+            with temporary.open("wb") as handle:
+                Image.fromarray(pixels).save(handle, format="PNG", compress_level=SAVED_PNG_LEVEL)
+            os.replace(temporary, path)
+        except OSError as exc:
+            # A full disk costs the resume, never the render.
+            self.writable = False
+            LOGGER.warning("could not save AI fills: %s", exc)
+            _remove_quietly(temporary)
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not getattr(self.filler, 'cache_valid', True):
+            return self.filler.fill(area, mask)
+        path = self._path(area, mask)
+        self.legacy = None
+        found = self._read(path, area.shape)
+        if found is not None:
+            if path not in self.used:
+                self.hits += 1
+                # Recently used fills are the last to be tidied away.
+                try:
+                    os.utime(self.legacy or path)
+                except OSError:
+                    pass
+            self.used.add(path)
+            return found
+        self.used.add(path)
+        result = self.filler.fill(area, mask)
+        if getattr(self.filler, 'cache_valid', True):
+            self._write(path, result)
+        return result
+
+
+def _free_disk(path: Path) -> int:
+    """Free bytes on the disk that holds this path, which may not exist yet."""
+    for folder in (Path(path), *Path(path).parents):
+        try:
+            return shutil.disk_usage(folder).free
+        except OSError:
+            continue
+    return SAVED_MIN_FREE
+
+
+def saved_fill_disk(path: Path | str) -> dict:
+    """Whether a long fill can keep its work: free disk against the saved-fill floor."""
+    free = _free_disk(Path(path))
+    low = free < SAVED_MIN_FREE
+    return {
+        "free_bytes": int(free),
+        "floor_bytes": SAVED_MIN_FREE,
+        "low": low,
+        "text": (
+            f"Free disk is under {SAVED_MIN_FREE // 1024 ** 3} GB. A stopped render cannot pick up "
+            "mid-clip; it fills the clip it was on again."
+        ) if low else "",
+    }
+
+
+def _saved_folders(data_root: Path | str, *others: Path) -> list[Path]:
+    """Every saved-fill folder in this data folder, so the cap covers them all."""
+    # DuckSuite keeps projects in `projects/`; `jobs/` is the VibeCut layout this
+    # came from. Before REQ-20261125-02 only `jobs/` was searched, so the age and
+    # size limits only ever saw the project being rendered.
+    found = []
+    for parent in ("projects", "jobs"):
+        jobs = Path(data_root) / parent
+        found += [*jobs.glob(f"*/fill/{SAVED_DIR}"), *jobs.glob(f"*/fill/sample/{SAVED_DIR}")]
+    found += list(others)
+    return list(dict.fromkeys(found))
+
+
+def convert_saved_fills(data_root: Path | str, *, stop: Callable[[], bool] | None = None) -> dict:
+    """Rewrite older raw `.npy` saved fills as lossless PNG, same name and time.
+
+    REQ-20261125-02: the pixels are compared after the write; any file that does
+    not round-trip exactly stays `.npy`. A running fill is never raced: the
+    loop stops while one runs (``busy``) and resumes next start.
+    """
+    before = after = done = kept = 0
+    for folder in _saved_folders(data_root):
+        try:
+            entries = [Path(e.path) for e in os.scandir(folder) if e.name.endswith(".npy")]
+        except OSError:
+            continue
+        for path in entries:
+            if (stop is not None and stop()) or busy():
+                return {"converted": done, "kept": kept, "bytes_before": before, "bytes_after": after, "stopped": True}
+            target = path.with_suffix(".png")
+            part = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+            try:
+                stat = path.stat()
+                pixels = np.load(path, allow_pickle=False)
+                if pixels.dtype != np.uint8 or not (pixels.ndim == 2 or (pixels.ndim == 3 and pixels.shape[2] in (3, 4))):
+                    kept += 1
+                    continue
+                with part.open("wb") as handle:
+                    Image.fromarray(np.ascontiguousarray(pixels)).save(
+                        handle, format="PNG", compress_level=SAVED_PNG_LEVEL)
+                with Image.open(part) as image:
+                    same = np.array_equal(np.asarray(image), pixels)
+                if not same:
+                    part.unlink(missing_ok=True)
+                    kept += 1
+                    continue
+                os.utime(part, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # keep its age for pruning
+                os.replace(part, target)
+                path.unlink(missing_ok=True)
+                before += stat.st_size
+                after += target.stat().st_size
+                done += 1
+            except (OSError, ValueError) as exc:
+                part.unlink(missing_ok=True)
+                kept += 1
+                LOGGER.warning("saved fill kept as .npy: %s", exc)
+    return {"converted": done, "kept": kept, "bytes_before": before, "bytes_after": after, "stopped": False}
+
+
+def _prune_clips(data_root: Path | str, *others: Path, now: float | None = None) -> int:
+    """Drop fill clips no render has used for SAVED_MAX_AGE (REQ-20261125-02).
+
+    A clip is touched each time a render reuses it, so only clips of edits left
+    alone for two weeks go; such an edit's next render fills again once.
+    """
+    now = time.time() if now is None else now
+    jobs = Path(data_root) / "projects"
+    folders = {*(jobs.glob("*/fill")), *(Path(o) for o in others)}
+    dropped = 0
+    for folder in folders:
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.name.endswith(".mp4") or entry.name.startswith("."):
+                continue
+            try:
+                if now - entry.stat().st_mtime > SAVED_MAX_AGE:
+                    Path(entry.path).unlink(missing_ok=True)
+                    dropped += 1
+            except OSError:
+                continue
+    return dropped
+
+
+def _prune_saved(directories, *, now: float | None = None) -> None:
+    """Drop old fills, then the oldest past the cap or while the disk is short."""
+    now = time.time() if now is None else now
+    folders = [directories] if isinstance(directories, (str, Path)) else list(directories)
+    rows = []
+    for directory in folders:
+        try:
+            for entry in os.scandir(directory):
+                stat = entry.stat()
+                rows.append((stat.st_mtime, stat.st_size, Path(entry.path)))
+        except OSError:
+            continue
+    if not rows:
+        return
+    kept = []
+    try:
+        for changed, size, path in rows:
+            # Only one fill runs at a time, so a .tmp here belongs to a killed one.
+            if path.suffix == ".tmp" or now - changed > SAVED_MAX_AGE:
+                path.unlink(missing_ok=True)
+            else:
+                kept.append((changed, size, path))
+        total = sum(size for _changed, size, _path in kept)
+        short = max(0, SAVED_MIN_FREE - _free_disk(rows[0][2]))
+        for _changed, size, path in sorted(kept, key=lambda row: row[0]):
+            if total <= SAVED_MAX_BYTES and short <= 0:
+                break
+            path.unlink(missing_ok=True)
+            total -= size
+            short -= size
+    except OSError as exc:
+        LOGGER.warning("could not tidy saved AI fills: %s", exc)
+
+
+class _CountedFiller:
+    """Counts the work a filler does, in the units its speed is measured in."""
+
+    def __init__(self, filler, method: str = "lama"):
+        self.filler = filler
+        self.method = method
+        self.runs = 0
+        self.units = 0.0
+
+    @property
+    def cache_valid(self):
+        return getattr(self.filler, 'cache_valid', True)
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        self.runs += 1
+        self.units += _run_units(self.method, *mask.shape)
+        return self.filler.fill(area, mask)
+
+
+class _CoreMLRouted:
+    """Core ML for the box sizes it has a function for; PyTorch on the GPU for the rest.
+
+    Before REQ-20261121-01 the first size Core ML lacked moved the whole span to
+    PyTorch, so a Core ML render mostly timed PyTorch. The route is fixed by the
+    box size alone, so the same box always gets the same engine and the clip
+    stays a valid cache entry. A real Core ML failure stops Core ML for the span.
+    """
+
+    def __init__(self, coreml, load_torch: Callable[[], object]):
+        self.coreml = coreml
+        self.load_torch = load_torch
+        self.torch = None
+        self.coreml_areas = 0
+        self.gpu_areas = 0
+        self.cache_valid = True
+
+    def _torch(self):
+        if self.torch is None:
+            self.torch = self.load_torch()
+        return self.torch
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if self.coreml is not None and self.coreml.fits(*mask.shape):
+            try:
+                result = self.coreml.fill(area, mask)
+                self.coreml_areas += 1
+                return result
+            except RuntimeError as exc:
+                LOGGER.warning("AI fill moved from Core ML to PyTorch for this span: %s", exc)
+                self.coreml = None
+                self.cache_valid = False
+        self.gpu_areas += 1
+        return self._torch().fill(area, mask)
+
+
+class _GpuOrCpu:
+    """The primary engine until it fails, then its next fallback engine."""
+
+    def __init__(self, load_gpu: Callable[[], object], load_cpu: Callable[[], object]):
+        self.load_cpu = load_cpu
+        self.filler = None
+        self.on_gpu = True
+        self._valid = True
+        try:
+            self.filler = load_gpu()
+        except (FillError, OSError, RuntimeError) as exc:
+            LOGGER.warning("AI fill is trying its fallback: the primary engine could not load: %s", exc)
+            self._to_cpu()
+
+    @property
+    def cache_valid(self) -> bool:
+        # A primary engine that mixed in a fallback itself (Core ML routing) says so.
+        return self._valid and bool(getattr(self.filler, "cache_valid", True))
+
+    @cache_valid.setter
+    def cache_valid(self, value: bool) -> None:
+        self._valid = bool(value)
+
+    def _to_cpu(self) -> None:
+        self.on_gpu = False
+        self._valid = False
+        self.filler = self.load_cpu()
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not self.on_gpu:
+            return self.filler.fill(area, mask)
+        try:
+            return self.filler.fill(area, mask)
+        except RuntimeError as exc:
+            LOGGER.warning("AI fill is trying its fallback: the primary engine failed: %s", exc)
+            self._to_cpu()
+            return self.filler.fill(area, mask)
+
+
+def lama_step(fps: float) -> int:
+    """Frames from one LaMa fill to the next at this frame rate."""
+    keys = lama_keys_per_second()
+    if keys <= 0 or fps <= 0:
+        return 1
+    return max(1, int(round(float(fps) / keys)))
+
+
+def _ring_around(rects, spot, ring: int = LAMA_RING_PX) -> np.ndarray:
+    """The picture just around the text in a work area, as a mask to leave out.
+
+    Movement far from the text does not touch the fill, so it must not stop a blend.
+    """
+    x0, y0, x1, y1 = spot
+    keep = np.ones((y1 - y0, x1 - x0), dtype=bool)
+    for left, top, right, bottom in _local(list(rects), x0, y0, x1, y1):
+        keep[max(0, top - ring):bottom + ring, max(0, left - ring):right + ring] = False
+    for left, top, right, bottom in _local(list(rects), x0, y0, x1, y1):
+        keep[top:bottom, left:right] = True
+    return keep
+
+
+def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limit: float = LAMA_MOTION_LIMIT) -> bool:
+    """Whether the picture around the text changed too much to blend across.
+
+    Two ways to change: all of it a little (the camera moves), or part of it a
+    lot (a hand or chopsticks cross the text). The mean alone misses the second:
+    a fill made on the empty plate was then pasted over the hand as a pale block.
+    """
+    around = ~hole[::4, ::4]
+    if not around.any():
+        return False
+    change = np.abs(first[::4, ::4].astype(np.int16) - second[::4, ::4].astype(np.int16))
+    near = change[around]
+    if float(near.mean()) > limit:
+        return True
+    worst = near.max(axis=-1) if near.ndim == 2 else near
+    return float((worst > LAMA_CROSS_LEVEL).mean()) > LAMA_CROSS_SHARE
+
+
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None, follow=False, moved_at=None):
+    """Run the engine on key frames, on just the areas that hold text.
+
+    A run is frames that share the same boxes, up to the step, while the picture
+    holds still. Each area of it is filled once at its last frame, with a hole
+    covering the whole run, and the frames between blend two fills. The next run
+    starts from that fill when it is on the same area and covers the hole, which
+    saves a model call. ``area`` fixes one work area; None finds them per run.
+
+    ``plan_for(index)`` gives the plan for a frame: (frames per fill, motion limit,
+    still), and optionally a shortest run, which only a cut can end sooner. A still line gets one fill, made on its first frame over its
+    whole box, so later frames need no look ahead, and kept unless the picture
+    jumps. A try that ends early falls back to key frames for one run.
+
+    ``follow`` makes one fill last while it can be moved with the camera. When it
+    stops fitting, the shot goes on key frames, starting from where the fill was,
+    and a shot that keeps breaking it is tried less often.
+    """
+    failed_still = False
+    crossed = False
+    follow_fails = 0
+    follow_wait = 0
+    source = enumerate(frames)
+    waiting = None
+    last_fills: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+    softened: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+
+    def soft(spot, hole):
+        # A box's hole is often the same frame after frame.
+        last = softened.get(spot)
+        if last is not None and np.array_equal(last[0], hole):
+            return last[1]
+        alpha = masks.feather(hole)
+        softened[spot] = (hole, alpha)
+        return alpha
+
+    def moved(first_item, item, spots, ring, limit):
+        # The estimate supplies the frames that moved, measured once from the
+        # source, so it plans runs without decoding the span again.
+        if moved_at is not None:
+            return bool(moved_at(item[0]))
+        return any(
+            _picture_moved(
+                first_item[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], limit,
+            )
+            for x0, y0, x1, y1 in spots
+        )
+
+    def next_frame():
+        nonlocal waiting
+        if waiting is not None:
+            item, waiting = waiting, None
+            return item
+        pair = next(source, None)
+        if pair is None:
+            return None
+        index, frame = pair
+        return index, frame, tuple(sorted(masks.without_contained(rects_for(index))))
+
+    def areas_for(rects, frame):
+        if area is not None:
+            return [area]
+        return masks.lama_areas(rects, frame.shape[1] or width, frame.shape[0] or height)
+
+    def hole_on(index, rects, spot):
+        x0, y0, x1, y1 = spot
+        local = _local(list(rects), x0, y0, x1, y1)
+        if not local:
+            return np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        return (
+            hole_for(index, x0, y0, x1, y1) if hole_for
+            else masks.rasterize(local, x1 - x0, y1 - y0)
+        )
+
+    while True:
+        _check_cancel(cancelled)
+        first = next_frame()
+        if first is None:
+            return
+        rects = first[2]
+        spots = areas_for(rects, first[1]) if rects else []
+        holes = {spot: hole_on(first[0], rects, spot) for spot in spots}
+        if not any(hole.any() for hole in holes.values()):
+            last_fills = {}
+            yield first[1]
+            if on_frame:
+                on_frame(first[0])
+            continue
+        run_step, run_limit, still_line, *shortest = plan_for(first[0]) if plan_for else (step, LAMA_MOTION_LIMIT, False)
+        shortest_run = shortest[0] if shortest else 1
+        ring = {spot: _ring_around(rects, spot) for spot in spots}
+        following = follow and follow_wait == 0
+        if follow and not following:
+            follow_wait -= 1
+        if following or (still_line and not failed_still and not follow):
+            whole = {
+                spot: masks.rasterize(
+                    _local(list(rects), *spot), spot[2] - spot[0], spot[3] - spot[1],
+                )
+                for spot in spots
+            }
+            kept = {}
+            for spot in spots:
+                x0, y0, x1, y1 = spot
+                _check_cancel(cancelled)
+                kept[spot] = filler.fill(first[1][y0:y1, x0:x1], whole[spot])
+            followers = {}
+            if following:
+                from .follow import FollowedFill
+
+                followers = {
+                    spot: FollowedFill(
+                        first[1][spot[1]:spot[3], spot[0]:spot[2]], kept[spot], whole[spot], ring[spot],
+                    )
+                    for spot in spots
+                }
+            shown = 0
+            item = first
+            found = holes
+            current = kept
+            while True:
+                out = item[1].copy()
+                for spot, fill in current.items():
+                    x0, y0, x1, y1 = spot
+                    out[y0:y1, x0:x1] = masks.paste(
+                        item[1][y0:y1, x0:x1], fill, soft(spot, found[spot]),
+                    )
+                yield out
+                if on_frame:
+                    on_frame(item[0])
+                shown += 1
+                _check_cancel(cancelled)
+                item = next_frame()
+                if item is None:
+                    return
+                if following:
+                    still = item[2] == rects
+                    found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
+                    if still and any(hole.any() for hole in found.values()):
+                        moved_on = {}
+                        for spot in spots:
+                            x0, y0, x1, y1 = spot
+                            moved_on[spot] = followers[spot].fill_for(item[1][y0:y1, x0:x1], found[spot])
+                            if moved_on[spot] is None:
+                                still = False
+                                break
+                        if still:
+                            current = moved_on
+                else:
+                    still = item[2] == rects and not moved(
+                        first, item, spots, ring, LAMA_MOTION_LIMIT,
+                    )
+                    found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
+                if not still or not any(hole.any() for hole in found.values()):
+                    waiting = item
+                    break
+            if following:
+                same_line = waiting[2] == rects
+                # The next run blends on from the moved fill, so the fill does not jump.
+                last_fills = {spot: (current[spot], whole[spot]) for spot in spots} if same_line else {}
+                if same_line and shown < max(run_step, 2):
+                    follow_fails += 1
+                    follow_wait = min(8, 2 ** follow_fails)
+                else:
+                    follow_fails = 0
+                continue
+            # The fill is not blended into the next line, so nothing carries over.
+            last_fills = {}
+            # Stopped by the picture moving, not by the line ending: use key frames.
+            failed_still = waiting[2] == rects and shown < max(run_step, 2)
+            continue
+        failed_still = False
+        if crossed:
+            # The last run ended because the picture changed: its fill shows
+            # what is no longer there, so nothing of it is blended in or kept.
+            last_fills = {}
+        crossed = False
+        run = [first]
+        run_holes = [holes]
+        while len(run) < run_step:
+            item = next_frame()
+            if item is None:
+                break
+            limit = LAMA_CUT_LIMIT if len(run) < shortest_run else run_limit
+            moved_here = moved(first, item, spots, ring, limit)
+            if item[2] != rects or moved_here:
+                waiting = item
+                crossed = moved_here
+                break
+            found = {spot: hole_on(item[0], rects, spot) for spot in spots}
+            if not any(hole.any() for hole in found.values()):
+                waiting = item
+                break
+            run.append(item)
+            run_holes.append(found)
+        fills: dict[tuple, tuple] = {}
+        for spot in spots:
+            x0, y0, x1, y1 = spot
+            union = np.logical_or.reduce([found[spot] for found in run_holes])
+            if not union.any():
+                continue
+            _check_cancel(cancelled)
+            end_fill = filler.fill(run[-1][1][y0:y1, x0:x1], union)
+            earlier = last_fills.get(spot)
+            covered = earlier is not None and not (union & ~earlier[1]).any()
+            begin = earlier[0] if covered else None
+            if begin is None and len(run) > 1:
+                _check_cancel(cancelled)
+                begin = filler.fill(first[1][y0:y1, x0:x1], union)
+            if begin is not None and len(run) == 1 and step > 1:
+                # A frame on its own has nothing to blend, so calm it with the last.
+                end_fill = np.clip(
+                    end_fill.astype(np.float32) * (1 - LAMA_CARRY)
+                    + begin.astype(np.float32) * LAMA_CARRY,
+                    0, 255,
+                ).astype(np.uint8)
+            fills[spot] = (begin, end_fill, covered, union)
+        for position, (index, frame, _rects) in enumerate(run):
+            out = frame.copy()
+            for spot, (begin, end_fill, covered, _union) in fills.items():
+                x0, y0, x1, y1 = spot
+                if begin is None or position == len(run) - 1:
+                    filled = end_fill
+                else:
+                    # Runs that share a fill hand over on its frame, without a jump.
+                    share = (position + (1 if covered else 0)) / (len(run) - (0 if covered else 1))
+                    filled = np.clip(
+                        begin.astype(np.float32) * (1 - share) + end_fill.astype(np.float32) * share,
+                        0, 255,
+                    ).astype(np.uint8)
+                out[y0:y1, x0:x1] = masks.paste(
+                    frame[y0:y1, x0:x1], filled, soft(spot, run_holes[position][spot]),
+                )
+            yield out
+            if on_frame:
+                on_frame(index)
+        last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
+
+
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None, follow=False, moved_at=None):
+    """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
+
+    ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
+    is the rects themselves. A ``step`` above 1 runs the model on key frames, and
+    an ``area`` of None finds tight work areas for each run. ``carry`` is the
+    share of the last fill kept, to calm flicker.
+    """
+    if step > 1 or area is None:
+        yield from _fill_frames_by_runs(
+            frames, rects_for, filler, area, step,
+            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, plan_for=plan_for, follow=follow,
+            moved_at=moved_at,
+        )
+        return
+    x0, y0, x1, y1 = area
+    previous: np.ndarray | None = None
+    for index, frame in enumerate(frames):
+        _check_cancel(cancelled)
+        local = _local(rects_for(index), x0, y0, x1, y1)
+        hole = None
+        if local:
+            hole = (
+                hole_for(index, x0, y0, x1, y1) if hole_for
+                else masks.rasterize(local, x1 - x0, y1 - y0)
+            )
+        if hole is None or not hole.any():
+            previous = None
+            yield frame
+        else:
+            work = frame[y0:y1, x0:x1]
+            _check_cancel(cancelled)
+            filled = filler.fill(work, hole)
+            if previous is not None and carry > 0:
+                filled = np.clip(
+                    filled.astype(np.float32) * (1 - carry)
+                    + previous.astype(np.float32) * carry,
+                    0, 255,
+                ).astype(np.uint8)
+            previous = filled
+            out = frame.copy()
+            out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
+            yield out
+        if on_frame:
+            on_frame(index)
+
+
+def _blend_strips(old, fresh, weight: float):
+    """Cross-fade strip lists; a strip with no model output keeps the other."""
+    out = []
+    for before, after in zip(old, fresh):
+        if before is None or after is None:
+            out.append(after if before is None else before)
+            continue
+        out.append(np.clip(
+            before.astype(np.float32) * (1 - weight) + after.astype(np.float32) * weight, 0, 255,
+        ).astype(np.uint8))
+    return out
+
+
+def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_frame=None, cancelled=None, hole_for=None):
+    """Yield filled frames, running the model on overlapping chunks.
+
+    Frames in an overlap get both chunks' strips, cross-faded linearly. A strip
+    with no text in a chunk skips the model for that chunk. ``hole_for`` narrows
+    the hole, as in :func:`fill_frames_lama`.
+    """
+    width = None
+    iterator = iter(frames)
+    buffer: list[tuple[int, np.ndarray]] = []
+    carry: dict[int, list] = {}
+    next_index = 0
+    lookahead = next(iterator, None)
+    while True:
+        _check_cancel(cancelled)
+        while len(buffer) < chunk and lookahead is not None:
+            buffer.append((next_index, lookahead))
+            next_index += 1
+            lookahead = next(iterator, None)
+        # Knowing the stream ended here saves a model run on a short tail.
+        eof = lookahead is None
+        if not buffer:
+            return
+        width = buffer[0][1].shape[1]
+        wanted = [rects_for(index) for index, _ in buffer]
+        outputs = None
+        if any(wanted):
+            outputs = []
+            for y0, y1 in strips:
+                if any(_local(rects, 0, y0, width, y1) for rects in wanted):
+                    _check_cancel(cancelled)
+                    outputs.append(filler.fill([frame[y0:y1] for _, frame in buffer]))
+                else:
+                    outputs.append(None)
+        final = len(buffer) if eof else len(buffer) - overlap
+        for k, (index, frame) in enumerate(buffer):
+            fresh = [None if out is None else out[k] for out in outputs] if outputs else None
+            old = carry.pop(index, None)
+            if old is not None and fresh is not None:
+                fresh = _blend_strips(old, fresh, (k + 1) / (overlap + 1))
+            elif fresh is None:
+                fresh = old
+            if k < final:
+                out = frame
+                rects = rects_for(index)
+                if fresh is not None and rects:
+                    out = frame.copy()
+                    for (y0, y1), strip in zip(strips, fresh):
+                        local = _local(rects, 0, y0, width, y1)
+                        if local and strip is not None:
+                            hole = (
+                                hole_for(index, 0, y0, width, y1) if hole_for
+                                else masks.rasterize(local, width, y1 - y0)
+                            )
+                            out[y0:y1] = masks.paste(out[y0:y1], strip, masks.feather(hole))
+                yield out
+                if on_frame:
+                    on_frame(index)
+            elif fresh is not None:
+                carry[index] = fresh
+        buffer = buffer[final:]
+        if eof and not buffer:
+            return
+
+
+def _finder_for(layers: list[dict], *, start: float, fps: float, frames: int,
+                width: int, height: int, strokes: dict | None):
+    """The per-frame holes: the same ``TextMasks`` the render fills through."""
+    if not text_mask_enabled():
+        return None
+    tight_layers = [layer for layer in layers if masks.uses_text_mask(layer, width, height)]
+    if not tight_layers:
+        return None
+    exact_layers = [layer for layer in layers if layer not in tight_layers]
+    size = {"start": start, "fps": fps, "frames": frames, "width": width, "height": height}
+    exact_rows = masks.frame_rects(exact_layers, **size)
+    # A text box wholly inside a drawn box or brush needs no second look.
+    tight_rows = [
+        [
+            rect for rect in masks.without_contained(row)
+            if rect in masks.without_contained([rect, *exact])
+        ]
+        for row, exact in zip(masks.frame_rects(tight_layers, **size), exact_rows)
+    ]
+    return masks.TextMasks(
+        tight_rows, exact_rows, width, height,
+        strokes=strokes, base=int(round(masks.frame_start(start, fps) * fps)),
+    )
+
+
+class _CountingFiller:
+    """Counts the model runs and their work without running a model."""
+
+    def __init__(self, method: str):
+        self.method = method
+        self.runs = 0
+        self.units = 0.0
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        self.runs += 1
+        self.units += _run_units(self.method, *mask.shape)
+        return area
+
+
+def dry_units(
+    meta: dict,
+    layers: list[dict],
+    *,
+    source: str,
+    start: float,
+    duration: float,
+    strokes: dict | None,
+    method: str = "lama",
+    device: str = DEFAULT_DEVICE,
+) -> tuple[int, float]:
+    """What the fill will do on this span, from the plan it will execute.
+
+    It walks the same ``fill_frames_lama`` the render walks, on the decoded
+    span, with the same holes, the same run rules and the same motion test, and
+    a filler that only counts. No model runs.
+    """
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    if width < 2 or height < 2 or fps <= 0 or duration <= 0:
+        return 0, 0.0
+    expected = max(1, int(round(duration * fps)))
+    table = masks.frame_rects(
+        layers, start=start, fps=fps, frames=expected + int(fps) + 2,
+        width=width, height=height,
+    )
+    if not any(table):
+        return 0, 0.0
+    finder = _finder_for(
+        layers, start=start, fps=fps, frames=len(table),
+        width=width, height=height, strokes=strokes,
+    )
+
+    def rects_for(index: int):
+        if finder is not None:
+            return finder.rects_for(index)
+        return table[min(index, len(table) - 1)]
+
+    def hole_for(index: int, x0: int, y0: int, x1: int, y1: int):
+        return finder.hole(index, x0, y0, x1, y1)
+
+    from duckcore import media
+
+    reader = _Reader(media.ffmpeg(), str(source), start, float(duration), fps, width, height)
+
+    def read_frames():
+        while True:
+            frame = reader.read()
+            if frame is None:
+                return
+            yield frame
+
+    counter = _CountingFiller(method)
+    try:
+        stream = fill_frames_lama(
+            read_frames(), rects_for, counter, None,
+            hole_for=hole_for if finder is not None else None, step=lama_step(fps),
+            plan_for=lama_plan(layers, start=start, fps=fps, frames=len(table)),
+        )
+        for _frame in stream:
+            pass
+    finally:
+        _stop(reader.proc)
+    return counter.runs, round(counter.units, 2)
+
+
+def prepare_span(
+    *,
+    source: str,
+    meta: dict,
+    start: float,
+    duration: float,
+    layers: list[dict],
+    method: str,
+    cache_dir: Path,
+    data_root: Path,
+    ffmpeg: str = "ffmpeg",
+    progress: Progress | None = None,
+    cancel_event: threading.Event | None = None,
+    on_replay: Callable[[int], None] | None = None,
+    device: str = DEFAULT_DEVICE,
+    follow_motion: bool = False,
+    strokes: dict | None = None,
+) -> dict | None:
+    """Write (or reuse) a filled clip of ``[start, start + duration]``.
+
+    ``strokes`` maps a layer's ``ink_rect`` to its glyph holes and their source
+    frames (see ``masks.TextMasks``); the layer's ``ink_key`` names them in the
+    clip's key.
+
+    Returns ``{"path", "key", "cached", "method"}``, or None when no fill
+    layer touches the span. ``on_replay`` gets the frames done before the model
+    first ran: after a stop they came from saved fills, so they say nothing
+    about how long the rest will take. ``device`` and ``follow_motion`` are the
+    Render step's choices; the engine itself is the layer's own, and stays.
+    """
+    method = method if method in METHODS else DEFAULT_METHOD
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    if width < 2 or height < 2 or fps <= 0:
+        raise FillError("AI fill needs the source width, height and frame rate.")
+    expected = max(1, int(round(duration * fps)))
+    # A few spare frames: the decoder may return one more than the estimate.
+    active_layers: list[dict] = []
+    rect_table = masks.frame_rects(
+        layers, start=start, fps=fps, frames=expected + int(fps) + 2,
+        width=width, height=height,
+        active_layers=active_layers, active_frames=expected + 1,
+    )
+    span_rects = [rect for rects in rect_table[:expected + 1] for rect in rects]
+    if not span_rects:
+        return None
+
+    directory = models_dir(data_root)
+    custom_path, custom_reason = engine_choice(data_root)
+    if custom_reason:
+        raise FillError(custom_reason)
+    custom_filler = None
+    custom_fallback = ""
+    if custom_path is not None:
+        # Load before the key: a file that cannot load must not own a clip.
+        try:
+            custom_filler = _custom_filler(custom_path)
+        except FillError as exc:
+            raise FillError(str(exc)) from exc
+    if custom_path is not None:
+        device = DEFAULT_DEVICE
+        follow_motion = False
+        path = custom_path
+        stamp = method_stamp(method, directory, device, custom=custom_path)
+    else:
+        device = chosen_device(method, device, directory)
+        problem = device_problem(method, directory, device)
+        if problem:
+            raise FillError(problem)
+        follow_motion = _follow_on(method, follow_motion)
+        path = model_path(method, directory, device)
+        stamp = method_stamp(method, directory, device)
+    key = span_key(
+        meta=meta, start=start, duration=duration, layers=active_layers,
+        method=method, model_stamp=stamp,
+        follow_motion=follow_motion,
+    )
+    cache_dir = Path(cache_dir)
+    output = cache_dir / f"{key}.mp4"
+    if output.is_file() and output.stat().st_size > 1024:
+        try:
+            os.utime(output)  # a reused clip is a used clip: the last to be tidied
+        except OSError:
+            pass
+        return {
+            "path": str(output), "key": key, "cached": True, "method": method,
+            "engine": "custom" if custom_path is not None else method,
+            "custom_fallback": custom_fallback,
+        }
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    part = cache_dir / f".{key}.part.mp4"
+    saved = counted = None
+
+    finder = _finder_for(
+        layers, start=start, fps=fps, frames=len(rect_table),
+        width=width, height=height, strokes=strokes,
+    )
+
+    def rects_for(index: int) -> list[masks.Rect]:
+        if finder is not None:
+            return finder.rects_for(index)
+        return rect_table[min(index, len(rect_table) - 1)]
+
+    def hole_for(index: int, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+        return finder.hole(index, x0, y0, x1, y1)
+
+    def cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
+    def on_frame(index: int) -> None:
+        _check_cancel(cancelled)
+        if finder is not None:
+            finder.forget_before(index)
+        if on_replay is not None and counted is not None and counted.runs == 0:
+            on_replay(index + 1)
+        if progress and index % 10 == 0:
+            reused = f" · {saved.hits} saved fills reused" if saved is not None and saved.hits else ""
+            label = "Your fill model" if custom_path is not None else METHOD_COPY[method]
+            progress(min(1.0, (index + 1) / expected), f"{label} {index + 1}/{expected}{reused}")
+
+    # A cancel while another render holds the lock must not wait for it.
+    _check_cancel(cancelled)
+    while not _LOCK.acquire(timeout=0.2):
+        _check_cancel(cancelled)
+    reader = writer = None
+    started = time.monotonic()
+    try:
+        _check_cancel(cancelled)
+        # This lock is the only fill running, so any .part here was orphaned
+        # by a killed server.
+        for stale in cache_dir.glob(".*.part.mp4"):
+            stale.unlink(missing_ok=True)
+        routed = None
+        if custom_filler is not None:
+            filler = custom_filler
+        elif device == "gpu" and Path(path).suffix == ".mlpackage":
+            torch_path = Path(directory) / GPU_MODEL_FILES[method]
+            routed = _CoreMLRouted(None, lambda: _filler(method, torch_path, "gpu"))
+            try:
+                routed.coreml = _filler(method, path, "gpu")
+            except (FillError, OSError, RuntimeError) as exc:
+                # Counted as PyTorch boxes below, and the clip is not cached as Core ML.
+                LOGGER.warning("AI fill could not load Core ML; PyTorch fills this span: %s", exc)
+                routed.cache_valid = False
+            filler = _GpuOrCpu(
+                lambda: routed,
+                lambda: _fallback_filler(method, directory, path),
+            )
+        elif device == "gpu":
+            filler = _GpuOrCpu(
+                lambda: _filler(method, path, "gpu"),
+                lambda: _fallback_filler(method, directory, path),
+            )
+        else:
+            filler = _filler(method, path)
+        plan_for = None
+        if method in KEYED_METHODS:
+            counted = _CountedFiller(filler, method)
+            _prune_saved(_saved_folders(data_root, cache_dir / SAVED_DIR))
+            _prune_clips(data_root, cache_dir)
+            saved = filler = _SavedFills(
+                counted, cache_dir / SAVED_DIR, stamp,
+            )
+            plan_for = lama_plan(layers, start=start, fps=fps, frames=len(rect_table))
+        reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
+        writer = _Writer(ffmpeg, part, fps, width, height)
+
+        def frames():
+            while True:
+                _check_cancel(cancelled)
+                frame = reader.read()
+                if frame is None:
+                    return
+                yield frame
+
+        source_frames = finder.wrap(frames()) if finder is not None else frames()
+        extra = {"hole_for": hole_for} if finder is not None else {}
+        if method in KEYED_METHODS:
+            stream = fill_frames_lama(
+                source_frames, rects_for, filler, None,
+                on_frame=on_frame, cancelled=cancelled, step=lama_step(fps),
+                plan_for=plan_for, follow=follow_motion, **extra,
+            )
+        elif method in CLASSIC_METHODS:
+            # Cheap enough for every frame, at full size, with nothing blended in.
+            stream = fill_frames_lama(
+                source_frames, rects_for, filler, None,
+                on_frame=on_frame, cancelled=cancelled, carry=0.0, **extra,
+            )
+        else:
+            from .sttn import CHUNK, OVERLAP
+            strips = masks.sttn_strips(span_rects, width, height)
+            stream = fill_frames_sttn(
+                source_frames, rects_for, filler, strips,
+                chunk=CHUNK, overlap=OVERLAP,
+                on_frame=on_frame, cancelled=cancelled, **extra,
+            )
+        written = 0
+        for frame in stream:
+            writer.write(frame)
+            written += 1
+        writer.proc.stdin.close()
+        code = writer.proc.wait(timeout=300)
+        reader.proc.wait(timeout=30)
+        if code != 0 or written == 0:
+            detail = writer.stderr_tail.strip()[-400:]
+            raise FillError(f"AI fill could not write the clip. {detail}".strip())
+        ephemeral = bool(counted is not None and not counted.cache_valid)
+        if ephemeral:
+            # A mixed/fallback span must never become a reusable primary-engine clip.
+            output = cache_dir / f"{key}.fallback-{uuid.uuid4().hex}.mp4"
+        os.replace(part, output)
+        took = time.monotonic() - started
+        if counted is not None:
+            LOGGER.info(
+                "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d "
+                "engine=%s device=%s follow=%s coreml_areas=%s gpu_areas=%s",
+                start, written, counted.runs, counted.units, took, took / max(1, written), saved.hits,
+                "custom" if custom_path is not None else method, device, follow_motion,
+                routed.coreml_areas if routed is not None else "-",
+                routed.gpu_areas if routed is not None else "-",
+            )
+        # A resumed clip spent little time on what it reused: not a speed to learn.
+        # A user model is not LaMa either: its speed must not teach the default.
+        if written >= RATE_MIN_FRAMES:
+            if counted is not None:
+                units = counted.units + written * frame_units(method, device)
+            else:
+                _frames, units = _span_units(rect_table, expected, width, height, method)
+            _learn_rate(
+                data_root, method, units, took, device,
+                custom=custom_path, reused=bool(saved is not None and saved.hits)
+                or bool(counted is not None and not counted.cache_valid)
+                # A Core ML speed must not teach the PyTorch estimate.
+                or routed is not None,
+            )
+    except BaseException:
+        _stop(reader.proc if reader is not None else None)
+        _stop(writer.proc if writer is not None else None)
+        part.unlink(missing_ok=True)
+        raise
+    finally:
+        # Close both ffmpeg pipes even on the success path.
+        if reader is not None:
+            _stop(reader.proc)
+        if writer is not None:
+            _stop(writer.proc)
+        _LOCK.release()
+    if progress:
+        progress(1.0, f"{METHOD_COPY[method]} done")
+    return {
+        "path": str(output), "key": key, "cached": False, "method": method,
+        "engine": "custom" if custom_path is not None else method,
+        "custom_fallback": custom_fallback,
+        "ephemeral": bool(counted is not None and not counted.cache_valid),
+        # Which engine filled this span: the user's model, Core ML routing, PyTorch, or the CPU.
+        "gpu_engine": "custom" if custom_path is not None else (
+            ("coreml" if routed is not None else "pytorch") if device == "gpu" else "cpu"),
+        "coreml_areas": routed.coreml_areas if routed is not None else 0,
+        "gpu_areas": routed.gpu_areas if routed is not None else 0,
+        "fill_seconds": round(took, 1),
+    }

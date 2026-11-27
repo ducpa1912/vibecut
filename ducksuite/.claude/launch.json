@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "duck-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "PATH=/opt/homebrew/bin:$PATH DUCK_DATA=\"$HOME/Library/Containers/com.ducksuite.app/Data/Library/Application Support/DuckSuite\" DUCK_PORT=8805 DUCK_TOKEN=dev-local-loop-token scripts/serve-duck.sh"],
+      "port": 8805
+    },
+    {
+      "name": "duck-scratch-loop25",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "PATH=/opt/homebrew/bin:$PATH DUCK_DATA=\"$PWD/build/loop25-evidence/root\" DUCK_PORT=8811 DUCK_TOKEN=scratch-loop25 scripts/serve-duck.sh"],
+      "port": 8811
+    }
+  ]
+}

@@ -1,0 +1,2117 @@
+{
+ "welcome-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 816,
+  "bottomPct": 90.7,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:1080p",
+    "area": 874
+   }
+  ],
+  "overlapCount": 1,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "project-name",
+    "text": "en-46s-1080x1080-big-tex"
+   }
+  ],
+  "preview": null
+ },
+ "check-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 747,
+  "bottomPct": 83,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:2m 40s · 1080×1920 · 3",
+    "area": 3495
+   },
+   {
+    "a": "img:",
+    "b": "text:1080×1920",
+    "area": 1393
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00 / 00:02:40",
+    "area": 1680
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:04:22",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:10:01",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:15:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:19:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:25:08",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:30:27",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:36:16",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:42:06",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:47:25",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:53:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:59:04",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:04:23",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:10:13",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:16:02",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:21:21",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:27:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:29:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:33:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:38:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:40:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:45:02",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:49:20",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:54:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:59:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:04:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:09:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:14:22",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:17:26",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:21:01",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:24:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:26:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:28:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:29:26",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:34:28",
+    "area": 1038
+   }
+  ],
+  "overlapCount": 38,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "preview": null
+ },
+ "edit-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 918,
+  "bottomPct": 102,
+  "bottomWho": "proof-row",
+  "overlaps": [
+   {
+    "a": "text:09",
+    "b": "text:Timeline",
+    "area": 26
+   },
+   {
+    "a": "img:",
+    "b": "text:Timeline",
+    "area": 798
+   },
+   {
+    "a": "text:00:00:42 · 6s",
+    "b": "text:2m 40s · 35 scenes · 1",
+    "area": 513
+   },
+   {
+    "a": "text:No text",
+    "b": "text:2m 40s · 35 scenes · 1",
+    "area": 524
+   },
+   {
+    "a": "text:10",
+    "b": "text:Video",
+    "area": 29
+   },
+   {
+    "a": "img:",
+    "b": "text:Video",
+    "area": 280
+   },
+   {
+    "a": "text:Scene 10",
+    "b": "button:Full video · trim / cu",
+    "area": 217
+   },
+   {
+    "a": "text:00:00:47 · 6s",
+    "b": "button:Full video · trim / cu",
+    "area": 349
+   },
+   {
+    "a": "text:No text",
+    "b": "button:Full video · trim / cu",
+    "area": 657
+   },
+   {
+    "a": "text:11",
+    "b": "text:Script",
+    "area": 26
+   },
+   {
+    "a": "img:",
+    "b": "text:Scene",
+    "area": 111
+   },
+   {
+    "a": "img:",
+    "b": "text:Script",
+    "area": 303
+   },
+   {
+    "a": "img:",
+    "b": "text:Voice & Music",
+    "area": 243
+   },
+   {
+    "a": "text:Scene 11",
+    "b": "text:All",
+    "area": 31
+   },
+   {
+    "a": "text:Scene 11",
+    "b": "button:S01",
+    "area": 201
+   },
+   {
+    "a": "text:Scene 11",
+    "b": "button:",
+    "area": 212
+   },
+   {
+    "a": "text:00:00:53 · 6s",
+    "b": "button:Edit",
+    "area": 111
+   },
+   {
+    "a": "text:12",
+    "b": "text:SFX",
+    "area": 23
+   },
+   {
+    "a": "img:",
+    "b": "text:SFX",
+    "area": 156
+   },
+   {
+    "a": "img:",
+    "b": "text:1080×1920",
+    "area": 1393
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00 / 00:02:40",
+    "area": 1680
+   },
+   {
+    "a": "img:",
+    "b": "button:CC",
+    "area": 616
+   },
+   {
+    "a": "img:",
+    "b": "button:⇕",
+    "area": 616
+   },
+   {
+    "a": "img:",
+    "b": "text:Transcript",
+    "area": 1055
+   },
+   {
+    "a": "img:",
+    "b": "text:1 line in this scene",
+    "area": 1018
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:30:00",
+    "area": 768
+   },
+   {
+    "a": "img:",
+    "b": "text:Speaker",
+    "area": 560
+   },
+   {
+    "a": "img:",
+    "b": "text:I'm going to eat a lit",
+    "area": 8209
+   },
+   {
+    "a": "button:CC",
+    "b": "button:⇕",
+    "area": 616
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "text:00:02:13:08",
+    "area": 410
+   },
+   {
+    "a": "text:moves",
+    "b": "text:00:02:40:00",
+    "area": 319
+   },
+   {
+    "a": "text:Subtitle 03",
+    "b": "button:Full video · trim / cu",
+    "area": 2676
+   },
+   {
+    "a": "text:moves",
+    "b": "button:Full video · trim / cu",
+    "area": 620
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 81
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 207
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 126
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 129
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 129
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 71
+   },
+   {
+    "a": "text:Subtitle 04",
+    "b": "button:",
+    "area": 81
+   }
+  ],
+  "overlapCount": 44,
+  "scrolls": [
+   {
+    "cls": "proof-list",
+    "over": 1390,
+    "count": false,
+    "fade": false
+   },
+   {
+    "cls": "inspector-body",
+    "over": 614,
+    "count": false,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "proof-title",
+    "text": "今天的菜是粉丝给咪点的"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "咪每次吃花甲都好费劲"
+   }
+  ],
+  "preview": null,
+  "layerRows": 6
+ },
+ "clean-focus-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 1038,
+  "bottomPct": 115.4,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:08",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 03",
+    "area": 212
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 04",
+    "area": 286
+   },
+   {
+    "a": "text:No text",
+    "b": "text:Subtitle 05",
+    "area": 167
+   },
+   {
+    "a": "img:",
+    "b": "text:09",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 03",
+    "area": 1146
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 04",
+    "area": 1545
+   },
+   {
+    "a": "text:09",
+    "b": "text:Subtitle 04",
+    "area": 171
+   },
+   {
+    "a": "text:No text",
+    "b": "text:Subtitle 05",
+    "area": 906
+   },
+   {
+    "a": "img:",
+    "b": "text:10",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 03",
+    "area": 804
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 234
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 04",
+    "area": 1084
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 311
+   },
+   {
+    "a": "text:10",
+    "b": "text:Subtitle 04",
+    "area": 171
+   },
+   {
+    "a": "text:No text",
+    "b": "text:Subtitle 05",
+    "area": 636
+   },
+   {
+    "a": "text:No text",
+    "b": "text:moves",
+    "area": 183
+   },
+   {
+    "a": "img:",
+    "b": "text:11",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 160
+   },
+   {
+    "a": "img:",
+    "b": "text:Fill",
+    "area": 152
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 212
+   },
+   {
+    "a": "img:",
+    "b": "text:Fill",
+    "area": 192
+   },
+   {
+    "a": "text:11",
+    "b": "text:moves",
+    "area": 79
+   },
+   {
+    "a": "text:No text",
+    "b": "text:moves",
+    "area": 125
+   },
+   {
+    "a": "text:No text",
+    "b": "text:Fill",
+    "area": 116
+   },
+   {
+    "a": "img:",
+    "b": "text:12",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:13",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:14",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:15",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:16",
+    "area": 287
+   }
+  ],
+  "overlapCount": 59,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 168,
+    "count": true,
+    "fade": false
+   },
+   {
+    "cls": "clean-scene-list",
+    "over": 1423,
+    "count": false,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "clean-scene-title",
+    "text": "今天的菜是粉丝给咪点的"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "咪每次吃花甲都好费劲"
+   }
+  ],
+  "preview": null
+ },
+ "preview-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 682,
+  "bottomPct": 75.8,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:08",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:09",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 1264
+   },
+   {
+    "a": "img:",
+    "b": "text:10",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 2252
+   },
+   {
+    "a": "img:",
+    "b": "text:11",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 1936
+   },
+   {
+    "a": "img:",
+    "b": "text:12",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:13",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:14",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:15",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:16",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:17",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:18",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:19",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:20",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:21",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:22",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:23",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:24",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:25",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:26",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:27",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:28",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:29",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:30",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:31",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:32",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:33",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:34",
+    "area": 287
+   }
+  ],
+  "overlapCount": 41,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "preview": {
+   "portrait": true,
+   "stage": 401,
+   "main": 1048,
+   "pct": 38.2
+  }
+ },
+ "render-1440x900": {
+  "vw": 1440,
+  "vh": 900,
+  "bottom": 885,
+  "bottomPct": 98.3,
+  "bottomWho": "workspace",
+  "overlaps": [],
+  "overlapCount": 0,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 15,
+    "count": true,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   }
+  ],
+  "preview": null
+ },
+ "welcome-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 716,
+  "bottomPct": 89.5,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:1080p",
+    "area": 874
+   }
+  ],
+  "overlapCount": 1,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "project-name",
+    "text": "en-46s-1080x1080-big-tex"
+   }
+  ],
+  "preview": null
+ },
+ "check-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 691,
+  "bottomPct": 86.4,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:",
+    "b": "text:2m 40s · 1080×1920 · 3",
+    "area": 3495
+   },
+   {
+    "a": "img:",
+    "b": "text:1080×1920",
+    "area": 1393
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00 / 00:02:40",
+    "area": 1680
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:04:22",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:10:01",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:15:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:19:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:25:08",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:30:27",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:36:16",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:42:06",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:47:25",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:53:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:59:04",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:04:23",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:10:13",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:16:02",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:21:21",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:27:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:29:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:33:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:38:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:40:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:45:02",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:49:20",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:54:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:59:11",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:04:15",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:09:18",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:14:22",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:17:26",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:21:01",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:24:07",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:26:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:28:00",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:29:26",
+    "area": 1038
+   },
+   {
+    "a": "img:",
+    "b": "text:00:02:34:28",
+    "area": 1038
+   }
+  ],
+  "overlapCount": 38,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "preview": null
+ },
+ "edit-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 816,
+  "bottomPct": 102,
+  "bottomWho": "layer-list",
+  "overlaps": [
+   {
+    "a": "text:08",
+    "b": "text:Timeline",
+    "area": 32
+   },
+   {
+    "a": "img:",
+    "b": "text:Timeline",
+    "area": 798
+   },
+   {
+    "a": "text:Scene 08",
+    "b": "text:2m 40s · 35 scenes · 1",
+    "area": 806
+   },
+   {
+    "a": "text:No text",
+    "b": "text:2m 40s · 35 scenes · 1",
+    "area": 532
+   },
+   {
+    "a": "text:09",
+    "b": "text:Video",
+    "area": 26
+   },
+   {
+    "a": "img:",
+    "b": "text:Video",
+    "area": 280
+   },
+   {
+    "a": "img:",
+    "b": "text:Scene",
+    "area": 111
+   },
+   {
+    "a": "text:Scene 09",
+    "b": "button:Full video · trim / cu",
+    "area": 892
+   },
+   {
+    "a": "text:00:00:42 · 6s",
+    "b": "button:S01",
+    "area": 92
+   },
+   {
+    "a": "text:00:00:42 · 6s",
+    "b": "button:",
+    "area": 20
+   },
+   {
+    "a": "text:No text",
+    "b": "button:Full video · trim / cu",
+    "area": 597
+   },
+   {
+    "a": "text:10",
+    "b": "text:Script",
+    "area": 29
+   },
+   {
+    "a": "img:",
+    "b": "text:Script",
+    "area": 303
+   },
+   {
+    "a": "img:",
+    "b": "text:Voice & Music",
+    "area": 729
+   },
+   {
+    "a": "text:Scene 10",
+    "b": "button:Edit",
+    "area": 123
+   },
+   {
+    "a": "text:11",
+    "b": "text:SFX",
+    "area": 32
+   },
+   {
+    "a": "img:",
+    "b": "text:SFX",
+    "area": 156
+   },
+   {
+    "a": "img:",
+    "b": "text:1080×1920",
+    "area": 1393
+   },
+   {
+    "a": "img:",
+    "b": "text:00:00:00 / 00:02:40",
+    "area": 1680
+   },
+   {
+    "a": "img:",
+    "b": "button:CC",
+    "area": 616
+   },
+   {
+    "a": "img:",
+    "b": "button:⇕",
+    "area": 616
+   },
+   {
+    "a": "img:",
+    "b": "text:Transcript",
+    "area": 1055
+   },
+   {
+    "a": "img:",
+    "b": "text:1 line in this scene",
+    "area": 1018
+   },
+   {
+    "a": "img:",
+    "b": "text:00:01:30:00",
+    "area": 768
+   },
+   {
+    "a": "img:",
+    "b": "text:Speaker",
+    "area": 560
+   },
+   {
+    "a": "img:",
+    "b": "text:I'm going to eat a lit",
+    "area": 5834
+   },
+   {
+    "a": "button:CC",
+    "b": "button:⇕",
+    "area": 616
+   },
+   {
+    "a": "text:Title 01",
+    "b": "button:Full video · trim / cu",
+    "area": 1985
+   },
+   {
+    "a": "text:yours",
+    "b": "button:Full video · trim / cu",
+    "area": 443
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 173
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 523
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 523
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 318
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 325
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 325
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 183
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 204
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 191
+   },
+   {
+    "a": "text:Subtitle 02",
+    "b": "button:",
+    "area": 99
+   },
+   {
+    "a": "text:moves",
+    "b": "button:",
+    "area": 288
+   }
+  ],
+  "overlapCount": 41,
+  "scrolls": [
+   {
+    "cls": "proof-list",
+    "over": 1450,
+    "count": false,
+    "fade": false
+   },
+   {
+    "cls": "inspector-body",
+    "over": 674,
+    "count": false,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "proof-title",
+    "text": "今天的菜是粉丝给咪点的"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "proof-title",
+    "text": "咪每次吃花甲都好费劲"
+   }
+  ],
+  "preview": null,
+  "layerRows": 6
+ },
+ "clean-focus-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 1031,
+  "bottomPct": 128.8,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:08",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 02",
+    "area": 1545
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 03",
+    "area": 1256
+   },
+   {
+    "a": "text:08",
+    "b": "text:Subtitle 03",
+    "area": 185
+   },
+   {
+    "a": "img:",
+    "b": "text:09",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 02",
+    "area": 1068
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 327
+   },
+   {
+    "a": "img:",
+    "b": "text:Subtitle 03",
+    "area": 868
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 271
+   },
+   {
+    "a": "text:09",
+    "b": "text:Subtitle 03",
+    "area": 185
+   },
+   {
+    "a": "img:",
+    "b": "text:10",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 196
+   },
+   {
+    "a": "img:",
+    "b": "text:Fill",
+    "area": 192
+   },
+   {
+    "a": "img:",
+    "b": "text:moves",
+    "area": 163
+   },
+   {
+    "a": "img:",
+    "b": "text:Fill",
+    "area": 168
+   },
+   {
+    "a": "text:10",
+    "b": "text:moves",
+    "area": 76
+   },
+   {
+    "a": "text:10",
+    "b": "text:Fill",
+    "area": 24
+   },
+   {
+    "a": "img:",
+    "b": "text:11",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:12",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:13",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:14",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:15",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:16",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:17",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:18",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:19",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:20",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:21",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:22",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:23",
+    "area": 287
+   }
+  ],
+  "overlapCount": 52,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 261,
+    "count": true,
+    "fade": false
+   },
+   {
+    "cls": "clean-scene-list",
+    "over": 1523,
+    "count": false,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "clean-scene-title",
+    "text": "今天的菜是粉丝给咪点的"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "继续沉浸式精加工"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "I'm going to eat a littl"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "咪每次吃花甲都好费劲"
+   },
+   {
+    "cls": "clean-scene-title",
+    "text": "咪的牙齿不太行吧"
+   }
+  ],
+  "preview": null
+ },
+ "preview-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 682,
+  "bottomPct": 85.2,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "img:After",
+    "b": "text:After",
+    "area": 1033
+   },
+   {
+    "a": "img:After",
+    "b": "text:00:00:00:00 – 00:00:04",
+    "area": 2210
+   },
+   {
+    "a": "img:After",
+    "b": "text:Layered",
+    "area": 755
+   },
+   {
+    "a": "img:",
+    "b": "text:01",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:02",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:03",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:04",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:05",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:06",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:07",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:08",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 1936
+   },
+   {
+    "a": "img:",
+    "b": "text:09",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 2252
+   },
+   {
+    "a": "img:",
+    "b": "text:10",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:Proofs are optional re",
+    "area": 1264
+   },
+   {
+    "a": "img:",
+    "b": "text:11",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:12",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:13",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:14",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:15",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:16",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:17",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:18",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:19",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:20",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:21",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:22",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:23",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:24",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:25",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:26",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:27",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:28",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:29",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:30",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:31",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:32",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:33",
+    "area": 287
+   },
+   {
+    "a": "img:",
+    "b": "text:34",
+    "area": 287
+   }
+  ],
+  "overlapCount": 41,
+  "scrolls": [],
+  "hScroll": false,
+  "clipped": [],
+  "preview": {
+   "portrait": true,
+   "stage": 360,
+   "main": 888,
+   "pct": 40.5
+  }
+ },
+ "render-1280x800": {
+  "vw": 1280,
+  "vh": 800,
+  "bottom": 885,
+  "bottomPct": 110.6,
+  "bottomWho": "workspace",
+  "overlaps": [
+   {
+    "a": "text:Resolution",
+    "b": "text:Project / Story",
+    "area": 41
+   },
+   {
+    "a": "text:1080 × 1920",
+    "b": "img:",
+    "area": 64
+   },
+   {
+    "a": "text:AI fill engine",
+    "b": "img:",
+    "area": 40
+   },
+   {
+    "a": "text:Apple GPU. Measured 4.",
+    "b": "img:",
+    "area": 170
+   },
+   {
+    "a": "text:Frame rate",
+    "b": "img:",
+    "area": 46
+   },
+   {
+    "a": "text:Original audio",
+    "b": "img:",
+    "area": 138
+   },
+   {
+    "a": "text:1 cue from the script.",
+    "b": "img:",
+    "area": 45
+   },
+   {
+    "a": "text:Voice-over",
+    "b": "img:",
+    "area": 51
+   }
+  ],
+  "overlapCount": 8,
+  "scrolls": [
+   {
+    "cls": "BODY",
+    "over": 115,
+    "count": true,
+    "fade": false
+   }
+  ],
+  "hScroll": false,
+  "clipped": [
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   },
+   {
+    "cls": "SPAN",
+    "text": "人吃啥咪吃啥 · 2m 40s · 1080×1"
+   }
+  ],
+  "preview": null
+ }
+}
