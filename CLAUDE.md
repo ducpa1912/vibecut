@@ -16,11 +16,12 @@ It is independent from Studio and the Voice Room:
 No Studio or Voice Room UI imports. No merge into `main` without an explicit
 release decision.
 
-## Current state (2026-11-18)
+## Current state (2026-11-27)
 
-- Base `bb3e89e`; the Clean workspace revision and review queue are
-  **uncommitted**.
+- `classic` head `77f708c`, signed and pushed. Tree clean.
+- `main` is not merged: 58 conflicts against `77f708c`.
 - Clean workspace: frame + region list beside it + compact timeline.
+- Auto-scanned boxes are directly draggable/resizable.
 - Review queue: multiple files/folder → upload `source_ready` → Check → prepare
   AI-fill layers → save source review. **It never renders.**
 - AI fill: LaMa CPU (ONNX Runtime) and LaMa GPU (PyTorch MPS), plus MI-GAN,

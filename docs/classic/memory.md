@@ -2,9 +2,9 @@
 
 Durable working memory for the Classic lane. Read this before changing Clean.
 
-Last updated: 2026-11-18. Base commit `bb3e89e` (`classic`, matches
-`origin/classic` when last fetched). All work described below is **uncommitted
-in the working tree**.
+Last updated: 2026-11-27. Head `77f708c` is committed, signed and pushed to
+`origin/classic`. The working tree is clean. `main` was **not** merged: the
+shipped tip conflicts with `origin/main` in 58 files.
 
 ## Lane facts
 
@@ -57,7 +57,7 @@ Restart Classic after each backend or frontend fix phase.
 - Founder clean-video acceptance remains **PENDING**. No real-media verdict is
   recorded.
 
-## Files touched in the current working tree
+## Shipped files in `77f708c`
 
 | File | Purpose |
 |---|---|

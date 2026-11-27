@@ -80,8 +80,8 @@ pytest -q tests/test_classic_source_clean_browser.py \
   tests/test_classic_phase5_browser.py
 ```
 
-Last verified working tree: **2171 passed, 104 skipped**; 92 of the skips wait
-on absent `data/media` files. A skipped acceptance is not a pass.
+Last verified tip: `77f708c` on `classic`, **2171 passed, 104 skipped**; 92 of
+the skips wait on absent `data/media` files. A skipped acceptance is not a pass.
 
 The plain `compileall .` walks `.venv`. PyTorch ships a Python 3.12-only file
 that fails under 3.11; use the exclude shown above.

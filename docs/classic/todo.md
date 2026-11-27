@@ -3,8 +3,8 @@
 Ordered follow-up work for the Classic lane. Do not start P1 while a P0 gate is
 open unless the work is a direct blocker or a defect found by the founder pass.
 
-Last updated: 2026-11-18. Base `bb3e89e`; current UI and review queue are
-uncommitted. Full suite: **2171 passed, 104 skipped** in the working tree.
+Last updated: 2026-11-27. Shipped as `77f708c` on `classic`. Full suite:
+**2171 passed, 104 skipped**. `main` was not merged: 58 conflicts.
 
 ## P0 — release gate
 

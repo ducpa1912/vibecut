@@ -1,8 +1,9 @@
 # Classic lane plan
 
 Status: **active**, Classic lane only. Phase 5 clean-video polish is built after
-`classic` `fb433d7`. The 2026-11-18 Clean workspace revision and review queue are
-built in the working tree on base `bb3e89e`. Founder acceptance is **PENDING**.
+`classic` `fb433d7`. The 2026-11-18 Clean workspace revision and review queue
+shipped as `77f708c` on `classic`. `main` was not merged: the merge has 58
+conflicts. Founder acceptance is **PENDING**.
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -156,7 +157,7 @@ still open.
 ### G. Clean workspace revision and review queue (2026-11-18)
 
 Build contract: `PRODUCT.md` and `docs/classic/memory.md`. Base `bb3e89e`;
-the change set is uncommitted.
+shipped as `77f708c` on `classic`.
 
 - [x] Make Clean one bounded workspace: frame + region manager beside it +
   compact timeline. Remove the separate settings rail from Clean.
@@ -217,13 +218,12 @@ Acceptance for this revision:
 ## Release gate
 
 - [ ] No P0 or P1 open. *(no sign-off recorded yet.)*
-- [x] Classic tests pass on the current working tree. *(2,170 passed, 104
-  skipped on 2026-11-18; 92 skips wait on absent `data/media` real files.
-  All four Classic browser specs pass. `node --check` passes for every
-  `static/**/*.js`. The revision is not committed yet.)*
-- [ ] Founder pass recorded on the chosen tip. *(No pass at `bb3e89e` or on the
-  current uncommitted revision; the record table is at the top of the beta
-  pass.)*
+- [x] Classic tests pass on the shipped tip. *(2,171 passed, 104 skipped on
+  2026-11-27; 92 skips wait on absent `data/media` real files. All four Classic
+  browser specs pass. `node --check` passes for every `static/**/*.js`.
+  Shipped as `77f708c`.)*
+- [ ] Founder pass recorded on the chosen tip. *(No pass at `bb3e89e` or
+  `77f708c`; the record table is at the top of the beta pass.)*
 - [x] All new commits are signed. *(Checked with
   `scripts/verify-signatures.sh`. `732254a` and `8186e2a` are recorded
   pre-signing exceptions; the tag is signed by `scripts/release.sh` when it
@@ -232,4 +232,5 @@ Acceptance for this revision:
   *(Last re-checked at `c7032b8`. The 2026-11-18 workspace and review queue have
   not been walked against that document yet; update it after the founder pass.)*
 - [ ] Merge target confirmed: Classic lane only, or explicit merge to `main`.
-  *(Nothing is merged; the lane stays on `classic` until someone asks.)*
+  *(Not merged. `git merge-tree origin/main classic` at `77f708c` reports 58
+  conflicts, so the automatic merge condition is not met.)*

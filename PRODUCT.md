@@ -161,5 +161,6 @@ and Linux run the same UI with cloud AI where native engines are absent. The
 interface is English with a curated Vietnamese translation. Rendering, files
 and caches stay on the machine.
 
-Last updated: 2026-11-18. Clean workspace usability revision and review queue
-are built in the working tree. Founder clean-video acceptance is **PENDING**.
+Last updated: 2026-11-27. Clean workspace usability revision and review queue
+shipped as `77f708c` on `classic`. Founder clean-video acceptance is
+**PENDING**. `main` was not merged: the merge has 58 conflicts.
