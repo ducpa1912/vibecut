@@ -85,6 +85,7 @@ private struct WebView: NSViewRepresentable {
 
         let view = DropWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         view.underPageBackgroundColor = .clear
         view.onFiles = { urls in
             guard let first = urls.first else { return }
@@ -122,7 +123,7 @@ private struct WebView: NSViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         private let onImport: @MainActor (String, String?) async -> Bool
         private let onImportNotice: @MainActor () -> String?
@@ -161,6 +162,14 @@ private struct WebView: NSViewRepresentable {
             if let mouseMonitor {
                 NSEvent.removeMonitor(mouseMonitor)
             }
+        }
+
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
         }
 
         func userContentController(
