@@ -16,6 +16,13 @@ This checkout is the **Classic** lane of VibeCut:
 
 Classic is not Studio, not DuckSuite and not DuckClean.
 
+Use `vibecut-classic` on `classic` as the single checkout for Classic development,
+builds, tests and Claude's review. Codex manages integration. OpenCode supplies
+source changes for the step the founder initiates. If OpenCode uses an isolated
+worktree, keep it code-only and hand the diff or commit to Codex. Run builds and
+tests in `vibecut-classic` after integration. Coordinate edits so only one agent
+writes to the shared checkout at a time.
+
 ## Read first
 
 1. `PRODUCT.md` — current product truth.
